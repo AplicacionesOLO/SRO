@@ -1,0 +1,332 @@
+═══════════════════════════════════════════════════════════════════════════════
+  ANÁLISIS EXHAUSTIVO DEL SISTEMA DE RESERVAS OLO
+  PARTE 1: PANORAMA GENERAL Y ARQUITECTURA
+═══════════════════════════════════════════════════════════════════════════════
+
+Fecha de Análisis: Febrero 2024
+Versión del Sistema: 595
+Organización Principal: 946ddabf-3874-4c57-85c2-ea7d4b5937f8
+
+═══════════════════════════════════════════════════════════════════════════════
+A) PANORAMA GENERAL DEL SISTEMA
+═══════════════════════════════════════════════════════════════════════════════
+
+1. DESCRIPCIÓN GENERAL
+----------------------
+Sistema de Reservas OLO es una aplicación web empresarial multi-tenant diseñada 
+para gestionar operaciones logísticas de almacenes, específicamente:
+
+✓ Reservas de andenes/rampas para carga/descarga
+✓ Control de ingreso y salida de vehículos (Punto Control IN/OUT)
+✓ Gestión de proveedores, clientes y tipos de carga
+✓ Automatización de correos electrónicos según eventos
+✓ Auditoría completa de operaciones
+✓ Sistema de permisos granular basado en roles
+
+2. ARQUITECTURA TECNOLÓGICA
+---------------------------
+
+FRONTEND:
+  - React 19 + TypeScript
+  - Vite como bundler
+  - TailwindCSS para estilos
+  - React Router para navegación
+  - Supabase JS Client para comunicación con backend
+  - Remix Icon y Font Awesome para iconografía
+
+BACKEND:
+  - Supabase (PostgreSQL + Auth + Storage + Edge Functions)
+  - Row Level Security (RLS) para seguridad multi-tenant
+  - Edge Functions (Deno) para lógica de negocio compleja
+  - Gmail API para envío de correos
+
+SEGURIDAD:
+  - Multi-tenant por org_id
+  - RLS policies en todas las tablas
+  - Sistema de permisos: roles → permissions → role_permissions
+  - JWT tokens para autenticación
+  - Encriptación de tokens OAuth en Edge Functions
+
+3. MÓDULOS PRINCIPALES
+----------------------
+
+📅 CALENDARIO (Reservas)
+   - Gestión visual de reservas de andenes
+   - Vistas: 1 día, 3 días, 7 días
+   - Drag & drop para mover reservas
+   - Gestión de documentos adjuntos
+   - Historial de actividad
+
+🚪 PUNTO CONTROL IN/OUT (Casetilla)
+   - Registro de ingresos de vehículos
+   - Registro de salidas de vehículos
+   - Reporte de duración (tiempo en almacén)
+   - Lista de reservas pendientes
+
+🏗️ ANDENES
+   - Gestión de andenes/rampas
+   - Asignación a almacenes
+   - Categorías y estados operativos
+   - Bloqueos temporales
+
+👥 ADMINISTRACIÓN
+   - Gestión de usuarios y roles
+   - Matriz de permisos
+   - Catálogos (proveedores, tipos de carga, perfiles de tiempo)
+   - Gestión de almacenes
+   - Gestión de clientes
+
+📧 CORRESPONDENCIA
+   - Conexión con Gmail API
+   - Reglas de envío automático
+   - Bitácora de correos enviados
+
+📊 DASHBOARD
+   - Estadísticas y métricas
+   - Gráficos de tendencias
+   - KPIs operativos
+
+👤 PERFIL
+   - Datos personales
+   - Cambio de contraseña
+   - Configuración de usuario
+
+4. FLUJO OPERATIVO GENERAL
+--------------------------
+
+1. INICIO DE SESIÓN
+   Usuario → Supabase Auth → Validación → JWT Token
+
+2. CARGA DE CONTEXTO
+   Frontend consulta:
+   - user_org_roles (obtiene role_id)
+   - role_permissions (obtiene permisos)
+   - user_providers (obtiene proveedores asignados)
+
+3. NAVEGACIÓN
+   - Sistema valida permisos en frontend
+   - RLS valida permisos en backend
+   - Usuario accede solo a módulos permitidos
+
+4. OPERACIONES CRÍTICAS
+   - Crear reserva → Dispara evento de correspondencia
+   - Cambiar estado → Dispara evento de correspondencia
+   - Registrar ingreso → Actualiza estado a ARRIVED_PENDING_UNLOAD
+   - Registrar salida → Actualiza estado a DISPATCHED
+
+5. AUDITORÍA
+   - Todos los cambios se registran en activity_log
+   - Cambios administrativos en admin_audit_log
+   - Cambios en reservas en reservation_activity_log
+
+5. CONCEPTOS CLAVE DEL NEGOCIO
+-------------------------------
+
+ANDÉN / RAMPA:
+  Espacio físico donde se realiza la carga/descarga de mercancía.
+  Cada andén pertenece a un almacén específico y tiene:
+  - Categoría (Carga, Descarga, Mixto)
+  - Estado operativo (Disponible, En mantenimiento, etc.)
+  - Horario hábil (heredado del almacén)
+
+ALMACÉN (WAREHOUSE):
+  Instalación que contiene múltiples andenes.
+  Define:
+  - Horario hábil (ej: 06:00 - 17:00)
+  - Intervalo de slots (15, 30 o 60 minutos)
+  - Ubicación física
+
+RESERVA:
+  Asignación de un andén en un horario específico.
+  Incluye:
+  - Datos del vehículo (matrícula, chofer)
+  - Datos de la mercancía (DUA, factura, tipo de carga)
+  - Datos del proveedor/expedidor
+  - Estado del ciclo de vida
+  - Documentos adjuntos
+
+DUA (Documento Único Aduanero):
+  Documento obligatorio que identifica la operación aduanera.
+  Es el identificador principal de una operación.
+
+PROVEEDOR / EXPEDIDOR:
+  Empresa que envía la mercancía al almacén.
+  Los usuarios tienen proveedores asignados y solo pueden
+  crear reservas para esos proveedores.
+
+TIPO DE CARGA:
+  Clasificación de la mercancía (ej: Pallets, Granel, Contenedores).
+  Permite calcular duración sugerida de la operación.
+
+ESTADO DE RESERVA:
+  Indica en qué etapa del proceso se encuentra:
+  - PENDING: Reserva creada, pendiente de arribo
+  - ARRIVED_PENDING_UNLOAD: Vehículo arribó, pendiente descarga
+  - DISPATCHED: Vehículo despachado, operación completada
+
+PUNTO CONTROL (CASETILLA):
+  Módulo para registrar ingresos y salidas de vehículos.
+  Actualiza automáticamente el estado de las reservas.
+
+6. CICLO DE VIDA DE UNA RESERVA
+--------------------------------
+
+FASE 1: CREACIÓN
+  - Usuario crea reserva en calendario
+  - Sistema valida disponibilidad
+  - Sistema asigna estado PENDING
+  - Sistema envía correos de notificación
+
+FASE 2: ARRIBO
+  - Vehículo llega al almacén
+  - Operador registra ingreso en Casetilla
+  - Sistema actualiza estado a ARRIVED_PENDING_UNLOAD
+  - Sistema envía correos de notificación
+
+FASE 3: OPERACIÓN
+  - Se realiza carga/descarga
+  - (Opcional) Se actualizan estados intermedios
+  - Se suben documentos (CMR, facturas)
+
+FASE 4: DESPACHO
+  - Operador registra salida en Casetilla
+  - Sistema actualiza estado a DISPATCHED
+  - Sistema envía correos de notificación
+  - Sistema calcula duración total
+
+FASE 5: CIERRE
+  - Reserva queda en estado final
+  - Datos disponibles para reportes
+  - Auditoría completa registrada
+
+7. MULTI-TENANCY Y SEGURIDAD
+-----------------------------
+
+MULTI-TENANT POR ORG_ID:
+  - Cada organización tiene un org_id único
+  - Todas las tablas tienen org_id como FK
+  - RLS policies filtran por org_id automáticamente
+  - Usuarios no pueden ver datos de otras organizaciones
+
+SISTEMA DE PERMISOS:
+  roles → role_permissions → permissions
+  
+  Ejemplo:
+  - Rol "Operador" tiene permisos:
+    * calendar.view
+    * reservations.create
+  - Rol "Admin" tiene permisos:
+    * Todos los anteriores +
+    * admin.users.create
+    * admin.matrix.update
+
+ROW LEVEL SECURITY (RLS):
+  - Políticas a nivel de fila en PostgreSQL
+  - Se ejecutan automáticamente en cada query
+  - Ejemplos:
+    * reservations: org_id = auth.jwt()->>'org_id'
+    * reservations: user_providers permite ese proveedor
+
+RESTRICCIÓN POR PROVEEDORES:
+  - Usuarios tienen proveedores asignados (user_providers)
+  - Solo pueden crear/editar reservas de sus proveedores
+  - Reservas de otros proveedores: solo lectura limitada
+
+8. INTEGRACIONES EXTERNAS
+--------------------------
+
+GMAIL API:
+  - Envío de correos automáticos
+  - OAuth2 para autenticación
+  - Refresh tokens para renovación automática
+  - Almacenamiento seguro en gmail_accounts
+
+SUPABASE STORAGE:
+  - Almacenamiento de documentos adjuntos
+  - Bucket: reservation-files
+  - Organización: org_id/reservations/reservation_id/category/
+  - Signed URLs para acceso seguro
+
+EDGE FUNCTIONS:
+  - correspondence-process-event: Procesa eventos y dispara correos
+  - gmail-send: Envía correos vía Gmail API
+  - admin-users: Gestión de usuarios (bypass RLS)
+  - gmail-auth-url: Genera URL de OAuth
+  - gmail-callback: Procesa callback de OAuth
+  - gmail-connection-status: Verifica estado de conexión
+  - gmail-disconnect: Desconecta cuenta Gmail
+
+9. TECNOLOGÍAS Y LIBRERÍAS CLAVE
+---------------------------------
+
+FRONTEND:
+  - @supabase/supabase-js: Cliente de Supabase
+  - react-router-dom: Navegación
+  - @tanstack/react-query: Gestión de estado y caché
+  - date-fns: Manipulación de fechas
+  - react-i18next: Internacionalización (preparado)
+
+BACKEND:
+  - PostgreSQL 15+: Base de datos
+  - PostGIS: Extensiones geoespaciales (futuro)
+  - pg_cron: Jobs programados (futuro)
+
+DESARROLLO:
+  - TypeScript: Tipado estático
+  - ESLint: Linting
+  - Prettier: Formateo de código (configurado)
+
+10. ESTRUCTURA DEL PROYECTO
+----------------------------
+
+FRONTEND:
+  src/
+    components/
+      base/           - Componentes reutilizables (modales, botones)
+      feature/        - Componentes de funcionalidad (navbar, sidebar)
+    pages/
+      [modulo]/
+        page.tsx      - Componente principal del módulo
+        components/   - Componentes específicos del módulo
+    services/         - Servicios de comunicación con backend
+    hooks/            - Custom hooks (usePermissions, etc.)
+    contexts/         - Contextos de React (AuthContext)
+    types/            - Definiciones de tipos TypeScript
+    utils/            - Utilidades (sortDocks, etc.)
+    router/           - Configuración de rutas
+    i18n/             - Internacionalización
+    mocks/            - Datos de prueba
+
+BACKEND:
+  supabase/
+    functions/        - Edge Functions (Deno)
+    migrations/       - Migraciones SQL
+
+11. MÉTRICAS Y KPIs
+-------------------
+
+OPERACIONALES:
+  - Total de reservas (hoy, semana, mes)
+  - Reservas por estado
+  - Ingresos y salidas del día
+  - Tiempo promedio de permanencia
+  - Utilización de andenes (%)
+  - Reservas canceladas (%)
+
+ADMINISTRATIVOS:
+  - Usuarios activos
+  - Correos enviados/fallidos
+  - Errores del sistema
+  - Tiempo de respuesta promedio
+
+NEGOCIO:
+  - Operaciones por proveedor
+  - Operaciones por tipo de carga
+  - Picos de demanda (horas/días)
+  - Eficiencia operativa
+
+═══════════════════════════════════════════════════════════════════════════════
+FIN DE LA PARTE 1
+═══════════════════════════════════════════════════════════════════════════════
+
+Continúa en: ANALISIS_PARTE_2_DICCIONARIO_ENTIDADES.txt

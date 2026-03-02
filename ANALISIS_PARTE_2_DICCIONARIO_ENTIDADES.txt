@@ -1,0 +1,516 @@
+═══════════════════════════════════════════════════════════════════════════════
+  ANÁLISIS EXHAUSTIVO DEL SISTEMA DE RESERVAS OLO
+  PARTE 2: DICCIONARIO DE ENTIDADES (TABLAS DE BASE DE DATOS)
+═══════════════════════════════════════════════════════════════════════════════
+
+═══════════════════════════════════════════════════════════════════════════════
+B) DICCIONARIO DE ENTIDADES
+═══════════════════════════════════════════════════════════════════════════════
+
+1. ORGANIZACIONES Y USUARIOS
+-----------------------------
+
+organizations
+  Propósito: Tabla raíz del multi-tenant
+  Campos:
+    - id (UUID, PK)
+    - name (TEXT)
+    - created_at (TIMESTAMPTZ)
+  Relaciones:
+    - Todas las demás tablas tienen FK a organizations(id)
+  Notas:
+    - Organización principal: 946ddabf-3874-4c57-85c2-ea7d4b5937f8
+    - Cada registro representa una empresa/organización independiente
+
+profiles
+  Propósito: Extensión de auth.users de Supabase
+  Campos:
+    - id (UUID, PK, FK a auth.users)
+    - name (TEXT)
+    - email (TEXT)
+    - avatar_url (TEXT, nullable)
+    - created_at (TIMESTAMPTZ)
+    - updated_at (TIMESTAMPTZ)
+  Relaciones:
+    - 1:1 con auth.users
+    - 1:N con user_org_roles
+  Notas:
+    - Se crea automáticamente al registrar usuario
+    - Contiene datos de perfil público
+
+user_org_roles
+  Propósito: Asigna roles a usuarios dentro de organizaciones
+  Campos:
+    - id (UUID, PK)
+    - user_id (UUID, FK a profiles)
+    - org_id (UUID, FK a organizations)
+    - role_id (UUID, FK a roles)
+    - assigned_by (UUID, FK a profiles, nullable)
+    - assigned_at (TIMESTAMPTZ)
+  Relaciones:
+    - N:1 con profiles (user_id)
+    - N:1 con organizations
+    - N:1 con roles
+  Notas:
+    - Un usuario puede tener diferentes roles en diferentes orgs
+    - Unique constraint: (user_id, org_id)
+
+roles
+  Propósito: Define roles del sistema
+  Campos:
+    - id (UUID, PK)
+    - name (TEXT, unique)
+    - description (TEXT, nullable)
+    - created_at (TIMESTAMPTZ)
+  Relaciones:
+    - 1:N con user_org_roles
+    - 1:N con role_permissions
+  Notas:
+    - Roles son globales, no por org
+    - Ejemplos: Admin, Supervisor, Operador, Casetilla
+
+permissions
+  Propósito: Define permisos granulares del sistema
+  Campos:
+    - id (UUID, PK)
+    - name (TEXT, unique)
+    - description (TEXT, nullable)
+    - category (TEXT, nullable)
+    - created_at (TIMESTAMPTZ)
+  Relaciones:
+    - 1:N con role_permissions
+  Notas:
+    - Permisos son globales, no por org
+    - Formato: modulo.accion (ej: calendar.view, reservations.create)
+    - Categorías: calendar, reservations, admin, casetilla, etc.
+
+role_permissions
+  Propósito: Matriz que conecta roles con permisos
+  Campos:
+    - id (UUID, PK)
+    - role_id (UUID, FK a roles)
+    - permission_id (UUID, FK a permissions)
+    - created_at (TIMESTAMPTZ)
+  Relaciones:
+    - N:1 con roles
+    - N:1 con permissions
+  Notas:
+    - Relación N:N entre roles y permissions
+    - Unique constraint: (role_id, permission_id)
+
+2. ALMACENES Y ANDENES
+----------------------
+
+warehouses
+  Propósito: Representa almacenes físicos
+  Campos:
+    - id (UUID, PK)
+    - org_id (UUID, FK a organizations)
+    - name (TEXT)
+    - location (TEXT, nullable)
+    - business_start_time (TIME) - ej: '06:00:00'
+    - business_end_time (TIME) - ej: '17:00:00'
+    - slot_interval_minutes (INTEGER) - 15, 30 o 60
+    - created_at (TIMESTAMPTZ)
+    - updated_at (TIMESTAMPTZ)
+  Relaciones:
+    - N:1 con organizations
+    - 1:N con docks
+  Notas:
+    - Define horario hábil y granularidad del calendario
+    - slot_interval_minutes determina el tamaño de cada slot
+
+docks
+  Propósito: Andenes/rampas de carga/descarga
+  Campos:
+    - id (UUID, PK)
+    - org_id (UUID, FK a organizations)
+    - name (TEXT)
+    - warehouse_id (UUID, FK a warehouses, nullable)
+    - category_id (UUID, FK a dock_categories, nullable)
+    - status_id (UUID, FK a dock_statuses, nullable)
+    - is_active (BOOLEAN, default true)
+    - created_at (TIMESTAMPTZ)
+    - updated_at (TIMESTAMPTZ)
+  Relaciones:
+    - N:1 con organizations
+    - N:1 con warehouses
+    - N:1 con dock_categories
+    - N:1 con dock_statuses
+    - 1:N con reservations
+  Notas:
+    - Un almacén tiene N andenes
+    - Ordenamiento: sortDocksByNameNumber (orden natural)
+
+dock_categories
+  Propósito: Categorías de andenes
+  Campos:
+    - id (UUID, PK)
+    - org_id (UUID, FK a organizations)
+    - name (TEXT)
+    - code (TEXT)
+    - color (TEXT, nullable) - código hexadecimal
+    - created_at (TIMESTAMPTZ)
+  Relaciones:
+    - N:1 con organizations
+    - 1:N con docks
+  Notas:
+    - Ejemplos: Carga, Descarga, Mixto
+    - Color se usa en UI para identificación visual
+
+dock_statuses
+  Propósito: Estados operativos de andenes
+  Campos:
+    - id (UUID, PK)
+    - org_id (UUID, FK a organizations)
+    - name (TEXT)
+    - code (TEXT)
+    - color (TEXT, nullable)
+    - is_blocking (BOOLEAN, default false)
+    - created_at (TIMESTAMPTZ)
+  Relaciones:
+    - N:1 con organizations
+    - 1:N con docks
+  Notas:
+    - is_blocking: si TRUE, el andén no acepta reservas
+    - Ejemplos: Disponible, En mantenimiento, Fuera de servicio
+
+dock_time_blocks
+  Propósito: Bloqueos temporales de andenes
+  Campos:
+    - id (UUID, PK)
+    - org_id (UUID, FK a organizations)
+    - dock_id (UUID, FK a docks)
+    - start_datetime (TIMESTAMPTZ)
+    - end_datetime (TIMESTAMPTZ)
+    - reason (TEXT)
+    - created_by (UUID, FK a profiles)
+    - created_at (TIMESTAMPTZ)
+  Relaciones:
+    - N:1 con organizations
+    - N:1 con docks
+    - N:1 con profiles (created_by)
+  Notas:
+    - Impide reservas en ese andén durante el período bloqueado
+    - Usado para mantenimiento, eventos especiales, etc.
+
+3. RESERVAS (CORE DEL SISTEMA)
+-------------------------------
+
+reservations
+  Propósito: Tabla central del sistema - Reservas de andenes
+  Campos principales:
+    - id (UUID, PK)
+    - org_id (UUID, FK a organizations)
+    - dock_id (UUID, FK a docks)
+    - start_datetime (TIMESTAMPTZ)
+    - end_datetime (TIMESTAMPTZ)
+    - dua (TEXT) - Documento Único Aduanero - OBLIGATORIO
+    - invoice (TEXT) - Factura - OBLIGATORIO
+    - driver (TEXT) - Chofer - OBLIGATORIO
+    - truck_plate (TEXT, nullable) - Matrícula del camión
+    - purchase_order (TEXT, nullable) - Orden de Compra
+    - order_request_number (TEXT, nullable) - Número de Pedido
+    - shipper_provider (TEXT, nullable) - Proveedor/Expedidor (UUID o texto)
+    - cargo_type (TEXT, nullable) - Tipo de Carga (UUID FK a cargo_types)
+    - status_id (UUID, FK a reservation_statuses, nullable)
+    - transport_type (TEXT, nullable) - inbound/outbound
+    - is_cancelled (BOOLEAN, default false)
+    - cancel_reason (TEXT, nullable)
+    - cancelled_by (UUID, FK a profiles, nullable)
+    - cancelled_at (TIMESTAMPTZ, nullable)
+    - notes (TEXT, nullable) - Observaciones
+    - created_by (UUID, FK a profiles)
+    - created_at (TIMESTAMPTZ)
+    - updated_by (UUID, FK a profiles, nullable)
+    - updated_at (TIMESTAMPTZ)
+    - recurrence (JSONB, nullable) - Para recurrencias futuras
+  Relaciones:
+    - N:1 con organizations
+    - N:1 con docks
+    - N:1 con reservation_statuses
+    - N:1 con profiles (created_by, updated_by, cancelled_by)
+    - 1:N con reservation_files
+    - 1:N con reservation_activity_log
+    - 1:1 con casetilla_ingresos (opcional)
+    - 1:1 con casetilla_salidas (opcional)
+  Constraints importantes:
+    - Exclusion constraint: NO permite solapes de horario en mismo andén
+    - CHECK: end_datetime > start_datetime (recomendado agregar)
+  RLS Policies:
+    - org_id = auth.jwt()->>'org_id'
+    - user_providers permite ese proveedor (si shipper_provider es UUID)
+  Notas:
+    - shipper_provider puede ser UUID (FK a providers) o texto libre
+    - cargo_type es UUID (FK a cargo_types)
+    - Exclusion constraint previene double-booking
+
+reservation_statuses
+  Propósito: Estados del ciclo de vida de una reserva
+  Campos:
+    - id (UUID, PK)
+    - org_id (UUID, FK a organizations)
+    - name (TEXT)
+    - code (TEXT) - Identificador único
+    - color (TEXT, nullable) - Código hexadecimal
+    - order_index (INTEGER, nullable) - Orden de visualización
+    - created_at (TIMESTAMPTZ)
+  Relaciones:
+    - N:1 con organizations
+    - 1:N con reservations
+  Codes principales:
+    - PENDING - Reserva creada, pendiente de arribo
+    - ARRIVED_PENDING_UNLOAD - Arribó al almacén, pendiente descarga
+    - DISPATCHED - Despachado, salió del almacén
+  Otros posibles:
+    - CONFIRMED - Reserva confirmada
+    - NO_SHOW - Vehículo no arribó
+    - IN_PROGRESS - Operación en progreso
+    - COMPLETED - Operación completada
+    - CANCELLED - Reserva cancelada
+  Notas:
+    - Unique constraint: (org_id, code)
+    - order_index determina orden en UI
+
+reservation_files
+  Propósito: Documentos adjuntos a reservas
+  Campos:
+    - id (UUID, PK)
+    - org_id (UUID, FK a organizations)
+    - reservation_id (UUID, FK a reservations)
+    - category (TEXT) - cmr, facturas, otros, internos
+    - file_name (TEXT)
+    - file_url (TEXT) - Path en Supabase Storage
+    - file_size (INTEGER, nullable) - Tamaño en bytes
+    - mime_type (TEXT, nullable)
+    - uploaded_by (UUID, FK a profiles)
+    - uploaded_at (TIMESTAMPTZ)
+  Relaciones:
+    - N:1 con organizations
+    - N:1 con reservations
+    - N:1 con profiles (uploaded_by)
+  Storage:
+    - Bucket: reservation-files
+    - Path: org_id/reservations/reservation_id/category/timestamp_filename
+  Notas:
+    - file_url es el path en Storage, NO la URL pública
+    - Para acceder: usar getReservationFileSignedUrl()
+
+reservation_activity_log
+  Propósito: Log de cambios en reservas
+  Campos:
+    - id (UUID, PK)
+    - org_id (UUID, FK a organizations)
+    - reservation_id (UUID, FK a reservations)
+    - event_type (TEXT) - created, updated, status_changed, etc.
+    - field_changed (TEXT, nullable)
+    - old_value (TEXT, nullable)
+    - new_value (TEXT, nullable)
+    - user_id (UUID, FK a profiles)
+    - created_at (TIMESTAMPTZ)
+  Relaciones:
+    - N:1 con organizations
+    - N:1 con reservations
+    - N:1 con profiles (user_id)
+  Event types:
+    - created - Reserva creada
+    - updated - Reserva actualizada
+    - status_changed - Cambio de estado
+    - document_uploaded - Documento subido
+    - document_deleted - Documento eliminado
+    - cancelled - Reserva cancelada
+  Notas:
+    - Registro inmutable (no se actualiza ni elimina)
+    - Usado para auditoría y trazabilidad
+
+4. PUNTO CONTROL IN/OUT (CASETILLA)
+------------------------------------
+
+casetilla_ingresos
+  Propósito: Registra ingresos de vehículos al almacén
+  Campos:
+    - id (UUID, PK)
+    - org_id (UUID, FK a organizations)
+    - reservation_id (UUID, FK a reservations, nullable)
+    - chofer (TEXT)
+    - matricula (TEXT)
+    - dua (TEXT)
+    - factura (TEXT)
+    - orden_compra (TEXT, nullable)
+    - numero_pedido (TEXT, nullable)
+    - created_by (UUID, FK a profiles)
+    - created_at (TIMESTAMPTZ)
+    - updated_at (TIMESTAMPTZ)
+  Relaciones:
+    - N:1 con organizations
+    - N:1 con reservations (opcional)
+    - N:1 con profiles (created_by)
+  Reglas de negocio:
+    - Al crear ingreso, busca reserva por DUA + matrícula
+    - Si encuentra reserva, actualiza status_id a ARRIVED_PENDING_UNLOAD
+    - Dispara evento de correspondencia (cambio de estado)
+    - Si no encuentra reserva, igual registra el ingreso
+  Notas:
+    - reservation_id puede ser NULL (ingresos sin reserva previa)
+    - created_at es la fecha/hora de ingreso al almacén
+
+casetilla_salidas
+  Propósito: Registra salidas de vehículos del almacén
+  Campos:
+    - id (UUID, PK)
+    - org_id (UUID, FK a organizations)
+    - reservation_id (UUID, FK a reservations)
+    - chofer (TEXT)
+    - matricula (TEXT)
+    - dua (TEXT, nullable)
+    - exit_at (TIMESTAMPTZ) - Fecha/hora de salida
+    - created_by (UUID, FK a profiles, nullable)
+    - created_at (TIMESTAMPTZ)
+  Relaciones:
+    - N:1 con organizations
+    - N:1 con reservations
+    - N:1 con profiles (created_by)
+  Constraints:
+    - Unique: (org_id, reservation_id) - Una reserva solo puede tener UNA salida
+  Reglas de negocio:
+    - Solo se puede crear salida si existe ingreso previo
+    - Al crear salida, actualiza status_id de reserva a DISPATCHED
+    - Dispara evento de correspondencia (cambio de estado)
+  Notas:
+    - reservation_id es OBLIGATORIO (no puede ser NULL)
+    - exit_at es la fecha/hora de salida del almacén
+
+RPC: get_pending_reservations_v2
+  Propósito: Función SQL que retorna reservas elegibles para ingreso
+  Parámetros:
+    - p_org_id (UUID)
+  Retorna:
+    - Reservas con status PENDING sin ingreso previo
+  Condiciones:
+    - status.code = 'PENDING'
+    - is_cancelled = false
+    - NOT EXISTS en casetilla_ingresos (nunca tuvo ingreso)
+  Ordenamiento:
+    - created_at DESC
+  Notas:
+    - Reemplaza lógica compleja en frontend
+    - Más eficiente que múltiples queries
+
+5. PROVEEDORES Y CLIENTES
+--------------------------
+
+providers
+  Propósito: Proveedores/Expedidores
+  Campos:
+    - id (UUID, PK)
+    - org_id (UUID, FK a organizations)
+    - name (TEXT)
+    - code (TEXT, nullable)
+    - contact_email (TEXT, nullable)
+    - contact_phone (TEXT, nullable)
+    - is_active (BOOLEAN, default true)
+    - created_at (TIMESTAMPTZ)
+    - updated_at (TIMESTAMPTZ)
+  Relaciones:
+    - N:1 con organizations
+    - 1:N con user_providers
+    - 1:N con provider_cargo_time_profiles
+  Notas:
+    - Representa empresas que envían mercancía
+    - code es identificador interno opcional
+
+clients
+  Propósito: Clientes del almacén
+  Campos:
+    - id (UUID, PK)
+    - org_id (UUID, FK a organizations)
+    - name (TEXT)
+    - code (TEXT, nullable)
+    - contact_email (TEXT, nullable)
+    - contact_phone (TEXT, nullable)
+    - is_active (BOOLEAN, default true)
+    - created_at (TIMESTAMPTZ)
+    - updated_at (TIMESTAMPTZ)
+  Relaciones:
+    - N:1 con organizations
+    - 1:N con client_providers
+    - 1:N con client_docks
+    - 1:N con warehouse_clients
+  Notas:
+    - Representa empresas que reciben mercancía
+    - Usado para reglas de asignación de andenes
+
+user_providers
+  Propósito: Asigna proveedores a usuarios
+  Campos:
+    - id (UUID, PK)
+    - org_id (UUID, FK a organizations)
+    - user_id (UUID, FK a profiles)
+    - provider_id (UUID, FK a providers)
+    - assigned_by (UUID, FK a profiles, nullable)
+    - assigned_at (TIMESTAMPTZ)
+  Relaciones:
+    - N:1 con organizations
+    - N:1 con profiles (user_id, assigned_by)
+    - N:1 con providers
+  Restricción:
+    - Usuarios solo pueden crear reservas para sus proveedores asignados
+  Notas:
+    - Unique constraint: (org_id, user_id, provider_id)
+    - RLS usa esta tabla para filtrar reservas
+
+client_providers
+  Propósito: Relación N:N entre clientes y proveedores
+  Campos:
+    - id (UUID, PK)
+    - org_id (UUID, FK a organizations)
+    - client_id (UUID, FK a clients)
+    - provider_id (UUID, FK a providers)
+    - created_at (TIMESTAMPTZ)
+  Relaciones:
+    - N:1 con organizations
+    - N:1 con clients
+    - N:1 con providers
+  Notas:
+    - Define qué proveedores trabajan con qué clientes
+
+client_docks
+  Propósito: Asigna andenes específicos a clientes
+  Campos:
+    - id (UUID, PK)
+    - org_id (UUID, FK a organizations)
+    - client_id (UUID, FK a clients)
+    - dock_id (UUID, FK a docks)
+    - allocation_mode (TEXT) - 'ODD_FIRST' o 'SEQUENTIAL'
+    - created_at (TIMESTAMPTZ)
+  Relaciones:
+    - N:1 con organizations
+    - N:1 con clients
+    - N:1 con docks
+  Allocation modes:
+    - ODD_FIRST: Intercalado (usa andenes impares primero, luego pares)
+    - SEQUENTIAL: Secuencial (usa andenes en orden)
+  Notas:
+    - Usado para reglas de asignación automática de andenes
+    - Si un cliente tiene andenes asignados, solo puede usar esos
+
+warehouse_clients
+  Propósito: Asigna clientes a almacenes
+  Campos:
+    - id (UUID, PK)
+    - org_id (UUID, FK a organizations)
+    - warehouse_id (UUID, FK a warehouses)
+    - client_id (UUID, FK a clients)
+    - created_at (TIMESTAMPTZ)
+  Relaciones:
+    - N:1 con organizations
+    - N:1 con warehouses
+    - N:1 con clients
+  Notas:
+    - Define qué clientes operan en qué almacenes
+
+═══════════════════════════════════════════════════════════════════════════════
+FIN DE LA PARTE 2
+═══════════════════════════════════════════════════════════════════════════════
+
+Continúa en: ANALISIS_PARTE_3_CATALOGOS_Y_CORRESPONDENCIA.txt

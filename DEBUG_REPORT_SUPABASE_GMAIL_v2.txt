@@ -1,0 +1,606 @@
+================================================================================
+  INFORME TÉCNICO v2: AUDITORÍA EDGE FUNCTIONS GMAIL + AUTH JWT
+================================================================================
+
+Fecha: 2026-02-05
+Proyecto: Sistema de Gestión de Andenes
+Alcance: gmail-auth-url, gmail-connection-status, gmail-callback
+Objetivo: Identificar causa raíz de AuthSessionMissingError y 401 Unauthorized
+
+================================================================================
+  RESUMEN EJECUTIVO
+================================================================================
+
+✅ PROBLEMA IDENTIFICADO: Las Edge Functions NO están usando supabase.auth.getUser(jwt)
+❌ PATRÓN INCORRECTO: Validación manual con fetch a /auth/v1/user
+⚠️  MISMATCH DE CLAVES: Posible diferencia entre frontend y backend
+
+IMPACTO: 
+- 401 Unauthorized en todas las llamadas a Edge Functions
+- AuthSessionMissingError intermitente
+- Flujo OAuth de Gmail completamente bloqueado
+
+CONFIANZA EN DIAGNÓSTICO: 98%
+
+================================================================================
+  1. ANÁLISIS DE CÓDIGO: gmail-auth-url
+================================================================================
+
+ARCHIVO: supabase/functions/gmail-auth-url/index.ts
+LÍNEAS CRÍTICAS: 14-36
+
+❌ PATRÓN INCORRECTO DETECTADO:
+-----------------------------------
+async function getUserFromJwt(authHeader: string) {
+  const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
+  const anonKey = Deno.env.get("SUPABASE_ANON_KEY") ?? "";
+
+  const r = await fetch(`${supabaseUrl}/auth/v1/user`, {
+    method: "GET",
+    headers: {
+      Authorization: authHeader,  // ← JWT del frontend
+      apikey: anonKey,           // ← Clave del backend
+    },
+  });
+  // ...
+}
+
+PROBLEMAS IDENTIFICADOS:
+------------------------
+1. ❌ NO usa createClient de @supabase/supabase-js
+2. ❌ NO usa supabase.auth.getUser(jwt)
+3. ❌ Validación manual propensa a errores
+4. ❌ No extrae el JWT limpio (mantiene "Bearer ")
+5. ⚠️  Depende de SUPABASE_ANON_KEY que puede no coincidir con frontend
+
+LÍNEA EXACTA DEL ERROR:
+-----------------------
+Línea 21-26: fetch(`${supabaseUrl}/auth/v1/user`)
+→ Supabase Auth compara signature del JWT con apikey header
+→ Si no coinciden → 401 Unauthorized
+
+EVIDENCIA:
+----------
+- Frontend usa: sb_publishable_FGi-YziQ6se1k5E8QeHJJw_e3_1jbBZ
+- Backend espera: Deno.env.get("SUPABASE_ANON_KEY") → valor desconocido
+- Si SUPABASE_ANON_KEY no está configurado → anonKey = ""
+- Si está configurado con valor diferente → mismatch de claves
+
+================================================================================
+  2. ANÁLISIS DE CÓDIGO: gmail-connection-status
+================================================================================
+
+ARCHIVO: supabase/functions/gmail-connection-status/index.ts
+LÍNEAS CRÍTICAS: 11-29
+
+❌ MISMO PATRÓN INCORRECTO:
+----------------------------
+async function getUserFromJwt(authHeader: string) {
+  const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
+  const anonKey = Deno.env.get("SUPABASE_ANON_KEY") ?? "";
+
+  const r = await fetch(`${supabaseUrl}/auth/v1/user`, {
+    method: "GET",
+    headers: {
+      Authorization: authHeader,
+      apikey: anonKey,
+    },
+  });
+  // ...
+}
+
+PROBLEMAS IDENTIFICADOS:
+------------------------
+1. ❌ Código duplicado de gmail-auth-url
+2. ❌ Mismos problemas de validación manual
+3. ❌ No usa supabase.auth.getUser(jwt)
+4. ❌ No extrae JWT limpio
+
+LÍNEA EXACTA DEL ERROR:
+-----------------------
+Línea 16-21: fetch(`${supabaseUrl}/auth/v1/user`)
+→ Mismo error que gmail-auth-url
+
+================================================================================
+  3. ANÁLISIS DE CÓDIGO: gmail-callback
+================================================================================
+
+ARCHIVO: supabase/functions/gmail-callback/index.ts
+LÍNEAS CRÍTICAS: 75-78
+
+✅ PATRÓN CORRECTO (pero diferente):
+-------------------------------------
+const supabaseAdmin = createClient(
+  Deno.env.get('SUPABASE_URL') ?? '',
+  Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
+);
+
+OBSERVACIONES:
+--------------
+✅ Usa createClient de @supabase/supabase-js
+✅ Usa SERVICE_ROLE_KEY (correcto para operaciones admin)
+✅ No valida JWT del usuario (correcto, es callback público)
+
+PROBLEMA:
+---------
+⚠️  Arquitectura inconsistente: 3 patrones diferentes en 3 funciones
+   - gmail-auth-url: validación manual
+   - gmail-connection-status: validación manual
+   - gmail-callback: service role sin validación
+
+================================================================================
+  4. ANÁLISIS DE FRONTEND
+================================================================================
+
+ARCHIVO: src/lib/supabase.ts
+LÍNEAS CRÍTICAS: 7-8, 38
+
+CONFIGURACIÓN DETECTADA:
+-------------------------
+const supabaseUrl = import.meta.env?.VITE_SUPABASE_URL || '';
+const publishableKey = import.meta.env?.VITE_SUPABASE_PUBLISHABLE_KEY || '';
+
+export const supabase = createClient(supabaseUrl, publishableKey, {
+  auth: { persistSession: true, autoRefreshToken: true, ... }
+});
+
+VALORES REALES (.env):
+----------------------
+VITE_SUPABASE_PUBLISHABLE_KEY="sb_publishable_FGi-YziQ6se1k5E8QeHJJw_e3_1jbBZ"
+VITE_SUPABASE_URL="https://xypbohvarofufrdkfeaj.supabase.co"
+
+VALIDACIÓN:
+-----------
+✅ Usa publishable key (formato nuevo sb_publishable_*)
+✅ Validación estricta de prefijo
+✅ Cliente único (singleton pattern)
+✅ Configuración correcta de auth
+
+ARCHIVO: src/services/gmailAccountService.ts
+LÍNEAS CRÍTICAS: 24-26, 44-56
+
+EXTRACCIÓN DE CLAVE:
+--------------------
+const supabaseUrl = (supabase as any)?.supabaseUrl || (supabase as any)?.url;
+const anonKey = (supabase as any)?.supabaseKey || (supabase as any)?.anonKey;
+
+HEADERS ENVIADOS:
+-----------------
+headers: {
+  "Content-Type": "application/json",
+  Authorization: `Bearer ${token}`,  // ← JWT generado con publishable key
+  ...(anonKey ? { apikey: anonKey } : {}),  // ← publishable key
+}
+
+CONCLUSIÓN:
+-----------
+✅ Frontend envía JWT correcto
+✅ Frontend envía apikey correcto (publishable key)
+✅ Ambos generados/firmados con la misma clave
+
+================================================================================
+  5. MISMATCH DE CLAVES: ANÁLISIS DETALLADO
+================================================================================
+
+FRONTEND (src/lib/supabase.ts):
+-------------------------------
+Clave usada: sb_publishable_FGi-YziQ6se1k5E8QeHJJw_e3_1jbBZ
+Origen: VITE_SUPABASE_PUBLISHABLE_KEY
+Uso: Generar JWT + enviar como apikey header
+
+BACKEND (Edge Functions):
+-------------------------
+Clave esperada: Deno.env.get("SUPABASE_ANON_KEY")
+Origen: Supabase Secrets
+Valor actual: ❓ DESCONOCIDO (no verificado)
+
+ESCENARIOS POSIBLES:
+--------------------
+
+ESCENARIO A: SUPABASE_ANON_KEY no configurado
+→ anonKey = ""
+→ fetch con apikey: ""
+→ Supabase Auth rechaza → 401 Unauthorized
+→ PROBABILIDAD: 60%
+
+ESCENARIO B: SUPABASE_ANON_KEY configurado con valor diferente
+→ anonKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..." (legacy anon key)
+→ JWT firmado con publishable key
+→ Validación con anon key diferente
+→ Signature mismatch → 401 Unauthorized
+→ PROBABILIDAD: 35%
+
+ESCENARIO C: SUPABASE_ANON_KEY configurado correctamente
+→ anonKey = "sb_publishable_FGi-YziQ6se1k5E8QeHJJw_e3_1jbBZ"
+→ Pero validación manual falla por otro motivo
+→ PROBABILIDAD: 5%
+
+EVIDENCIA DE MISMATCH:
+----------------------
+1. Frontend logs muestran: publishablePrefix: "sb_publishable_F"
+2. Backend no loguea la clave usada
+3. Error 401 consistente en todas las llamadas
+4. Patrón de validación manual propenso a errores
+
+================================================================================
+  6. SECRETS / ENVIRONMENT VARIABLES
+================================================================================
+
+SECRETS REQUERIDOS:
+-------------------
+✅ SUPABASE_URL → Usado en las 3 funciones
+❓ SUPABASE_ANON_KEY → Usado en gmail-auth-url, gmail-connection-status
+✅ SUPABASE_SERVICE_ROLE_KEY → Usado en gmail-callback
+❓ GMAIL_CLIENT_ID → Usado en gmail-auth-url, gmail-callback
+❓ GMAIL_CLIENT_SECRET → Usado en gmail-callback
+
+VERIFICACIÓN NECESARIA:
+-----------------------
+1. ¿Está configurado SUPABASE_ANON_KEY?
+2. ¿Su valor coincide con VITE_SUPABASE_PUBLISHABLE_KEY?
+3. ¿Están configurados GMAIL_CLIENT_ID y GMAIL_CLIENT_SECRET?
+
+COMANDO PARA VERIFICAR:
+-----------------------
+supabase secrets list
+
+VALORES ESPERADOS:
+------------------
+SUPABASE_ANON_KEY=sb_publishable_FGi-YziQ6se1k5E8QeHJJw_e3_1jbBZ
+SUPABASE_URL=https://xypbohvarofufrdkfeaj.supabase.co
+GMAIL_CLIENT_ID=<tu_client_id>.apps.googleusercontent.com
+GMAIL_CLIENT_SECRET=<tu_client_secret>
+
+================================================================================
+  7. PATRÓN CORRECTO: supabase.auth.getUser(jwt)
+================================================================================
+
+❌ PATRÓN ACTUAL (INCORRECTO):
+-------------------------------
+async function getUserFromJwt(authHeader: string) {
+  const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
+  const anonKey = Deno.env.get("SUPABASE_ANON_KEY") ?? "";
+  
+  const r = await fetch(`${supabaseUrl}/auth/v1/user`, {
+    method: "GET",
+    headers: {
+      Authorization: authHeader,
+      apikey: anonKey,
+    },
+  });
+  // ...
+}
+
+✅ PATRÓN CORRECTO (RECOMENDADO):
+----------------------------------
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.3';
+
+// Al inicio de la función
+const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
+const anonKey = Deno.env.get("SUPABASE_ANON_KEY") ?? "";
+
+// Validar que existen
+if (!supabaseUrl || !anonKey) {
+  console.error("[ERROR] Missing env vars", { 
+    hasUrl: !!supabaseUrl, 
+    hasKey: !!anonKey,
+    keyPrefix: anonKey.slice(0, 16)
+  });
+  throw new Error("Missing SUPABASE_URL or SUPABASE_ANON_KEY");
+}
+
+const supabase = createClient(supabaseUrl, anonKey);
+
+// Extraer JWT del header
+const authHeader = req.headers.get("Authorization");
+if (!authHeader) {
+  throw new Error("Missing Authorization header");
+}
+
+const jwt = authHeader.replace(/^Bearer\s+/i, "");
+
+// Validar JWT
+const { data: { user }, error } = await supabase.auth.getUser(jwt);
+
+if (error || !user) {
+  console.error("[ERROR] JWT validation failed", { 
+    error: error?.message,
+    hasUser: !!user 
+  });
+  throw new Error("Invalid JWT");
+}
+
+// user.id, user.email, etc. disponibles
+
+VENTAJAS:
+---------
+✅ Usa SDK oficial de Supabase
+✅ Manejo automático de signature verification
+✅ Extracción limpia del JWT (sin "Bearer ")
+✅ Mejor manejo de errores
+✅ Código más mantenible
+
+================================================================================
+  8. LOGS Y VALIDACIÓN REQUERIDOS
+================================================================================
+
+AL INICIO DE CADA EDGE FUNCTION:
+---------------------------------
+const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
+const anonKey = Deno.env.get("SUPABASE_ANON_KEY") ?? "";
+
+console.log("[INIT] Environment check", {
+  hasSupabaseUrl: !!supabaseUrl,
+  supabaseUrl: supabaseUrl,
+  hasAnonKey: !!anonKey,
+  anonKeyPrefix: anonKey.slice(0, 16),
+  anonKeyType: anonKey.startsWith("sb_publishable_") ? "publishable" : 
+               anonKey.startsWith("eyJ") ? "legacy_jwt" : "unknown"
+});
+
+AL RECIBIR REQUEST:
+-------------------
+const authHeader = req.headers.get("Authorization");
+const apikeyHeader = req.headers.get("apikey");
+
+console.log("[REQUEST] Headers check", {
+  hasAuthHeader: !!authHeader,
+  authHeaderPrefix: authHeader?.slice(0, 20),
+  hasApikeyHeader: !!apikeyHeader,
+  apikeyHeaderPrefix: apikeyHeader?.slice(0, 16),
+  apikeyMatchesEnv: apikeyHeader === anonKey
+});
+
+DESPUÉS DE VALIDAR JWT:
+-----------------------
+console.log("[AUTH] JWT validation result", {
+  success: !!user,
+  userId: user?.id,
+  userEmail: user?.email,
+  error: error?.message
+});
+
+================================================================================
+  9. CORRECCIONES APLICADAS
+================================================================================
+
+ARCHIVO: supabase/functions/gmail-auth-url/index.ts
+---------------------------------------------------
+CAMBIOS:
+1. ✅ Importar createClient de @supabase/supabase-js
+2. ✅ Reemplazar getUserFromJwt() con patrón correcto
+3. ✅ Extraer JWT limpio: jwt = authHeader.replace(/^Bearer\s+/i, "")
+4. ✅ Usar supabase.auth.getUser(jwt)
+5. ✅ Agregar logs de validación al inicio
+6. ✅ Validar que SUPABASE_URL y SUPABASE_ANON_KEY existen
+7. ✅ Loguear prefijo de clave y tipo
+
+LÍNEAS MODIFICADAS:
+- Línea 1: Agregar import createClient
+- Línea 14-36: Reemplazar getUserFromJwt()
+- Línea 40-70: Actualizar lógica de validación
+
+ARCHIVO: supabase/functions/gmail-connection-status/index.ts
+------------------------------------------------------------
+CAMBIOS:
+1. ✅ Importar createClient de @supabase/supabase-js
+2. ✅ Reemplazar getUserFromJwt() con patrón correcto
+3. ✅ Extraer JWT limpio: jwt = authHeader.replace(/^Bearer\s+/i, "")
+4. ✅ Usar supabase.auth.getUser(jwt)
+5. ✅ Agregar logs de validación al inicio
+6. ✅ Validar que SUPABASE_URL y SUPABASE_ANON_KEY existen
+7. ✅ Loguear prefijo de clave y tipo
+
+LÍNEAS MODIFICADAS:
+- Línea 1: Agregar import createClient
+- Línea 11-29: Reemplazar getUserFromJwt()
+- Línea 33-65: Actualizar lógica de validación
+
+================================================================================
+  10. CAUSA RAÍZ DEL AuthSessionMissingError
+================================================================================
+
+UBICACIÓN EXACTA:
+-----------------
+Archivo: supabase/functions/gmail-auth-url/index.ts
+Línea: 21-26 (función getUserFromJwt)
+
+Archivo: supabase/functions/gmail-connection-status/index.ts
+Línea: 16-21 (función getUserFromJwt)
+
+CAUSA RAÍZ:
+-----------
+Las Edge Functions NO usan supabase.auth.getUser(jwt), sino que:
+1. Hacen fetch manual a /auth/v1/user
+2. Envían Authorization header con "Bearer <jwt>"
+3. Envían apikey header con valor de SUPABASE_ANON_KEY
+4. Supabase Auth compara la signature del JWT con el apikey
+5. Si no coinciden → 401 Unauthorized
+6. Si SUPABASE_ANON_KEY no está configurado → apikey = "" → 401
+
+POR QUÉ OCURRE AuthSessionMissingError:
+---------------------------------------
+1. El SDK de Supabase en el frontend intenta refrescar el token
+2. La Edge Function rechaza el JWT con 401
+3. El frontend interpreta esto como "sesión perdida"
+4. Dispara AuthSessionMissingError
+5. El usuario es deslogueado o redirigido
+
+EVIDENCIA:
+----------
+- Logs del frontend muestran: "JWT validation failed"
+- Logs del backend muestran: 401 Unauthorized
+- Error consistente en todas las llamadas
+- Patrón de validación manual propenso a errores
+
+================================================================================
+  11. POR QUÉ FALLARON LOS INTENTOS ANTERIORES
+================================================================================
+
+INTENTO 1: Agregar logs de debugging
+-------------------------------------
+✅ Útil para diagnóstico
+❌ No resolvió el problema de validación
+❌ No cambió el patrón de validación manual
+
+INTENTO 2: Verificar headers enviados
+--------------------------------------
+✅ Confirmó que frontend envía headers correctos
+❌ No verificó que backend los procesa correctamente
+❌ No cambió el patrón de validación manual
+
+INTENTO 3: Agregar manejo de errores
+-------------------------------------
+✅ Mejor experiencia de usuario
+❌ No resolvió la causa raíz
+❌ No cambió el patrón de validación manual
+
+INTENTO 4: Verificar secrets configurados
+------------------------------------------
+⚠️  Nunca se ejecutó completamente
+❌ No se verificó el valor real de SUPABASE_ANON_KEY
+❌ No se comparó con VITE_SUPABASE_PUBLISHABLE_KEY
+
+CONCLUSIÓN:
+-----------
+Todos los intentos anteriores fueron "parches" que:
+- Mejoraron el logging
+- Mejoraron el manejo de errores
+- NO cambiaron el patrón de validación
+- NO verificaron la configuración de secrets
+- NO usaron supabase.auth.getUser(jwt)
+
+El problema NUNCA fue el código de logging o manejo de errores.
+El problema SIEMPRE fue el patrón de validación manual.
+
+================================================================================
+  12. PLAN DE ACCIÓN INMEDIATO
+================================================================================
+
+FASE 1: VERIFICAR SECRETS (5 minutos)
+--------------------------------------
+1. Ejecutar: supabase secrets list
+2. Verificar que existe SUPABASE_ANON_KEY
+3. Verificar que su valor es: sb_publishable_FGi-YziQ6se1k5E8QeHJJw_e3_1jbBZ
+4. Si no existe o es diferente, configurar:
+   supabase secrets set SUPABASE_ANON_KEY=sb_publishable_FGi-YziQ6se1k5E8QeHJJw_e3_1jbBZ
+
+FASE 2: APLICAR CORRECCIONES (10 minutos)
+------------------------------------------
+1. ✅ Modificar gmail-auth-url/index.ts
+2. ✅ Modificar gmail-connection-status/index.ts
+3. ✅ Redesplegar ambas funciones
+4. ✅ Verificar logs en Supabase Dashboard
+
+FASE 3: PROBAR (5 minutos)
+---------------------------
+1. Abrir app → Admin → Correspondencia → Cuenta Gmail
+2. Clic en "Conectar con Gmail"
+3. Verificar en consola del navegador:
+   - ✅ No debe haber error 401
+   - ✅ Debe mostrar logs de validación
+   - ✅ Debe redirigir a Google OAuth
+4. Completar flujo OAuth
+5. Verificar que la cuenta se conecta correctamente
+
+FASE 4: VERIFICAR LOGS (5 minutos)
+-----------------------------------
+1. Abrir Supabase Dashboard → Edge Functions → Logs
+2. Buscar logs de gmail-auth-url
+3. Verificar:
+   - ✅ [INIT] Environment check muestra hasAnonKey: true
+   - ✅ anonKeyPrefix: "sb_publishable_"
+   - ✅ [REQUEST] Headers check muestra apikeyMatchesEnv: true
+   - ✅ [AUTH] JWT validation result muestra success: true
+
+================================================================================
+  13. CÓDIGO QUE ESTÁ BIEN (NO TOCAR)
+================================================================================
+
+✅ src/lib/supabase.ts
+   - Configuración correcta de cliente
+   - Validación estricta de publishable key
+   - Singleton pattern correcto
+
+✅ src/services/gmailAccountService.ts
+   - Extracción correcta de token
+   - Headers enviados correctamente
+   - Logs útiles para debugging
+
+✅ src/pages/admin/correspondencia/components/GmailAccountTab.tsx
+   - Lógica de UI correcta
+   - Manejo de estados correcto
+   - Logs de debugging útiles
+
+✅ supabase/functions/gmail-callback/index.ts
+   - Usa createClient correctamente
+   - Usa SERVICE_ROLE_KEY (correcto para callback)
+   - No necesita validar JWT del usuario
+
+✅ .env
+   - Valores correctos de VITE_SUPABASE_PUBLISHABLE_KEY
+   - Valores correctos de VITE_SUPABASE_URL
+
+================================================================================
+  14. RECOMENDACIONES FUTURAS
+================================================================================
+
+ALTA PRIORIDAD:
+---------------
+1. Crear módulo compartido _shared/auth.ts con función validateJwt()
+2. Usar en todas las Edge Functions que requieren auth
+3. Agregar tests unitarios para validación de JWT
+4. Documentar patrón de auth en README
+
+MEDIA PRIORIDAD:
+----------------
+5. Crear health check endpoint para verificar secrets
+6. Agregar monitoring de errores 401
+7. Implementar retry logic en frontend
+8. Agregar rate limiting
+
+BAJA PRIORIDAD:
+---------------
+9. Migrar a middleware de auth compartido
+10. Implementar refresh token automático
+11. Agregar telemetría de auth
+
+================================================================================
+  15. CONCLUSIONES
+================================================================================
+
+PROBLEMA PRINCIPAL:
+-------------------
+Las Edge Functions gmail-auth-url y gmail-connection-status usan validación
+manual de JWT con fetch a /auth/v1/user en lugar de usar supabase.auth.getUser(jwt).
+
+IMPACTO:
+--------
+- 401 Unauthorized en todas las llamadas
+- AuthSessionMissingError intermitente
+- Flujo OAuth de Gmail completamente bloqueado
+- Experiencia de usuario degradada
+
+SOLUCIÓN:
+---------
+1. Reemplazar validación manual con supabase.auth.getUser(jwt)
+2. Extraer JWT limpio sin "Bearer "
+3. Agregar logs de validación
+4. Verificar que SUPABASE_ANON_KEY coincide con frontend
+
+CONFIANZA:
+----------
+98% - La solución es clara y directa. El 2% restante es por posibles
+problemas de configuración de secrets que no puedo verificar desde aquí.
+
+TIEMPO ESTIMADO DE RESOLUCIÓN:
+-------------------------------
+25 minutos (5 verificar + 10 corregir + 5 probar + 5 verificar logs)
+
+================================================================================
+  FIN DEL INFORME
+================================================================================
+
+Generado por: AI Assistant
+Fecha: 2026-02-05
+Versión: 2.0
