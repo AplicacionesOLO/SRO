@@ -70,7 +70,6 @@ export default function CasetillaPage() {
       const data = await casetillaService.getPendingReservations(orgId);
       setPendingReservations(data);
     } catch (error) {
-      console.error('Error loading pending reservations:', error);
       showModal('error', 'Error', 'No se pudieron cargar las reservas pendientes');
     } finally {
       setIsLoadingReservations(false);
@@ -84,7 +83,6 @@ export default function CasetillaPage() {
       const data = await casetillaService.getExitEligibleReservations(orgId);
       setExitEligibleReservations(data);
     } catch (error) {
-      console.error('Error loading exit eligible reservations:', error);
       showModal('error', 'Error', 'No se pudieron cargar las reservas elegibles para salida');
     } finally {
       setIsLoadingExitReservations(false);
@@ -123,7 +121,6 @@ export default function CasetillaPage() {
         onCancel: undefined
       });
     } catch (error: any) {
-      console.error('Error creating ingreso:', error);
       showModal('error', 'Error', error.message || 'No se pudo registrar el ingreso');
     } finally {
       setIsSubmitting(false);
@@ -152,7 +149,6 @@ export default function CasetillaPage() {
         onCancel: undefined
       });
     } catch (error: any) {
-      console.error('Error creating salida:', error);
       showModal('error', 'Error', error.message || 'No se pudo registrar la salida');
     } finally {
       setIsSubmitting(false);

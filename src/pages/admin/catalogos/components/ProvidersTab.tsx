@@ -16,20 +16,21 @@ export default function ProvidersTab({ orgId }: ProvidersTabProps) {
   const [searchTerm, setSearchTerm] = useState('');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingProvider, setEditingProvider] = useState<Provider | undefined>();
+  const [error, setError] = useState<string | undefined>();
 
   const canRead = can('providers.view');
   const canCreate = can('providers.create');
   const canUpdate = can('providers.update');
   const canDelete = can('providers.delete');
 
-  console.log('[ProvidersTab] Component rendered', {
+  /**console.log('[ProvidersTab] Component rendered', {
     orgId,
     showOnlyActive,
     canRead,
     canCreate,
     canUpdate,
     canDelete
-  });
+  });*/
 
   useEffect(() => {
     if (canRead) {
@@ -42,23 +43,23 @@ export default function ProvidersTab({ orgId }: ProvidersTabProps) {
   const loadProviders = async () => {
     try {
       setLoading(true);
-      console.log('[ProvidersTab] ========== LOADING PROVIDERS ==========');
-      console.log('[ProvidersTab] orgId received from props:', orgId);
-      console.log('[ProvidersTab] showOnlyActive:', showOnlyActive);
+      //console.log('[ProvidersTab] ========== LOADING PROVIDERS ==========');
+      //console.log('[ProvidersTab] orgId received from props:', orgId);
+      //console.log('[ProvidersTab] showOnlyActive:', showOnlyActive);
       
       const data = showOnlyActive 
         ? await providersService.getActive(orgId)
         : await providersService.getAll(orgId);
 
-      console.log('[ProvidersTab] Providers loaded:', data.length);
-      console.log('[ProvidersTab] First provider:', data.length > 0 ? {
+      //console.log('[ProvidersTab] Providers loaded:', data.length);
+      /**console.log('[ProvidersTab] First provider:', data.length > 0 ? {
         id: data[0].id,
         name: data[0].name,
         active: data[0].active
-      } : null);
+      } : null);*/
       setProviders(data);
-    } catch (error) {
-      console.error('[ProvidersTab] ❌ ERROR loading providers:', error);
+    } catch (error: any) {
+      setError(error?.message || 'Error al cargar proveedores');
     } finally {
       setLoading(false);
     }
@@ -80,8 +81,8 @@ export default function ProvidersTab({ orgId }: ProvidersTabProps) {
     try {
       await providersService.deleteProvider(provider.id);
       await loadProviders();
-    } catch (err) {
-      console.error('[ProvidersTab] Error deleting', err);
+    } catch (err: any) {
+      setError(err?.message || 'Error al eliminar');
       alert('Error al desactivar proveedor');
     }
   };

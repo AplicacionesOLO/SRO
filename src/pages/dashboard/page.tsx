@@ -39,7 +39,7 @@ export default function Dashboard() {
       const data = await dashboardService.getStats(orgId);
       setStats(data);
     } catch (error) {
-      console.error('Error loading dashboard:', error);
+      // silenced
     } finally {
       setLoading(false);
     }

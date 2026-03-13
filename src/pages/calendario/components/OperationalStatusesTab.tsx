@@ -194,8 +194,7 @@ export default function OperationalStatusesTab() {
       );
       setStatusInUseMap(inUseMap);
     } catch (err: any) {
-      console.error('Failed to load statuses', err);
-      setError(err?.message ?? 'Error al cargar estados');
+      setError('Error al cargar estados');
     } finally {
       setLoading(false);
     }
@@ -214,8 +213,7 @@ export default function OperationalStatusesTab() {
       setEditingStatus(null);
       loadStatuses();
     } catch (err: any) {
-      console.error('Error saving status:', err);
-      alert(err?.message ?? 'Error al guardar estado');
+      setError(err?.message || 'Error al guardar estado');
     }
   };
 

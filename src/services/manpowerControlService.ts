@@ -1,3 +1,4 @@
+
 /**
  * ============================================
  * MANPOWER CONTROL SERVICE
@@ -41,6 +42,8 @@ export interface WarehouseStats {
   name: string;
   totalCollaborators: number;
   totalRecords: number;
+  // Opcionalmente se podría añadir country_id para filtrado futuro
+  // country_id?: string;
 }
 
 export interface WorkTypeStats {
@@ -112,54 +115,61 @@ class ManpowerControlService {
       const wtArray = workTypes || [];
 
       // Calcular estadísticas por país
-      const countryStats: CountryStats[] = countriesArray.map(country => {
-        const total = collabArray.filter(c => c.country_id === country.id).length;
-        return {
-          id: country.id,
-          name: country.name,
-          totalCollaborators: total
-        };
-      }).filter(c => c.totalCollaborators > 0);
+      const countryStats: CountryStats[] = countriesArray
+        .map(country => {
+          const total = collabArray.filter(c => c.country_id === country.id).length;
+          return {
+            id: country.id,
+            name: country.name,
+            totalCollaborators: total,
+          };
+        })
+        .filter(c => c.totalCollaborators > 0);
 
       // Calcular estadísticas por almacén
-      const warehouseStats: WarehouseStats[] = whArray.map(warehouse => {
-        // Obtener IDs de colaboradores asociados a este almacén
-        const collabIds = cwArray
-          .filter(cw => cw.warehouse_id === warehouse.id)
-          .map(cw => cw.collaborator_id);
+      const warehouseStats: WarehouseStats[] = whArray
+        .map(warehouse => {
+          // IDs de colaboradores asociados a este almacén
+          const collabIds = cwArray
+            .filter(cw => cw.warehouse_id === warehouse.id)
+            .map(cw => cw.collaborator_id);
 
-        // Contar colaboradores únicos
-        const uniqueCollabIds = [...new Set(collabIds)];
-        const totalCollaborators = uniqueCollabIds.length;
+          // Colaboradores únicos
+          const uniqueCollabIds = [...new Set(collabIds)];
+          const totalCollaborators = uniqueCollabIds.length;
 
-        // Total de registros = filas en collaborator_warehouses
-        const totalRecords = collabIds.length;
+          // Total de registros = filas en collaborator_warehouses
+          const totalRecords = collabIds.length;
 
-        return {
-          id: warehouse.id,
-          name: warehouse.name,
-          totalCollaborators,
-          totalRecords
-        };
-      }).filter(w => w.totalCollaborators > 0);
+          return {
+            id: warehouse.id,
+            name: warehouse.name,
+            totalCollaborators,
+            totalRecords,
+            // country_id: warehouse.country_id, // si se necesita más adelante
+          };
+        })
+        .filter(w => w.totalCollaborators > 0);
 
       // Calcular estadísticas por tipo de trabajo
-      const workTypeStats: WorkTypeStats[] = wtArray.map(workType => {
-        const total = collabArray.filter(c => c.work_type_id === workType.id).length;
-        return {
-          id: workType.id,
-          name: workType.name,
-          totalCollaborators: total
-        };
-      }).filter(wt => wt.totalCollaborators > 0);
+      const workTypeStats: WorkTypeStats[] = wtArray
+        .map(workType => {
+          const total = collabArray.filter(c => c.work_type_id === workType.id).length;
+          return {
+            id: workType.id,
+            name: workType.name,
+            totalCollaborators: total,
+          };
+        })
+        .filter(wt => wt.totalCollaborators > 0);
 
       return {
         countries: countryStats.sort((a, b) => b.totalCollaborators - a.totalCollaborators),
         warehouses: warehouseStats.sort((a, b) => b.totalCollaborators - a.totalCollaborators),
-        workTypes: workTypeStats.sort((a, b) => b.totalCollaborators - a.totalCollaborators)
+        workTypes: workTypeStats.sort((a, b) => b.totalCollaborators - a.totalCollaborators),
       };
     } catch (error) {
-      console.error('[ManpowerControlService] Error getting control data:', error);
+      // Propagar el error para que el llamador pueda gestionarlo
       throw error;
     }
   }
@@ -168,12 +178,13 @@ class ManpowerControlService {
    * Obtiene estadísticas de almacenes filtradas por país
    */
   getWarehousesByCountry(data: ControlData, countryId: string): WarehouseStats[] {
-    // Filtrar almacenes del país seleccionado
-    // Nota: necesitamos el country_id en warehouses, lo obtendremos en la query principal
+    // Filtrar almacenes pertenecientes al país indicado
+    // Actualmente WarehouseStats no incluye country_id, pero si se añaden en el futuro,
+    // este filtro será efectivo.
     return data.warehouses.filter(w => {
-      // Por ahora retornamos todos, pero en la implementación real
-      // necesitamos agregar country_id a WarehouseStats
-      return true;
+      // Si en el futuro se agrega `country_id` al tipo, descomentar la siguiente línea:
+      // return w.country_id === countryId;
+      return true; // Mantener compatibilidad mientras no exista el campo
     });
   }
 
@@ -214,28 +225,32 @@ class ManpowerControlService {
 
       if (wtError) throw wtError;
 
-      // Filtrar colaboradores que estén en el almacén
+      // IDs de colaboradores que están en el almacén
       const warehouseCollabIds = new Set(
         (collabWarehouses || []).map(cw => cw.collaborator_id)
       );
 
+      // Filtrar solo los colaboradores del país que también están en el almacén
       const filteredCollabs = (collaborators || []).filter(c =>
         warehouseCollabIds.has(c.id)
       );
 
       // Agrupar por tipo de trabajo
-      const workTypeStats: WorkTypeStats[] = (workTypes || []).map(wt => {
-        const total = filteredCollabs.filter(c => c.work_type_id === wt.id).length;
-        return {
-          id: wt.id,
-          name: wt.name,
-          totalCollaborators: total
-        };
-      }).filter(wt => wt.totalCollaborators > 0);
+      const workTypeStats: WorkTypeStats[] = (workTypes || [])
+        .map(wt => {
+          const total = filteredCollabs.filter(c => c.work_type_id === wt.id).length;
+          return {
+            id: wt.id,
+            name: wt.name,
+            totalCollaborators: total,
+          };
+        })
+        .filter(wt => wt.totalCollaborators > 0)
+        .sort((a, b) => b.totalCollaborators - a.totalCollaborators);
 
-      return workTypeStats.sort((a, b) => b.totalCollaborators - a.totalCollaborators);
+      return workTypeStats;
     } catch (error) {
-      console.error('[ManpowerControlService] Error getting work types by warehouse:', error);
+      // Propagar el error para manejo externo
       throw error;
     }
   }

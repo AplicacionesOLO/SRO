@@ -73,26 +73,26 @@ export default function PreReservationMiniModal({
   const loadCatalogs = async () => {
     setLoading(true);
     try {
-      console.log('[PreReservationMiniModal] 🔍 Loading catalogs', {
+      /**console.log('[PreReservationMiniModal] 🔍 Loading catalogs', {
         orgId,
         userId: user?.id,
         userRole: user?.role,
         isPrivileged,
-      });
+      });*/
 
       const cargoTypesData = await cargoTypesService.getActive(orgId);
 
       let providersData: Provider[] = [];
 
       if (isPrivileged) {
-        console.log(
+        /**console.log(
           '[PreReservationMiniModal] 👑 Usuario privilegiado - cargando TODOS los proveedores',
-        );
+        );*/
         providersData = await providersService.getActive(orgId);
       } else {
-        console.log(
+        /**console.log(
           '[PreReservationMiniModal] 👤 Usuario invitado - cargando solo proveedores asignados',
-        );
+        );*/
         const userProviders = await userProvidersService.getUserProviders(
           orgId,
           user!.id,
@@ -111,22 +111,22 @@ export default function PreReservationMiniModal({
       setCargoTypes(cargoTypesData);
       setProviders(providersData);
 
-      console.log('[PreReservationMiniModal] ✅ Catalogs loaded', {
+      /**console.log('[PreReservationMiniModal] ✅ Catalogs loaded', {
         cargoTypesCount: cargoTypesData.length,
         providersCount: providersData.length,
-      });
+      });*/
 
       // Auto‑seleccionar si hay 1 solo proveedor
       if (providersData.length === 1 && !selectedProviderId) {
         const singleProvider = providersData[0];
         setSelectedProviderId(singleProvider.id);
-        console.log('[PreReservationMiniModal] 🎯 Auto‑selecting single provider', {
+        /**console.log('[PreReservationMiniModal] 🎯 Auto‑selecting single provider', {
           providerId: singleProvider.id,
           providerName: singleProvider.name,
-        });
+        });*/
       }
-    } catch (error) {
-      console.error('[PreReservationMiniModal] ❌ Error loading catalogs', error);
+    } catch (error: any) {
+      console.error('Error al cargar catálogos:', error);
     } finally {
       setLoading(false);
     }
@@ -155,10 +155,10 @@ export default function PreReservationMiniModal({
 
         if (clientId) {
           setResolvedClientId(clientId);
-          console.log('[PreReservationMiniModal] ✅ Client resolved', {
+          /**console.log('[PreReservationMiniModal] ✅ Client resolved', {
             providerId: selectedProviderId,
             clientId,
-          });
+          });*/
         } else {
           setResolvedClientId('');
           setClientError(
@@ -168,8 +168,8 @@ export default function PreReservationMiniModal({
             providerId: selectedProviderId,
           });
         }
-      } catch (err) {
-        console.error('[PreReservationMiniModal] ❌ Error resolving client', err);
+      } catch (err: any) {
+        console.error('Error al resolver cliente:', err);
         setResolvedClientId('');
         setClientError('Error al resolver el cliente del proveedor.');
       } finally {
@@ -248,8 +248,8 @@ export default function PreReservationMiniModal({
           setRequiredMinutes(30);
           setDurationSource('fallback_30');
         }
-      } catch (error) {
-        console.error('[PreReservationMiniModal] Error loading time profile', error);
+      } catch (error: any) {
+        console.error('Error al cargar perfil de tiempo:', error);
 
         const def = selectedCargoType?.default_minutes ?? null;
         if (typeof def === 'number' && def >= 5) {
@@ -282,13 +282,13 @@ export default function PreReservationMiniModal({
     if (!canContinue || !selectedCargoTypeId || !selectedProviderId) return;
 
     // Si no hay clientId resuelto, permitir continuar pero sin reglas de andenes
-    console.log('[PreReservationMiniModal] Confirming', {
+    /**console.log('[PreReservationMiniModal] Confirming', {
       cargoTypeId: selectedCargoTypeId,
       providerId: selectedProviderId,
       clientId: resolvedClientId || '(none)',
       requiredMinutes,
       durationSource,
-    });
+    });*/
 
     onConfirm({
       cargoTypeId: selectedCargoTypeId,
@@ -299,7 +299,7 @@ export default function PreReservationMiniModal({
   };
 
   const handleCancel = () => {
-    console.log('[PreReservationMiniModal] Cancelled');
+    //console.log('[PreReservationMiniModal] Cancelled');
     onClose();
   };
 

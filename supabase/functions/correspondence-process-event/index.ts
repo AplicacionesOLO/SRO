@@ -1,9 +1,9 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const VERSION = "v630-sender-email-smtp-from";
+const VERSION = "v673-direct-smtp";
 
-console.log(`[correspondence-process-event] VERSION ${VERSION}`);
+//console.log(`[correspondence-process-event] VERSION ${VERSION}`);
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -72,7 +72,6 @@ function normalizeEmailBody(input: string): string {
   const raw = String(input ?? "");
 
   let s = raw.replace(/<\/br\s*>/gi, "<br/>");
-
   s = s.replace(/\r\n/g, "\n");
 
   const looksHtml = /<\/?[a-z][\s\S]*>/i.test(s) || /<br\s*\/?>/i.test(s);
@@ -102,7 +101,7 @@ serve(async (req) => {
 
   try {
     if (req.method === "OPTIONS") {
-      console.log("[correspondence-process-event][OPTIONS]", { reqId });
+      //console.log("[correspondence-process-event][OPTIONS]", { reqId });
       return new Response("ok", { headers: corsHeaders });
     }
 
@@ -112,34 +111,28 @@ serve(async (req) => {
 
     const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
     const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
-    const mailInternalSecret = Deno.env.get("MAIL_INTERNAL_SECRET") ?? "";
 
-    console.log("[correspondence-process-event][INIT]", {
+    /**console.log("[correspondence-process-event][INIT]", {
       reqId,
       hasSupabaseUrl: !!supabaseUrl,
       hasServiceRoleKey: !!serviceRoleKey,
-      hasMailInternalSecret: !!mailInternalSecret,
       serviceRoleKeyPrefix: safePrefix(serviceRoleKey, 14),
-    });
+    });*/
 
     if (!supabaseUrl || !serviceRoleKey) {
       return json(500, { error: "Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY", reqId });
     }
 
-    if (!mailInternalSecret) {
-      return json(500, { error: "Missing MAIL_INTERNAL_SECRET", reqId });
-    }
-
     const authHeader = req.headers.get("authorization") || req.headers.get("Authorization") || "";
     const jwt = authHeader.replace(/^Bearer\s+/i, "").trim();
 
-    console.log("[correspondence-process-event][HEADERS]", {
+    /**console.log("[correspondence-process-event][HEADERS]", {
       reqId,
       hasAuthHeader: !!authHeader,
       authHeaderPrefix: safePrefix(authHeader, 16),
       hasJwt: !!jwt,
       jwtPrefix: safePrefix(jwt, 12),
-    });
+    });*/
 
     if (!jwt) {
       return json(401, { error: "Unauthorized", details: "Missing Authorization Bearer token", reqId });
@@ -149,12 +142,12 @@ serve(async (req) => {
 
     const { data: userData, error: userErr } = await supabase.auth.getUser(jwt);
 
-    console.log("[correspondence-process-event][AUTH]", {
+    /**console.log("[correspondence-process-event][AUTH]", {
       reqId,
       ok: !userErr && !!userData?.user?.id,
       authedUserId: userData?.user?.id ?? null,
       userErr: userErr?.message ?? null,
-    });
+    });*/
 
     if (userErr || !userData?.user) {
       return json(401, { error: "Unauthorized", details: userErr?.message ?? "Invalid JWT", reqId });
@@ -169,7 +162,7 @@ serve(async (req) => {
 
     const { orgId, reservationId, actorUserId, eventType, statusFromId, statusToId } = body ?? ({} as any);
 
-    console.log("[correspondence-process-event][REQ]", {
+    /**console.log("[correspondence-process-event][REQ]", {
       reqId,
       orgId,
       reservationId,
@@ -177,12 +170,17 @@ serve(async (req) => {
       eventType,
       statusFromId,
       statusToId,
-    });
+    });*/
 
     if (!orgId || !reservationId || !actorUserId || !eventType) {
       return json(400, {
         error: "Missing required fields",
-        details: { orgId: !!orgId, reservationId: !!reservationId, actorUserId: !!actorUserId, eventType: !!eventType },
+        details: {
+          orgId: !!orgId,
+          reservationId: !!reservationId,
+          actorUserId: !!actorUserId,
+          eventType: !!eventType,
+        },
         reqId,
       });
     }
@@ -216,14 +214,22 @@ serve(async (req) => {
       return json(500, { error: "Failed to fetch rules", details: rulesErr.message, reqId });
     }
 
-    console.log("[correspondence-process-event][RULES_MATCHED]", {
+    /**console.log("[correspondence-process-event][RULES_MATCHED]", {
       reqId,
       rulesCount: rules?.length ?? 0,
       ruleIds: rules?.map((r: any) => r.id) ?? [],
-    });
+    });*/
 
     if (!rules || rules.length === 0) {
-      return json(200, { success: true, message: "No active rules found", queued: 0, sent: 0, failed: 0, results: [], reqId });
+      return json(200, {
+        success: true,
+        message: "No active rules found",
+        queued: 0,
+        sent: 0,
+        failed: 0,
+        results: [],
+        reqId,
+      });
     }
 
     const { data: reservation, error: resErr } = await supabase
@@ -243,7 +249,11 @@ serve(async (req) => {
         reqId,
         message: resErr?.message ?? "Reservation not found",
       });
-      return json(500, { error: "Failed to fetch reservation", details: resErr?.message ?? "Reservation not found", reqId });
+      return json(500, {
+        error: "Failed to fetch reservation",
+        details: resErr?.message ?? "Reservation not found",
+        reqId,
+      });
     }
 
     const createdById =
@@ -262,7 +272,11 @@ serve(async (req) => {
         .maybeSingle();
 
       if (creatorErr) {
-        console.warn("[correspondence-process-event][CREATOR_PROFILE_WARN]", { reqId, createdById, message: creatorErr.message });
+        console.warn("[correspondence-process-event][CREATOR_PROFILE_WARN]", {
+          reqId,
+          createdById,
+          message: creatorErr.message,
+        });
       } else {
         createdByName = creator?.name || creator?.email || "";
       }
@@ -275,7 +289,11 @@ serve(async (req) => {
       .maybeSingle();
 
     if (actorErr) {
-      console.warn("[correspondence-process-event][ACTOR_PROFILE_WARN]", { reqId, actorUserId, message: actorErr.message });
+      console.warn("[correspondence-process-event][ACTOR_PROFILE_WARN]", {
+        reqId,
+        actorUserId,
+        message: actorErr.message,
+      });
     }
 
     const actorName = actorProfile?.name || actorProfile?.email || "Usuario";
@@ -294,7 +312,6 @@ serve(async (req) => {
       actor: actorName,
     };
 
-    // ✅ sender_email forzado desde SMTP_FROM
     const smtpFrom = Deno.env.get("SMTP_FROM") ?? "no-reply-sro@ologistics.com";
 
     let queued = 0;
@@ -303,13 +320,13 @@ serve(async (req) => {
     const results: any[] = [];
 
     for (const rule of rules as any[]) {
-      console.log("[correspondence-process-event][PROCESS_RULE]", {
+      /**console.log("[correspondence-process-event][PROCESS_RULE]", {
         reqId,
         ruleId: rule.id,
         name: rule.name,
         sender_mode: rule.sender_mode,
         recipients_mode: rule.recipients_mode,
-      });
+      });*/
 
       let senderUserId: string | null = null;
       if (rule.sender_mode === "actor") senderUserId = actorUserId;
@@ -323,23 +340,58 @@ serve(async (req) => {
         toEmails = Array.isArray(rule.recipients_emails) ? rule.recipients_emails.filter(Boolean) : [];
         ccEmails = Array.isArray(rule.cc_emails) ? rule.cc_emails.filter(Boolean) : [];
         bccEmails = Array.isArray(rule.bcc_emails) ? rule.bcc_emails.filter(Boolean) : [];
-      } else if (rule.recipients_mode === "users" && Array.isArray(rule.recipients_user_ids) && rule.recipients_user_ids.length > 0) {
-        const { data: ps, error: pe } = await supabase.from("profiles").select("email").in("id", rule.recipients_user_ids);
-        if (pe) console.error("[correspondence-process-event][RECIP_USERS_ERROR]", { reqId, ruleId: rule.id, message: pe.message });
+      } else if (
+        rule.recipients_mode === "users" &&
+        Array.isArray(rule.recipients_user_ids) &&
+        rule.recipients_user_ids.length > 0
+      ) {
+        const { data: ps, error: pe } = await supabase
+          .from("profiles")
+          .select("email")
+          .in("id", rule.recipients_user_ids);
+
+        if (pe) {
+          console.error("[correspondence-process-event][RECIP_USERS_ERROR]", {
+            reqId,
+            ruleId: rule.id,
+            message: pe.message,
+          });
+        }
+
         toEmails = (ps ?? []).map((x: any) => x.email).filter(Boolean);
-      } else if (rule.recipients_mode === "roles" && Array.isArray(rule.recipients_roles) && rule.recipients_roles.length > 0) {
-        const { data: rolesData, error: rolesErr } = await supabase.from("roles").select("id,name").in("name", rule.recipients_roles);
+      } else if (
+        rule.recipients_mode === "roles" &&
+        Array.isArray(rule.recipients_roles) &&
+        rule.recipients_roles.length > 0
+      ) {
+        const { data: rolesData, error: rolesErr } = await supabase
+          .from("roles")
+          .select("id,name")
+          .in("name", rule.recipients_roles);
+
         if (rolesErr) {
-          console.error("[correspondence-process-event][ROLES_LOOKUP_ERROR]", { reqId, ruleId: rule.id, message: rolesErr.message });
+          console.error("[correspondence-process-event][ROLES_LOOKUP_ERROR]", {
+            reqId,
+            ruleId: rule.id,
+            message: rolesErr.message,
+          });
         } else if ((rolesData ?? []).length > 0) {
           const roleIds = rolesData!.map((r: any) => r.id);
+
           const { data: uor, error: uorErr } = await supabase
             .from("user_org_roles")
             .select("user_id, profiles(email)")
             .eq("org_id", orgId)
             .in("role_id", roleIds);
 
-          if (uorErr) console.error("[correspondence-process-event][USER_ORG_ROLES_ERROR]", { reqId, ruleId: rule.id, message: uorErr.message });
+          if (uorErr) {
+            console.error("[correspondence-process-event][USER_ORG_ROLES_ERROR]", {
+              reqId,
+              ruleId: rule.id,
+              message: uorErr.message,
+            });
+          }
+
           toEmails = (uor ?? []).map((u: any) => u.profiles?.email).filter(Boolean);
         }
       }
@@ -348,12 +400,22 @@ serve(async (req) => {
       ccEmails = [...new Set(ccEmails.filter(Boolean))];
       bccEmails = [...new Set(bccEmails.filter(Boolean))];
 
-      const subject = processTemplate(rule.subject || "", templateCtx);
+      if (toEmails.length === 0) {
+        failed++;
+        console.warn("[correspondence-process-event][NO_RECIPIENTS]", { reqId, ruleId: rule.id });
+        results.push({
+          ruleId: rule.id,
+          outboxId: null,
+          status: "failed",
+          error: "No recipients resolved",
+        });
+        continue;
+      }
 
+      const subject = processTemplate(rule.subject || "", templateCtx);
       const bodyRaw = processTemplate(rule.body_template || "", templateCtx);
       const bodyHtml = normalizeEmailBody(bodyRaw);
 
-      // ✅ sender_email = SMTP_FROM (nunca null)
       const { data: outbox, error: outboxErr } = await supabase
         .from("correspondence_outbox")
         .insert({
@@ -377,167 +439,157 @@ serve(async (req) => {
 
       if (outboxErr || !outbox) {
         failed++;
-        console.error("[correspondence-process-event][OUTBOX_INSERT_ERROR]", { reqId, ruleId: rule.id, message: outboxErr?.message });
-        results.push({ ruleId: rule.id, status: "failed", error: outboxErr?.message ?? "outbox insert failed" });
+        console.error("[correspondence-process-event][OUTBOX_INSERT_ERROR]", {
+          reqId,
+          ruleId: rule.id,
+          message: outboxErr?.message,
+        });
+        results.push({
+          ruleId: rule.id,
+          outboxId: null,
+          status: "failed",
+          error: outboxErr?.message ?? "outbox insert failed",
+        });
         continue;
       }
 
       queued++;
 
-      if (toEmails.length === 0) {
-        failed++;
-
-        await supabase.from("correspondence_outbox").update({
-          status: "failed",
-          error: "No recipients resolved",
-        }).eq("id", outbox.id);
-
-        await supabase.from("correspondence_logs").insert({
-          org_id: orgId,
-          rule_id: rule.id,
-          reservation_id: reservationId,
-          event_type: eventType,
-          recipients: [],
-          subject,
-          body: bodyHtml,
-          status: "failed",
-          error_message: "No recipients resolved",
-          created_at: new Date().toISOString(),
-        });
-
-        results.push({ ruleId: rule.id, outboxId: outbox.id, status: "failed", error: "No recipients resolved" });
-        continue;
-      }
-
       try {
-        console.log("[correspondence-process-event][CALLING_SMTP_SEND]", {
-          reqId,
-          ruleId: rule.id,
-          outboxId: outbox.id,
-          toCount: toEmails.length,
-          ccCount: ccEmails.length,
-          bccCount: bccEmails.length,
-        });
-
-        const sendRes = await fetch(`${supabaseUrl}/functions/v1/smtp-send`, {
+        const smtpResp = await fetch(`${supabaseUrl}/functions/v1/smtp-send`, {
           method: "POST",
           headers: {
-            "X-Internal-Call": mailInternalSecret,
             "Content-Type": "application/json",
+            Authorization: `Bearer ${jwt}`,
           },
           body: JSON.stringify({
-            orgId,
-            to: toEmails,
-            cc: ccEmails,
-            bcc: bccEmails,
+            to_emails: toEmails,
+            cc_emails: ccEmails,
+            bcc_emails: bccEmails,
             subject,
             body: bodyHtml,
-            outboxId: outbox.id,
+            sender_email: smtpFrom,
           }),
         });
 
-        const sendText = await sendRes.text();
-        let sendJson: any = null;
-        try { sendJson = JSON.parse(sendText); } catch { /* ignore */ }
-
-        console.log("[correspondence-process-event][SMTP_SEND_RESPONSE]", {
-          reqId,
-          ruleId: rule.id,
-          outboxId: outbox.id,
-          status: sendRes.status,
-          ok: sendRes.ok,
-          response: sendJson,
-        });
-
-        if (!sendRes.ok || !sendJson?.success) {
-          failed++;
-
-          const errMsg = sendJson?.details || sendJson?.error || sendText || `HTTP ${sendRes.status}`;
-
-          await supabase.from("correspondence_outbox").update({
-            status: "failed",
-            error: errMsg,
-          }).eq("id", outbox.id);
-
-          await supabase.from("correspondence_logs").insert({
-            org_id: orgId,
-            rule_id: rule.id,
-            reservation_id: reservationId,
-            event_type: eventType,
-            recipients: toEmails,
-            subject,
-            body: bodyHtml,
-            status: "failed",
-            error_message: errMsg,
-            created_at: new Date().toISOString(),
-          });
-
-          results.push({ ruleId: rule.id, outboxId: outbox.id, status: "failed", error: errMsg });
-          continue;
+        let smtpData: any = null;
+        try {
+          smtpData = await smtpResp.json();
+        } catch {
+          smtpData = null;
         }
 
-        sent++;
+        if (smtpResp.ok && smtpData?.success) {
+          const { error: sentUpdateErr } = await supabase
+            .from("correspondence_outbox")
+            .update({
+              status: "sent",
+              sent_at: new Date().toISOString(),
+              error: null,
+            })
+            .eq("id", outbox.id);
 
-        await supabase.from("correspondence_logs").insert({
-          org_id: orgId,
-          rule_id: rule.id,
-          reservation_id: reservationId,
-          event_type: eventType,
-          recipients: toEmails,
-          subject,
-          body: bodyHtml,
-          status: "sent",
-          error_message: null,
-          sent_at: new Date().toISOString(),
-          created_at: new Date().toISOString(),
-        });
+          if (sentUpdateErr) {
+            console.error("[correspondence-process-event][OUTBOX_SENT_UPDATE_ERROR]", {
+              reqId,
+              ruleId: rule.id,
+              outboxId: outbox.id,
+              message: sentUpdateErr.message,
+            });
+          }
 
-        results.push({ ruleId: rule.id, outboxId: outbox.id, status: "sent", messageId: sendJson?.messageId ?? null });
-      } catch (e: any) {
+          sent++;
+          results.push({
+            ruleId: rule.id,
+            outboxId: outbox.id,
+            status: "sent",
+          });
+        } else {
+          const smtpError =
+            smtpData?.error ??
+            smtpData?.details ??
+            `smtp-send returned HTTP ${smtpResp.status}`;
+
+          const { error: failedUpdateErr } = await supabase
+            .from("correspondence_outbox")
+            .update({
+              status: "failed",
+              error: smtpError,
+            })
+            .eq("id", outbox.id);
+
+          if (failedUpdateErr) {
+            console.error("[correspondence-process-event][OUTBOX_FAILED_UPDATE_ERROR]", {
+              reqId,
+              ruleId: rule.id,
+              outboxId: outbox.id,
+              message: failedUpdateErr.message,
+            });
+          }
+
+          failed++;
+          results.push({
+            ruleId: rule.id,
+            outboxId: outbox.id,
+            status: "failed",
+            error: smtpError,
+          });
+        }
+      } catch (smtpInvokeErr: any) {
+        const smtpError = smtpInvokeErr?.message ?? "smtp exception";
+
+        const { error: failedUpdateErr } = await supabase
+          .from("correspondence_outbox")
+          .update({
+            status: "failed",
+            error: smtpError,
+          })
+          .eq("id", outbox.id);
+
+        if (failedUpdateErr) {
+          console.error("[correspondence-process-event][OUTBOX_FAILED_UPDATE_ERROR]", {
+            reqId,
+            ruleId: rule.id,
+            outboxId: outbox.id,
+            message: failedUpdateErr.message,
+          });
+        }
+
         failed++;
-
-        const errMsg = e?.message ?? String(e);
-
-        console.error("[correspondence-process-event][SMTP_SEND_ERROR]", {
-          reqId,
+        results.push({
           ruleId: rule.id,
           outboxId: outbox.id,
-          error: errMsg,
-        });
-
-        await supabase.from("correspondence_outbox").update({
           status: "failed",
-          error: errMsg,
-        }).eq("id", outbox.id);
-
-        await supabase.from("correspondence_logs").insert({
-          org_id: orgId,
-          rule_id: rule.id,
-          reservation_id: reservationId,
-          event_type: eventType,
-          recipients: toEmails,
-          subject,
-          body: bodyHtml,
-          status: "failed",
-          error_message: errMsg,
-          created_at: new Date().toISOString(),
+          error: smtpError,
         });
-
-        results.push({ ruleId: rule.id, outboxId: outbox.id, status: "failed", error: errMsg });
       }
     }
 
-    console.log("[correspondence-process-event][SUMMARY]", {
+    /**console.log("[correspondence-process-event][SUMMARY]", {
       reqId,
       queued,
       sent,
       failed,
       durationMs: Date.now() - startedAt,
-    });
+    });*/
 
-    return json(200, { success: true, queued, sent, failed, results, reqId });
+    return json(200, {
+      success: true,
+      queued,
+      sent,
+      failed,
+      results,
+      reqId,
+    });
   } catch (e: any) {
-    console.error("[correspondence-process-event][FATAL]", { reqId, error: e?.message ?? String(e) });
-    return json(500, { error: "Internal error", details: e?.message ?? String(e), reqId });
+    console.error("[correspondence-process-event][FATAL]", {
+      reqId,
+      error: e?.message ?? String(e),
+    });
+    return json(500, {
+      error: "Internal error",
+      details: e?.message ?? String(e),
+      reqId,
+    });
   }
 });

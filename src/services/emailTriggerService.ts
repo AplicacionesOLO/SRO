@@ -69,12 +69,12 @@ async function invokeCorrespondenceProcessEvent(payload: any, accessToken: strin
   const url = `${SUPABASE_URL}/functions/v1/correspondence-process-event`;
 
   // ✅ Log de diagnóstico (no expone keys)
-  console.log("[EmailTrigger][invoke] Using Supabase URL", {
+  /**console.log("[EmailTrigger][invoke] Using Supabase URL", {
     url: SUPABASE_URL,
     usedFallbackUrl: !resolveSupabaseUrl(),
     hasApikey: !!SUPABASE_ANON_KEY,
     usedFallbackApikey: !resolveAnonKey() && !!SUPABASE_ANON_KEY,
-  });
+  });*/
 
   const res = await fetch(url, {
     method: "POST",
@@ -124,24 +124,24 @@ export const emailTriggerService = {
       } = await supabase.auth.getSession();
 
       if (sessionError || !session?.access_token) {
-        console.error("[EmailTrigger][onReservationCreated] ❌ No hay sesión activa o token válido:", {
-          reqId,
-          hasSession: !!session,
-          hasToken: !!session?.access_token,
-          error: sessionError?.message,
-        });
+        // console.error("[EmailTrigger][onReservationCreated] ❌ No hay sesión activa o token válido:", {
+        //   reqId,
+        //   hasSession: !!session,
+        //   hasToken: !!session?.access_token,
+        //   error: sessionError?.message,
+        // });
         return;
       }
 
       const SUPABASE_URL = resolveSupabaseUrlWithFallback();
       if (!SUPABASE_URL) {
-        console.error("[EmailTrigger][onReservationCreated] ❌ Falta SUPABASE URL (no puedo invocar Edge Function).", {
-          reqId,
-          env: {
-            ...envSnapshot(),
-            FALLBACK_SUPABASE_URL: (SUPABASE_URL_FALLBACK ?? "").trim(),
-          },
-        });
+        // console.error("[EmailTrigger][onReservationCreated] ❌ Falta SUPABASE URL (no puedo invocar Edge Function).", {
+        //   reqId,
+        //   env: {
+        //     ...envSnapshot(),
+        //     FALLBACK_SUPABASE_URL: (SUPABASE_URL_FALLBACK ?? "").trim(),
+        //   },
+        // });
         return;
       }
 
@@ -157,7 +157,7 @@ export const emailTriggerService = {
         statusToId: (reservation as any).status_id ?? null,
       };
 
-      console.log("[EmailTrigger][onReservationCreated] 📤 Disparando evento: reservation_created", {
+      /**console.log("[EmailTrigger][onReservationCreated] 📤 Disparando evento: reservation_created", {
         reqId,
         ...payload,
         hasSession: !!session,
@@ -166,38 +166,23 @@ export const emailTriggerService = {
         method: "fetch -> /functions/v1/correspondence-process-event",
         supabaseUrl: SUPABASE_URL,
         usedFallbackUrl: !resolveSupabaseUrl(),
-      });
+      });*/
 
       const data = await invokeCorrespondenceProcessEvent(payload, session.access_token);
 
-      console.log("[EmailTrigger][onReservationCreated] ✅ Evento de creación procesado:", {
+      /**console.log("[EmailTrigger][onReservationCreated] ✅ Evento de creación procesado:", {
         reqId,
         ...data,
-      });
+      });*/
     } catch (error: any) {
       // Formato unificado de errores para Edge
       if (error?.name === "FunctionsHttpError") {
-        console.error("[EmailTrigger][onReservationCreated] ❌ Error Edge Function:", {
-          reqId,
-          status: error.status,
-          statusText: error.statusText,
-          body: error.body,
-        });
         return;
       }
 
       if (error?.name === "EnvError") {
-        console.error("[EmailTrigger][onReservationCreated] ❌ EnvError:", { reqId, ...error });
         return;
       }
-
-      console.error("[EmailTrigger][onReservationCreated] 💥 Error:", {
-        reqId,
-        error,
-        errorName: error?.name,
-        errorMessage: error?.message,
-        stack: error?.stack,
-      });
     }
   },
 
@@ -213,13 +198,13 @@ export const emailTriggerService = {
     const reqId = crypto.randomUUID();
 
     try {
-      console.log("[EmailTrigger][onReservationStatusChanged] 🚀 INICIO", {
+      /**console.log("[EmailTrigger][onReservationStatusChanged] 🚀 INICIO", {
         reqId,
         orgId,
         reservationId: reservation.id,
         statusFromId: oldStatusId,
         statusToId: newStatusId,
-      });
+      });*/
 
       // Obtener sesión activa con token
       const {
@@ -228,24 +213,24 @@ export const emailTriggerService = {
       } = await supabase.auth.getSession();
 
       if (sessionError || !session?.access_token) {
-        console.error("[EmailTrigger][onReservationStatusChanged] ❌ No hay sesión activa o token válido:", {
-          reqId,
-          hasSession: !!session,
-          hasToken: !!session?.access_token,
-          error: sessionError?.message,
-        });
+        // console.error("[EmailTrigger][onReservationStatusChanged] ❌ No hay sesión activa o token válido:", {
+        //   reqId,
+        //   hasSession: !!session,
+        //   hasToken: !!session?.access_token,
+        //   error: sessionError?.message,
+        // });
         return;
       }
 
       const SUPABASE_URL = resolveSupabaseUrlWithFallback();
       if (!SUPABASE_URL) {
-        console.error("[EmailTrigger][onReservationStatusChanged] ❌ Falta SUPABASE URL (no puedo invocar Edge Function).", {
-          reqId,
-          env: {
-            ...envSnapshot(),
-            FALLBACK_SUPABASE_URL: (SUPABASE_URL_FALLBACK ?? "").trim(),
-          },
-        });
+        // console.error("[EmailTrigger][onReservationStatusChanged] ❌ Falta SUPABASE URL (no puedo invocar Edge Function).", {
+        //   reqId,
+        //   env: {
+        //     ...envSnapshot(),
+        //     FALLBACK_SUPABASE_URL: (SUPABASE_URL_FALLBACK ?? "").trim(),
+        //   },
+        // });
         return;
       }
 
@@ -260,7 +245,7 @@ export const emailTriggerService = {
         statusToId: newStatusId,
       };
 
-      console.log("[EmailTrigger][onReservationStatusChanged] 📤 Disparando evento: reservation_status_changed", {
+      /**console.log("[EmailTrigger][onReservationStatusChanged] 📤 Disparando evento: reservation_status_changed", {
         reqId,
         ...payload,
         hasSession: !!session,
@@ -269,41 +254,26 @@ export const emailTriggerService = {
         method: "fetch -> /functions/v1/correspondence-process-event",
         supabaseUrl: SUPABASE_URL,
         usedFallbackUrl: !resolveSupabaseUrl(),
-      });
+      });*/
 
       const data = await invokeCorrespondenceProcessEvent(payload, session.access_token);
 
-      console.log("[EmailTrigger][onReservationStatusChanged] ✅ Evento procesado exitosamente:", {
+      /**console.log("[EmailTrigger][onReservationStatusChanged] ✅ Evento procesado exitosamente:", {
         reqId,
         queued: data?.queued || 0,
         sent: data?.sent || 0,
         failed: data?.failed || 0,
         results: data?.results || [],
         responseReqId: data?.reqId,
-      });
+      });*/
     } catch (error: any) {
       if (error?.name === "FunctionsHttpError") {
-        console.error("[EmailTrigger][onReservationStatusChanged] ❌ Error Edge Function:", {
-          reqId,
-          status: error.status,
-          statusText: error.statusText,
-          body: error.body,
-        });
         return;
       }
 
       if (error?.name === "EnvError") {
-        console.error("[EmailTrigger][onReservationStatusChanged] ❌ EnvError:", { reqId, ...error });
         return;
       }
-
-      console.error("[EmailTrigger][onReservationStatusChanged] 💥 Excepción:", {
-        reqId,
-        error,
-        errorName: error?.name,
-        errorMessage: error?.message,
-        stack: error?.stack,
-      });
     }
   },
 };

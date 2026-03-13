@@ -205,6 +205,7 @@ export default function MatrizPermisosPage() {
   const [permissions, setPermissions] = useState<Permission[]>([]);
   const [rolePermissions, setRolePermissions] = useState<RolePermission[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   const [roleName, setRoleName] = useState<string | null>(null);
   const [roleCheckLoading, setRoleCheckLoading] = useState(true);
@@ -217,23 +218,23 @@ export default function MatrizPermisosPage() {
   const hasDirectAccess = user?.role === 'ADMIN' || user?.role === 'Full Access';
 
   useEffect(() => {
-    console.log('[MatrizPermisos] usePermissions return', {
-      orgId,
-      permissionsLoading,
-      userId: user?.id,
-      userRole: user?.role,
-      hasDirectAccess
-    });
+    // console.log('[MatrizPermisos] usePermissions return', {
+    //   orgId,
+    //   permissionsLoading,
+    //   userId: user?.id,
+    //   userRole: user?.role,
+    //   hasDirectAccess
+    // });
   }, [orgId, permissionsLoading, user?.id, user?.role, hasDirectAccess]);
 
   useEffect(() => {
     if (!permissionsLoading && orgId && user?.id) {
-      console.log('[AdminMatrix] mounted', {
-        orgId,
-        userId: user.id,
-        userRole: user.role,
-        hasDirectAccess
-      });
+      // console.log('[AdminMatrix] mounted', {
+      //   orgId,
+      //   userId: user.id,
+      //   userRole: user.role,
+      //   hasDirectAccess
+      // });
       checkRoleAndPerms();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -246,7 +247,7 @@ export default function MatrizPermisosPage() {
 
       // ✅ Si tiene acceso directo por rol (ADMIN o Full Access), otorgar permisos completos
       if (hasDirectAccess) {
-        console.log('[MatrizPermisos] Direct access granted via role:', user?.role);
+        // console.log('[MatrizPermisos] Direct access granted via role:', user?.role);
         setRoleName(user?.role || 'ADMIN');
         setCanViewMatrix(true);
         setCanUpdateMatrix(true);
@@ -262,11 +263,11 @@ export default function MatrizPermisosPage() {
         .eq('org_id', orgId!)
         .maybeSingle();
 
-      console.log('[MatrizPermisos] uor lookup', {
-        hasRow: !!uorRes.data,
-        role_id: uorRes.data?.role_id ?? null,
-        error: uorRes.error ?? null
-      });
+      // console.log('[MatrizPermisos] uor lookup', {
+      //   hasRow: !!uorRes.data,
+      //   role_id: uorRes.data?.role_id ?? null,
+      //   error: uorRes.error ?? null
+      // });
 
       if (uorRes.error) throw uorRes.error;
 
@@ -285,10 +286,10 @@ export default function MatrizPermisosPage() {
         .eq('id', uorRes.data.role_id)
         .maybeSingle();
 
-      console.log('[MatrizPermisos] role name lookup', {
-        roleName: roleRes.data?.name ?? null,
-        error: roleRes.error ?? null
-      });
+      // console.log('[MatrizPermisos] role name lookup', {
+      //   roleName: roleRes.data?.name ?? null,
+      //   error: roleRes.error ?? null
+      // });
 
       if (roleRes.error) throw roleRes.error;
 
@@ -297,7 +298,7 @@ export default function MatrizPermisosPage() {
 
       // ✅ Si el rol obtenido es Full Access, otorgar acceso completo
       if (fetchedRoleName === 'Full Access' || fetchedRoleName === 'ADMIN') {
-        console.log('[MatrizPermisos] Full access via fetched role:', fetchedRoleName);
+        // console.log('[MatrizPermisos] Full access via fetched role:', fetchedRoleName);
         setCanViewMatrix(true);
         setCanUpdateMatrix(true);
         loadData();
@@ -316,12 +317,12 @@ export default function MatrizPermisosPage() {
         })
       ]);
 
-      console.log('[MatrizPermisos] rpc perms', {
-        canView: viewRes.data,
-        canUpdate: updateRes.data,
-        viewError: viewRes.error ?? null,
-        updateError: updateRes.error ?? null
-      });
+      // console.log('[MatrizPermisos] rpc perms', {
+      //   canView: viewRes.data,
+      //   canUpdate: updateRes.data,
+      //   viewError: viewRes.error ?? null,
+      //   updateError: updateRes.error ?? null
+      // });
 
       if (viewRes.error) throw viewRes.error;
       if (updateRes.error) throw updateRes.error;
@@ -338,8 +339,8 @@ export default function MatrizPermisosPage() {
       } else {
         setLoading(false);
       }
-    } catch (error) {
-      console.error('[MatrizPermisos] Error checking role/perms:', error);
+    } catch (error: any) {
+      console.error('Error al verificar permisos');
       // ✅ En caso de error, verificar acceso directo como fallback
       if (hasDirectAccess) {
         setRoleName(user?.role || null);
@@ -375,8 +376,8 @@ export default function MatrizPermisosPage() {
       setRoles(rolesRes.data || []);
       setPermissions(permissionsRes.data || []);
       setRolePermissions(rolePermissionsRes.data || []);
-    } catch (error) {
-      console.error('[MatrizPermisos] Error loading data:', error);
+    } catch (error: any) {
+      console.error('Error al cargar datos');
       setRoles([]);
       setPermissions([]);
       setRolePermissions([]);
@@ -421,8 +422,8 @@ export default function MatrizPermisosPage() {
 
         setRolePermissions((prev) => [...prev, { role_id: roleId, permission_id: permissionId }]);
       }
-    } catch (error) {
-      console.error('[MatrizPermisos] Error toggling permission:', error);
+    } catch (error: any) {
+      console.error('Error al actualizar permiso');
       alert('Error al actualizar el permiso');
     }
   };

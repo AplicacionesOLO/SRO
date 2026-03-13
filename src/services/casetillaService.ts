@@ -96,13 +96,13 @@ class CasetillaService {
 
   async createIngreso(orgId: string, userId: string, data: CreateCasetillaIngresoInput) {
     try {
-      console.log('[CasetillaService][createIngreso] START', { 
+      /**console.log('[CasetillaService][createIngreso] START', { 
         orgId, 
         userId, 
         dua: data.dua, 
         matricula: data.matricula,
         explicitReservationId: data.reservation_id 
-      });
+      });*/
 
       let reservationId: string | undefined = data.reservation_id; // ✅ Usar ID explícito si viene
       let reservationUpdated = false;
@@ -112,7 +112,7 @@ class CasetillaService {
 
       // ✅ 1) Si viene reservation_id explícito, usarlo directamente
       if (reservationId) {
-        console.log('[CasetillaService][createIngreso] Using explicit reservation_id', { reservationId });
+        //console.log('[CasetillaService][createIngreso] Using explicit reservation_id', { reservationId });
 
         const { data: reservation, error: fetchError } = await supabase
           .from('reservations')
@@ -122,12 +122,12 @@ class CasetillaService {
           .maybeSingle();
 
         if (fetchError) {
-          console.error('[CasetillaService][createIngreso] Error fetching reservation by ID', fetchError);
+          // console.error('[CasetillaService][createIngreso] Error fetching reservation by ID', fetchError);
           throw new Error('No se pudo verificar la reserva. Contactá a un administrador.');
         }
 
         if (!reservation) {
-          console.warn('[CasetillaService][createIngreso] Reservation not found by explicit ID', { reservationId });
+          // console.warn('[CasetillaService][createIngreso] Reservation not found by explicit ID', { reservationId });
           throw new Error('La reserva especificada no existe o no pertenece a tu organización.');
         }
 
@@ -149,11 +149,11 @@ class CasetillaService {
         if (arrivedPendingUnloadStatusId) {
           statusToId = arrivedPendingUnloadStatusId;
 
-          console.log('[CasetillaService][createIngreso] Updating reservation status (explicit ID)', {
+          /**console.log('[CasetillaService][createIngreso] Updating reservation status (explicit ID)', {
             reservationId,
             statusFromId,
             statusToId
-          });
+          });*/
 
           const { error: updateErr } = await supabase
             .from('reservations')
@@ -169,11 +169,11 @@ class CasetillaService {
             reservationUpdated = true;
 
             // ✅ TRIGGER: Disparar evento de cambio de status
-            console.log('[CasetillaService][createIngreso] Triggering status change event', {
+            /**console.log('[CasetillaService][createIngreso] Triggering status change event', {
               reservationId,
               statusFromId,
               statusToId
-            });
+            });*/
 
             try {
               const { data: fullReservation, error: resErr } = await supabase
@@ -190,21 +190,21 @@ class CasetillaService {
                   statusToId
                 );
               } else {
-                console.error('[CasetillaService][createIngreso] Failed to fetch reservation for trigger', resErr);
+                // console.error('[CasetillaService][createIngreso] Failed to fetch reservation for trigger', resErr);
               }
             } catch (triggerError) {
-              console.error('[CasetillaService][createIngreso] Email trigger failed', triggerError);
+              // console.error('[CasetillaService][createIngreso] Email trigger failed', triggerError);
             }
           } else {
             updateError = updateErr;
-            console.error('[CasetillaService][createIngreso] Failed to update reservation status', updateErr);
+            // console.error('[CasetillaService][createIngreso] Failed to update reservation status', updateErr);
           }
         } else {
-          console.warn('[CasetillaService][createIngreso] Arrived status not found');
+          // console.warn('[CasetillaService][createIngreso] Arrived status not found');
         }
       } else {
         // ✅ Fallback: buscar por DUA + Matrícula (comportamiento anterior)
-        console.log('[CasetillaService][createIngreso] No explicit reservation_id, searching by DUA + matricula');
+        //console.log('[CasetillaService][createIngreso] No explicit reservation_id, searching by DUA + matricula');
 
         const { data: matchingReservations, error: searchError } = await supabase
           .from('reservations')
@@ -221,10 +221,10 @@ class CasetillaService {
           reservationId = matchingReservations[0].id;
           statusFromId = matchingReservations[0].status_id;
 
-          console.log('[CasetillaService][createIngreso] Reservation found by DUA+matricula', { 
+          /**console.log('[CasetillaService][createIngreso] Reservation found by DUA+matricula', { 
             reservationId, 
             statusFromId 
-          });
+          });*/
 
           // ✅ Actualizar status
           const arrivedPendingUnloadStatusId =
@@ -242,11 +242,11 @@ class CasetillaService {
           if (arrivedPendingUnloadStatusId) {
             statusToId = arrivedPendingUnloadStatusId;
 
-            console.log('[CasetillaService][createIngreso] Updating reservation status (DUA+matricula match)', {
+            /**console.log('[CasetillaService][createIngreso] Updating reservation status (DUA+matricula match)', {
               reservationId,
               statusFromId,
               statusToId
-            });
+            });*/
 
             const { error: updateErr } = await supabase
               .from('reservations')
@@ -262,11 +262,11 @@ class CasetillaService {
               reservationUpdated = true;
 
               // ✅ TRIGGER: Disparar evento de cambio de status
-              console.log('[CasetillaService][createIngreso] Triggering status change event', {
+              /**console.log('[CasetillaService][createIngreso] Triggering status change event', {
                 reservationId,
                 statusFromId,
                 statusToId
-              });
+              });*/
 
               try {
                 const { data: fullReservation, error: resErr } = await supabase
@@ -283,23 +283,23 @@ class CasetillaService {
                     statusToId
                   );
                 } else {
-                  console.error('[CasetillaService][createIngreso] Failed to fetch reservation for trigger', resErr);
+                  // console.error('[CasetillaService][createIngreso] Failed to fetch reservation for trigger', resErr);
                 }
               } catch (triggerError) {
-                console.error('[CasetillaService][createIngreso] Email trigger failed', triggerError);
+                // console.error('[CasetillaService][createIngreso] Email trigger failed', triggerError);
               }
             } else {
               updateError = updateErr;
-              console.error('[CasetillaService][createIngreso] Failed to update reservation status', updateErr);
+              // console.error('[CasetillaService][createIngreso] Failed to update reservation status', updateErr);
             }
           } else {
-            console.warn('[CasetillaService][createIngreso] Arrived status not found');
+            // console.warn('[CasetillaService][createIngreso] Arrived status not found');
           }
         } else {
-          console.warn('[CasetillaService][createIngreso] No matching reservation found', { 
-            dua: data.dua, 
-            matricula: data.matricula 
-          });
+          // console.warn('[CasetillaService][createIngreso] No matching reservation found', { 
+          //   dua: data.dua, 
+          //   matricula: data.matricula 
+          // });
         }
       }
 
@@ -327,12 +327,12 @@ class CasetillaService {
 
       if (ingresoError) throw ingresoError;
 
-      console.log('[CasetillaService][createIngreso] SUCCESS', {
+      /**console.log('[CasetillaService][createIngreso] SUCCESS', {
         ingresoId: ingreso.id,
         reservationFound: !!reservationId,
         reservationUpdated,
         statusChanged: statusFromId !== statusToId
-      });
+      });*/
 
       return {
         ingreso,
@@ -343,7 +343,7 @@ class CasetillaService {
         statusToId
       };
     } catch (error) {
-      console.error('[CasetillaService][createIngreso] ERROR', error);
+      // console.error('[CasetillaService][createIngreso] ERROR', error);
       throw error;
     }
   }
@@ -359,7 +359,7 @@ class CasetillaService {
       if (error) throw error;
       return data as CasetillaIngreso[];
     } catch (error) {
-      console.error('Error fetching casetilla ingresos:', error);
+      // console.error('Error fetching casetilla ingresos:', error);
       throw error;
     }
   }
@@ -462,7 +462,7 @@ class CasetillaService {
         };
       });
     } catch (error) {
-      console.error('Error fetching pending reservations:', error);
+      // console.error('Error fetching pending reservations:', error);
       throw error;
     }
   }
@@ -483,7 +483,7 @@ class CasetillaService {
         (r.orden_compra ?? '').toLowerCase().includes(term)
       );
     } catch (error) {
-      console.error('Error searching pending reservations:', error);
+      // console.error('Error searching pending reservations:', error);
       throw error;
     }
   }
@@ -662,7 +662,7 @@ async getExitEligibleReservations(orgId: string) {
       };
     });
   } catch (error) {
-    console.error("Error fetching exit eligible reservations:", error);
+    // console.error("Error fetching exit eligible reservations:", error);
     throw error;
   }
 }
@@ -671,7 +671,7 @@ async getExitEligibleReservations(orgId: string) {
   // ✅ NUEVA FUNCIÓN: Crear salida
   async createSalida(orgId: string, userId: string, reservationId: string) {
     try {
-      console.log('[CasetillaService][createSalida] START', { orgId, userId, reservationId });
+      //console.log('[CasetillaService][createSalida] START', { orgId, userId, reservationId });
 
       // 1) Verificar que la reserva existe y obtener datos
       const { data: reservation, error: reservationError } = await supabase
@@ -687,10 +687,10 @@ async getExitEligibleReservations(orgId: string) {
 
       const statusFromId = reservation.status_id;
 
-      console.log('[CasetillaService][createSalida] Reservation found', {
+      /**console.log('[CasetillaService][createSalida] Reservation found', {
         reservationId,
         statusFromId
-      });
+      });*/
 
       // 2) Verificar que no exista ya una salida para esta reserva (unique constraint)
       const { data: existingSalida, error: checkError } = await supabase
@@ -721,11 +721,11 @@ async getExitEligibleReservations(orgId: string) {
       const statusToId = dispatchedRow.id;
 
       // 4) Actualizar status de la reserva a DISPATCHED
-      console.log('[CasetillaService][createSalida] Updating reservation to DISPATCHED', {
+      /**console.log('[CasetillaService][createSalida] Updating reservation to DISPATCHED', {
         reservationId,
         statusFromId,
         statusToId
-      });
+      });*/
 
       const { error: updateStatusError } = await supabase
         .from('reservations')
@@ -738,7 +738,7 @@ async getExitEligibleReservations(orgId: string) {
         .eq('org_id', orgId);
 
       if (updateStatusError) {
-        console.error('[CasetillaService][createSalida] Failed to update status', updateStatusError);
+        // console.error('[CasetillaService][createSalida] Failed to update status', updateStatusError);
         throw new Error('No se pudo actualizar el estado de la reserva');
       }
 
@@ -760,11 +760,11 @@ async getExitEligibleReservations(orgId: string) {
       if (salidaError) throw salidaError;
 
       // ✅ 6) TRIGGER: Disparar evento de cambio de status a DISPATCHED
-      console.log('[CasetillaService][createSalida] Triggering DISPATCHED event', {
+      /**console.log('[CasetillaService][createSalida] Triggering DISPATCHED event', {
         reservationId,
         statusFromId,
         statusToId
-      });
+      });*/
 
       try {
         // Obtener la reserva completa actualizada para el trigger
@@ -782,17 +782,17 @@ async getExitEligibleReservations(orgId: string) {
             statusToId
           );
         } else {
-          console.error('[CasetillaService][createSalida] Failed to fetch reservation for trigger', resErr);
+          // console.error('[CasetillaService][createSalida] Failed to fetch reservation for trigger', resErr);
         }
       } catch (triggerError) {
-        console.error('[CasetillaService][createSalida] Email trigger failed', triggerError);
+        // console.error('[CasetillaService][createSalida] Email trigger failed', triggerError);
       }
 
-      console.log('[CasetillaService][createSalida] SUCCESS', {
+      /**console.log('[CasetillaService][createSalida] SUCCESS', {
         salidaId: salida.id,
         reservationId,
         statusChanged: statusFromId !== statusToId
-      });
+      });*/
 
       return {
         salida,
@@ -801,7 +801,7 @@ async getExitEligibleReservations(orgId: string) {
         statusToId
       };
     } catch (error) {
-      console.error('[CasetillaService][createSalida] ERROR', error);
+      // console.error('[CasetillaService][createSalida] ERROR', error);
       throw error;
     }
   }
@@ -894,7 +894,7 @@ async getExitEligibleReservations(orgId: string) {
 
       return reportRows;
     } catch (error) {
-      console.error('Error fetching duration report:', error);
+      // console.error('Error fetching duration report:', error);
       throw error;
     }
   }

@@ -121,7 +121,7 @@ export function CollaboratorModal({
       await onSave(formData);
       onClose();
     } catch (error) {
-      console.error('Error saving collaborator:', error);
+      // silenced
     } finally {
       setLoading(false);
     }

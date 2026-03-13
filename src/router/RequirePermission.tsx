@@ -23,10 +23,10 @@ export default function RequirePermission({
   // Si el usuario está pendiente de acceso, redirigir a /access-pending
   // (excepto si ya está en /access-pending o /login)
   if (pendingAccess && location.pathname !== '/access-pending' && location.pathname !== '/login') {
-    console.log('[RequirePermission] Redirecting to /access-pending', { 
+    /**console.log('[RequirePermission] Redirecting to /access-pending', { 
       currentPath: location.pathname,
       pendingAccess 
-    });
+    });*/
     return <Navigate to="/access-pending" replace />;
   }
 
@@ -48,14 +48,14 @@ export default function RequirePermission({
       ? Array.from(permissionsSet).some(p => p.startsWith('admin.'))
       : false;
 
-    console.log('[RequirePermission] Checking any admin permission', {
+    /**console.log('[RequirePermission] Checking any admin permission', {
       path: location.pathname,
       hasAnyAdminPerm,
       totalPerms: permissionsSet?.size || 0
-    });
+    });*/
 
     if (!hasAnyAdminPerm) {
-      console.log('[RequirePermission] No admin permissions, redirecting to', fallbackPath);
+      //console.log('[RequirePermission] No admin permissions, redirecting to', fallbackPath);
       return <Navigate to={fallbackPath} replace />;
     }
 
@@ -66,14 +66,14 @@ export default function RequirePermission({
   if (permission) {
     const hasPermission = can(permission);
 
-    console.log('[RequirePermission] Checking specific permission', {
+    /**console.log('[RequirePermission] Checking specific permission', {
       path: location.pathname,
       permission,
       hasPermission
-    });
+    });*/
 
     if (!hasPermission) {
-      console.log('[RequirePermission] Permission denied, redirecting to', fallbackPath);
+      //console.log('[RequirePermission] Permission denied, redirecting to', fallbackPath);
       return <Navigate to={fallbackPath} replace />;
     }
   }

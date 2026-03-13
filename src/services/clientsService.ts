@@ -4,7 +4,7 @@ import type { Dock } from '../types/dock';
 
 export const clientsService = {
   async listClients(orgId: string, search?: string): Promise<Client[]> {
-    console.log('[ClientsService] listClients', { orgId, search });
+    //console.log('[ClientsService] listClients', { orgId, search });
 
     let query = supabase
       .from('clients')
@@ -19,7 +19,7 @@ export const clientsService = {
     const { data, error } = await query;
 
     if (error) {
-      console.error('[ClientsService] listClients error', error);
+      // console.error('[ClientsService] listClients error', error);
       throw error;
     }
 
@@ -27,7 +27,7 @@ export const clientsService = {
   },
 
   async getClient(orgId: string, clientId: string): Promise<Client> {
-    console.log('[ClientsService] getClient', { orgId, clientId });
+    //console.log('[ClientsService] getClient', { orgId, clientId });
 
     const { data, error } = await supabase
       .from('clients')
@@ -37,7 +37,7 @@ export const clientsService = {
       .maybeSingle();
 
     if (error) {
-      console.error('[ClientsService] getClient error', error);
+      // console.error('[ClientsService] getClient error', error);
       throw error;
     }
 
@@ -49,7 +49,7 @@ export const clientsService = {
   },
 
   async createClient(orgId: string, payload: ClientFormData): Promise<Client> {
-    console.log('[ClientsService] createClient', { orgId, name: payload.name });
+    //console.log('[ClientsService] createClient', { orgId, name: payload.name });
 
     const { data, error } = await supabase
       .from('clients')
@@ -67,7 +67,7 @@ export const clientsService = {
       .single();
 
     if (error) {
-      console.error('[ClientsService] createClient error', error);
+      // console.error('[ClientsService] createClient error', error);
       throw error;
     }
 
@@ -76,7 +76,7 @@ export const clientsService = {
   },
 
   async updateClient(orgId: string, clientId: string, payload: ClientFormData): Promise<Client> {
-    console.log('[ClientsService] updateClient', { orgId, clientId, name: payload.name });
+    //console.log('[ClientsService] updateClient', { orgId, clientId, name: payload.name });
 
     const { data, error } = await supabase
       .from('clients')
@@ -96,7 +96,7 @@ export const clientsService = {
       .maybeSingle();
 
     if (error) {
-      console.error('[ClientsService] updateClient error', error);
+      // console.error('[ClientsService] updateClient error', error);
       throw error;
     }
 
@@ -105,7 +105,7 @@ export const clientsService = {
   },
 
   async disableClient(orgId: string, clientId: string): Promise<void> {
-    console.log('[ClientsService] disableClient', { orgId, clientId });
+    //console.log('[ClientsService] disableClient', { orgId, clientId });
 
     const { error } = await supabase
       .from('clients')
@@ -117,13 +117,13 @@ export const clientsService = {
       .eq('org_id', orgId);
 
     if (error) {
-      console.error('[ClientsService] disableClient error', error);
+      // console.error('[ClientsService] disableClient error', error);
       throw error;
     }
   },
 
   async getClientRules(orgId: string, clientId: string): Promise<ClientRules> {
-    console.log('[ClientsService] getClientRules', { orgId, clientId });
+    //console.log('[ClientsService] getClientRules', { orgId, clientId });
 
     const { data, error } = await supabase
       .from('client_rules')
@@ -133,13 +133,13 @@ export const clientsService = {
       .maybeSingle();
 
     if (error) {
-      console.error('[ClientsService] getClientRules error', error);
+      // console.error('[ClientsService] getClientRules error', error);
       throw error;
     }
 
     // Si no existe, crear una fila con valores por defecto
     if (!data) {
-      console.log('[ClientsService] creating default client_rules');
+      //console.log('[ClientsService] creating default client_rules');
       const { data: newData, error: insertError } = await supabase
         .from('client_rules')
         .insert({
@@ -153,7 +153,7 @@ export const clientsService = {
         .single();
 
       if (insertError) {
-        console.error('[ClientsService] create default rules error', insertError);
+        // console.error('[ClientsService] create default rules error', insertError);
         throw insertError;
       }
 
@@ -164,7 +164,7 @@ export const clientsService = {
   },
 
   async updateClientRules(orgId: string, clientId: string, patch: ClientRulesFormData): Promise<ClientRules> {
-    console.log('[ClientsService] updateClientRules', { orgId, clientId, patch });
+    //console.log('[ClientsService] updateClientRules', { orgId, clientId, patch });
 
     // Primero verificar si existe
     const { data: existing } = await supabase
@@ -189,7 +189,7 @@ export const clientsService = {
         .single();
 
       if (error) {
-        console.error('[ClientsService] insert client_rules error', error);
+        // console.error('[ClientsService] insert client_rules error', error);
         throw error;
       }
 
@@ -211,7 +211,7 @@ export const clientsService = {
       .maybeSingle();
 
     if (error) {
-      console.error('[ClientsService] updateClientRules error', error);
+      // console.error('[ClientsService] updateClientRules error', error);
       throw error;
     }
 
@@ -220,7 +220,7 @@ export const clientsService = {
   },
 
   async listDocks(orgId: string): Promise<Dock[]> {
-    console.log('[ClientsService] listDocks', { orgId });
+    //console.log('[ClientsService] listDocks', { orgId });
 
     const { data, error } = await supabase
       .from('docks')
@@ -229,7 +229,7 @@ export const clientsService = {
       .order('name', { ascending: true });
 
     if (error) {
-      console.error('[ClientsService] listDocks error', error);
+      // console.error('[ClientsService] listDocks error', error);
       throw error;
     }
 
@@ -237,7 +237,7 @@ export const clientsService = {
   },
 
   async getClientDocks(orgId: string, clientId: string): Promise<string[]> {
-    console.log('[ClientsService] getClientDocks', { orgId, clientId });
+    //console.log('[ClientsService] getClientDocks', { orgId, clientId });
 
     const { data, error } = await supabase
       .from('client_docks')
@@ -246,7 +246,7 @@ export const clientsService = {
       .eq('org_id', orgId);
 
     if (error) {
-      console.error('[ClientsService] getClientDocks error', error);
+      // console.error('[ClientsService] getClientDocks error', error);
       throw error;
     }
 
@@ -254,7 +254,7 @@ export const clientsService = {
   },
 
   async setClientDocks(orgId: string, clientId: string, dockIds: string[]): Promise<void> {
-    console.log('[ClientsService] setClientDocks', { orgId, clientId, dockIds });
+    //console.log('[ClientsService] setClientDocks', { orgId, clientId, dockIds });
 
     // Obtener los docks actuales
     const currentDockIds = await this.getClientDocks(orgId, clientId);
@@ -263,7 +263,7 @@ export const clientsService = {
     const toAdd = dockIds.filter((id) => !currentDockIds.includes(id));
     const toRemove = currentDockIds.filter((id) => !dockIds.includes(id));
 
-    console.log('[ClientsService] setClientDocks diff', { toAdd, toRemove });
+    //console.log('[ClientsService] setClientDocks diff', { toAdd, toRemove });
 
     // Eliminar los que ya no están
     if (toRemove.length > 0) {
@@ -275,7 +275,7 @@ export const clientsService = {
         .in('dock_id', toRemove);
 
       if (deleteError) {
-        console.error('[ClientsService] delete client_docks error', deleteError);
+        // console.error('[ClientsService] delete client_docks error', deleteError);
         throw deleteError;
       }
     }
@@ -293,14 +293,14 @@ export const clientsService = {
         .insert(rows);
 
       if (insertError) {
-        console.error('[ClientsService] insert client_docks error', insertError);
+        // console.error('[ClientsService] insert client_docks error', insertError);
         throw insertError;
       }
     }
   },
 
   async getClientProviders(orgId: string, clientId: string): Promise<{ provider_id: string; is_default: boolean }[]> {
-    console.log('[ClientsService] getClientProviders', { orgId, clientId });
+    //console.log('[ClientsService] getClientProviders', { orgId, clientId });
 
     const { data, error } = await supabase
       .from('client_providers')
@@ -309,7 +309,7 @@ export const clientsService = {
       .eq('org_id', orgId);
 
     if (error) {
-      console.error('[ClientsService] getClientProviders error', error);
+      // console.error('[ClientsService] getClientProviders error', error);
       throw error;
     }
 
@@ -317,7 +317,7 @@ export const clientsService = {
   },
 
   async setClientProviders(orgId: string, clientId: string, providers: ClientProviderPayload[]): Promise<void> {
-    console.log('[ClientsService] setClientProviders', { orgId, clientId, providers });
+    //console.log('[ClientsService] setClientProviders', { orgId, clientId, providers });
 
     // Validar que solo haya un default
     const defaultCount = providers.filter(p => p.is_default).length;
@@ -338,7 +338,7 @@ export const clientsService = {
       return existing && existing.is_default !== (p.is_default || false);
     });
 
-    console.log('[ClientsService] setClientProviders diff', { toAdd, toRemove, toUpdate });
+    //console.log('[ClientsService] setClientProviders diff', { toAdd, toRemove, toUpdate });
 
     // Usar transacción implícita con múltiples operaciones
     try {
@@ -352,7 +352,7 @@ export const clientsService = {
           .in('provider_id', toRemove);
 
         if (deleteError) {
-          console.error('[ClientsService] delete client_providers error', deleteError);
+          // console.error('[ClientsService] delete client_providers error', deleteError);
           throw deleteError;
         }
       }
@@ -371,7 +371,7 @@ export const clientsService = {
           .insert(rows);
 
         if (insertError) {
-          console.error('[ClientsService] insert client_providers error', insertError);
+          // console.error('[ClientsService] insert client_providers error', insertError);
           throw insertError;
         }
       }
@@ -386,12 +386,12 @@ export const clientsService = {
           .eq('provider_id', p.provider_id);
 
         if (updateError) {
-          console.error('[ClientsService] update client_providers error', updateError);
+          // console.error('[ClientsService] update client_providers error', updateError);
           throw updateError;
         }
       }
     } catch (error) {
-      console.error('[ClientsService] setClientProviders transaction error', error);
+      // console.error('[ClientsService] setClientProviders transaction error', error);
       throw error;
     }
   }

@@ -36,7 +36,6 @@ export function ManpowerControlModal({ isOpen, onClose, orgId }: ManpowerControl
       const data = await manpowerControlService.getControlData(orgId);
       setControlData(data);
     } catch (err: any) {
-      console.error('[ManpowerControlModal] Error loading control data:', err);
       setError(err?.message || 'Error al cargar los datos de control');
     } finally {
       setLoading(false);
@@ -66,7 +65,6 @@ export function ManpowerControlModal({ isOpen, onClose, orgId }: ManpowerControl
       setWorkTypeStats(workTypes);
       setCurrentLevel('workTypes');
     } catch (err: any) {
-      console.error('[ManpowerControlModal] Error loading work types:', err);
       setError(err?.message || 'Error al cargar los tipos de trabajo');
     } finally {
       setLoading(false);

@@ -41,7 +41,7 @@ export default function RolesTab() {
       const data = await adminService.getRoles();
       setRoles(data);
     } catch (error) {
-      console.error('Error al cargar roles:', error);
+      // console.error('Error al cargar roles:', error);
     } finally {
       setLoading(false);
     }

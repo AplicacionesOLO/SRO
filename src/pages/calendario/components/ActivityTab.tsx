@@ -55,8 +55,7 @@ export function ActivityTab({ orgId, reservationId, docks, statuses }: ActivityT
 
       setLogs(Array.isArray(data) ? data : []);
     } catch (err: any) {
-      console.error('[ActivityTab] Error loading logs:', err);
-      setError(err?.message || 'Error al cargar el historial');
+      setError('Error al cargar actividad');
       setLogs([]);
     } finally {
       setLoading(false);

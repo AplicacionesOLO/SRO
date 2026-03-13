@@ -180,12 +180,12 @@ export const calendarService = {
       .order('start_datetime', { ascending: true });
 
     if (error) {
-      console.error('[Calendar] reservationsError', {
-        code: error.code,
-        message: error.message,
-        details: error.details,
-        hint: error.hint,
-      });
+      // console.error('[Calendar] reservationsError', {
+      //   code: error.code,
+      //   message: error.message,
+      //   details: error.details,
+      //   hint: error.hint,
+      // });
       return [];
     }
 
@@ -202,12 +202,12 @@ export const calendarService = {
       .order('start_datetime', { ascending: true });
 
     if (error) {
-      console.error('[Calendar] blocksError', {
-        code: error.code,
-        message: error.message,
-        details: error.details,
-        hint: error.hint,
-      });
+      // console.error('[Calendar] blocksError', {
+      //   code: error.code,
+      //   message: error.message,
+      //   details: error.details,
+      //   hint: error.hint,
+      // });
       return [];
     }
 
@@ -247,12 +247,12 @@ export const calendarService = {
     const { data, error } = await query.order('name', { ascending: true });
 
     if (error) {
-      console.error('[Calendar] docksError', {
-        code: error.code,
-        message: error.message,
-        details: error.details,
-        hint: error.hint,
-      });
+      // console.error('[Calendar] docksError', {
+      //   code: error.code,
+      //   message: error.message,
+      //   details: error.details,
+      //   hint: error.hint,
+      // });
       return [];
     }
 
@@ -267,16 +267,16 @@ export const calendarService = {
       .order('name', { ascending: true });
 
     if (error) {
-      console.error('[Calendar] warehousesError', {
-        code: error.code,
-        message: error.message,
-        details: error.details,
-        hint: error.hint,
-      });
+      // console.error('[Calendar] warehousesError', {
+      //   code: error.code,
+      //   message: error.message,
+      //   details: error.details,
+      //   hint: error.hint,
+      // });
       return [];
     }
 
-    console.log('[Calendar] warehouses loaded', { count: data?.length || 0 });
+    //console.log('[Calendar] warehouses loaded', { count: data?.length || 0 });
     return (data || []) as Warehouse[];
   },
 
@@ -296,13 +296,13 @@ export const calendarService = {
       .single();
 
     if (error) {
-      console.error('[Calendar] createReservationError', {
-        code: error.code,
-        message: error.message,
-        details: error.details,
-        hint: error.hint,
-        payload: reservation,
-      });
+      // console.error('[Calendar] createReservationError', {
+      //   code: error.code,
+      //   message: error.message,
+      //   details: error.details,
+      //   hint: error.hint,
+      //   payload: reservation,
+      // });
 
       // ✅ Detectar error de constraint de solape
       const errorMsg = error.message?.toLowerCase() || '';
@@ -337,11 +337,11 @@ export const calendarService = {
 
     // Si hay error 403/RLS al leer, no fallar: devolver objeto mínimo
     if (fetchErr) {
-      console.warn('[Calendar] createReservation.fetchDetailWarning (403/RLS esperado)', {
-        code: fetchErr.code,
-        message: fetchErr.message,
-        reservationId: data.id,
-      });
+      // console.warn('[Calendar] createReservation.fetchDetailWarning (403/RLS esperado)', {
+      //   code: fetchErr.code,
+      //   message: fetchErr.message,
+      //   reservationId: data.id,
+      // });
 
       // Devolver objeto mínimo con el id para que el modal pueda cerrar
       return {
@@ -376,7 +376,7 @@ export const calendarService = {
     // ✅ Disparar evento de correspondencia
     if (full && reservation.org_id) {
       emailTriggerService.onReservationCreated(reservation.org_id, full).catch(err => {
-        console.error('[Calendar] Error al disparar correos de creación:', err);
+        // console.error('[Calendar] Error al disparar correos de creación:', err);
       });
     }
 
@@ -414,13 +414,13 @@ export const calendarService = {
       .single();
 
     if (error) {
-      console.error('[Calendar] updateReservationError', {
-        code: error.code,
-        message: error.message,
-        details: error.details,
-        hint: error.hint,
-        payload: updates,
-      });
+      // console.error('[Calendar] updateReservationError', {
+      //   code: error.code,
+      //   message: error.message,
+      //   details: error.details,
+      //   hint: error.hint,
+      //   payload: updates,
+      // });
       throw error;
     }
 
@@ -432,7 +432,7 @@ export const calendarService = {
         oldStatusId,
         updates.status_id || null
       ).catch(err => {
-        console.error('[Calendar] Error al disparar correos de cambio de estado:', err);
+        // console.error('[Calendar] Error al disparar correos de cambio de estado:', err);
       });
     }
 
@@ -456,12 +456,12 @@ export const calendarService = {
       .eq('id', id);
 
     if (error) {
-      console.error('[Calendar] cancelReservationError', {
-        code: error.code,
-        message: error.message,
-        details: error.details,
-        hint: error.hint,
-      });
+      // console.error('[Calendar] cancelReservationError', {
+      //   code: error.code,
+      //   message: error.message,
+      //   details: error.details,
+      //   hint: error.hint,
+      // });
       throw error;
     }
   },
@@ -473,12 +473,12 @@ export const calendarService = {
       .eq('id', id);
 
     if (error) {
-      console.error('[Calendar] deleteReservationError', {
-        code: error.code,
-        message: error.message,
-        details: error.details,
-        hint: error.hint,
-      });
+      // console.error('[Calendar] deleteReservationError', {
+      //   code: error.code,
+      //   message: error.message,
+      //   details: error.details,
+      //   hint: error.hint,
+      // });
       throw error;
     }
   },
@@ -501,12 +501,12 @@ export const calendarService = {
       .single();
 
     if (error) {
-      console.error('[Calendar] createBlockError', {
-        code: error.code,
-        message: error.message,
-        details: error.details,
-        hint: error.hint,
-      });
+      // console.error('[Calendar] createBlockError', {
+      //   code: error.code,
+      //   message: error.message,
+      //   details: error.details,
+      //   hint: error.hint,
+      // });
       throw error;
     }
 
@@ -529,12 +529,12 @@ export const calendarService = {
       .eq('id', id);
 
     if (error) {
-      console.error('[Calendar] deleteBlockError', {
-        code: error.code,
-        message: error.message,
-        details: error.details,
-        hint: error.hint,
-      });
+      // console.error('[Calendar] deleteBlockError', {
+      //   code: error.code,
+      //   message: error.message,
+      //   details: error.details,
+      //   hint: error.hint,
+      // });
       throw error;
     }
   },
@@ -547,12 +547,12 @@ export const calendarService = {
       .order('order_index', { ascending: true });
 
     if (error) {
-      console.error('[Calendar] statusesError', {
-        code: error.code,
-        message: error.message,
-        details: error.details,
-        hint: error.hint,
-      });
+      // console.error('[Calendar] statusesError', {
+      //   code: error.code,
+      //   message: error.message,
+      //   details: error.details,
+      //   hint: error.hint,
+      // });
       return [];
     }
 
@@ -567,12 +567,12 @@ export const calendarService = {
       .order('name', { ascending: true });
 
     if (error) {
-      console.error('[Calendar] categoriesError', {
-        code: error.code,
-        message: error.message,
-        details: error.details,
-        hint: error.hint,
-      });
+      // console.error('[Calendar] categoriesError', {
+      //   code: error.code,
+      //   message: error.message,
+      //   details: error.details,
+      //   hint: error.hint,
+      // });
       return [];
     }
 
@@ -592,14 +592,14 @@ export const calendarService = {
       .order('uploaded_at', { ascending: false });
 
     if (error) {
-      console.error('[Calendar] reservationFilesError', {
-        code: error.code,
-        message: error.message,
-        details: error.details,
-        hint: error.hint,
-        orgId,
-        reservationId,
-      });
+      // console.error('[Calendar] reservationFilesError', {
+      //   code: error.code,
+      //   message: error.message,
+      //   details: error.details,
+      //   hint: error.hint,
+      //   orgId,
+      //   reservationId,
+      // });
       return [];
     }
 
@@ -633,14 +633,14 @@ export const calendarService = {
       });
 
     if (uploadError) {
-      console.error('[Calendar] uploadReservationFile.uploadError', {
-        code: (uploadError as any).code,
-        message: (uploadError as any).message,
-        details: (uploadError as any).details,
-        hint: (uploadError as any).hint,
-        bucket: RESERVATION_FILES_BUCKET,
-        storagePath,
-      });
+      // console.error('[Calendar] uploadReservationFile.uploadError', {
+      //   code: (uploadError as any).code,
+      //   message: (uploadError as any).message,
+      //   details: (uploadError as any).details,
+      //   hint: (uploadError as any).hint,
+      //   bucket: RESERVATION_FILES_BUCKET,
+      //   storagePath,
+      // });
       throw uploadError;
     }
 
@@ -666,19 +666,19 @@ export const calendarService = {
       try {
         await supabase.storage.from(RESERVATION_FILES_BUCKET).remove([storagePath]);
       } catch (rollbackError) {
-        console.warn('[Calendar] uploadReservationFile.rollbackWarning', {
-          storagePath,
-          error: rollbackError
-        });
+        // console.warn('[Calendar] uploadReservationFile.rollbackWarning', {
+        //   storagePath,
+        //   error: rollbackError
+        // });
       }
 
-      console.error('[Calendar] uploadReservationFile.insertError', {
-        code: insertError.code,
-        message: insertError.message,
-        details: insertError.details,
-        hint: insertError.hint,
-        payload: { orgId, reservationId, category, fileName: file.name },
-      });
+      // console.error('[Calendar] uploadReservationFile.insertError', {
+      //   code: insertError.code,
+      //   message: insertError.message,
+      //   details: insertError.details,
+      //   hint: insertError.hint,
+      //   payload: { orgId, reservationId, category, fileName: file.name },
+      // });
       throw insertError;
     }
 
@@ -708,14 +708,14 @@ export const calendarService = {
       .single();
 
     if (fetchError) {
-      console.error('[Calendar] deleteReservationFile.fetchError', {
-        code: fetchError.code,
-        message: fetchError.message,
-        details: fetchError.details,
-        hint: fetchError.hint,
-        orgId,
-        fileId,
-      });
+      // console.error('[Calendar] deleteReservationFile.fetchError', {
+      //   code: fetchError.code,
+      //   message: fetchError.message,
+      //   details: fetchError.details,
+      //   hint: fetchError.hint,
+      //   orgId,
+      //   fileId,
+      // });
       throw fetchError;
     }
 
@@ -727,14 +727,14 @@ export const calendarService = {
       .eq('id', fileId);
 
     if (deleteError) {
-      console.error('[Calendar] deleteReservationFile.deleteError', {
-        code: deleteError.code,
-        message: deleteError.message,
-        details: deleteError.details,
-        hint: deleteError.hint,
-        orgId,
-        fileId,
-      });
+      // console.error('[Calendar] deleteReservationFile.deleteError', {
+      //   code: deleteError.code,
+      //   message: deleteError.message,
+      //   details: deleteError.details,
+      //   hint: deleteError.hint,
+      //   orgId,
+      //   fileId,
+      // });
       throw deleteError;
     }
 
@@ -744,7 +744,7 @@ export const calendarService = {
       try {
         await supabase.storage.from(RESERVATION_FILES_BUCKET).remove([path]);
       } catch (e) {
-        console.warn('[Calendar] deleteReservationFile.storageRemoveWarning', { path, error: e });
+        // console.warn('[Calendar] deleteReservationFile.storageRemoveWarning', { path, error: e });
       }
     }
   },

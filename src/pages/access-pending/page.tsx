@@ -6,33 +6,17 @@ export default function AccessPending() {
   const { user, logout, loading, pendingAccess } = useAuth();
   const navigate = useNavigate();
 
-  // ✅ Log de estado para diagnóstico
-  useEffect(() => {
-    console.log('[AccessPending] state', {
-      loading,
-      hasUser: !!user,
-      userId: user?.id || null,
-      orgId: user?.orgId || null,
-      role: user?.role || null,
-      pendingAccess
-    });
-  }, [loading, user, pendingAccess]);
-
   // ✅ Redirect a login si no hay usuario
   useEffect(() => {
-    if (!loading && !user) {
-      console.log('[AccessPending] No user, redirecting to /login');
+    if (!user) {
       navigate('/login');
+      return;
     }
-  }, [loading, user, navigate]);
-
-  // ✅ Redirect a dashboard si loading terminó y tiene orgId
-  useEffect(() => {
-    if (!loading && user && user.orgId) {
-      console.log('[AccessPending] User has orgId, redirecting to /dashboard');
+    if (user.orgId) {
       navigate('/dashboard');
+      return;
     }
-  }, [loading, user, navigate]);
+  }, [user, navigate]);
 
   // ✅ No renderizar mientras loading sea true
   if (loading) {

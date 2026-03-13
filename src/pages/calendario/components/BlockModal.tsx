@@ -110,12 +110,11 @@ export default function BlockModal({ block, docks, onClose, onSave }: BlockModal
         onSave();
       }
     } catch (error: any) {
-      console.error('Error guardando bloqueo:', error);
       setNotifyModal({
         isOpen: true,
         type: 'error',
-        title: 'Error al guardar',
-        message: error.message || 'Error al guardar el bloqueo'
+        title: 'Error',
+        message: error?.message || 'Error al guardar bloqueo',
       });
     } finally {
       setLoading(false);
@@ -136,12 +135,11 @@ export default function BlockModal({ block, docks, onClose, onSave }: BlockModal
       await calendarService.deleteDockTimeBlock(block.id);
       onSave();
     } catch (error: any) {
-      console.error('Error eliminando bloqueo:', error);
       setNotifyModal({
         isOpen: true,
         type: 'error',
-        title: 'Error al eliminar',
-        message: error.message || 'Error al eliminar el bloqueo'
+        title: 'Error',
+        message: error?.message || 'Error al eliminar bloqueo',
       });
     } finally {
       setLoading(false);

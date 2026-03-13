@@ -1,20 +1,13 @@
 import { useState } from 'react';
 import { useAuth } from '../../../../contexts/AuthContext';
 import { ConfirmModal } from '../../../../components/base/ConfirmModal';
-import { sendTestEmailLocal, isLocalMode, getSmtpConfig } from '../../../../services/smtpLocalService';
+import { supabase } from '../../../../lib/supabase';
 
 export default function SmtpServiceTab() {
   const { user } = useAuth();
   const [testEmail, setTestEmail] = useState('');
   const [sending, setSending] = useState(false);
 
-  // ✅ Obtener configuración SMTP
-  const smtpConfig = getSmtpConfig();
-
-  console.log('[SmtpServiceTab] Configuración SMTP:', smtpConfig);
-  console.log('[SmtpServiceTab] using SMTP_LOCAL_URL =', smtpConfig.localUrl);
-
-  // ✅ Estados para popups
   const [popup, setPopup] = useState<{
     isOpen: boolean;
     type: 'success' | 'warning' | 'error' | 'info';
@@ -40,7 +33,6 @@ export default function SmtpServiceTab() {
       return;
     }
 
-    // Validación básica de email
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(testEmail)) {
       setPopup({
@@ -52,71 +44,61 @@ export default function SmtpServiceTab() {
       return;
     }
 
-    // ✅ VALIDACIÓN CRÍTICA: Solo permitir envío en modo local
-    if (!isLocalMode()) {
-      setPopup({
-        isOpen: true,
-        type: 'error',
-        title: 'Modo local no activo',
-        message: 'El envío de prueba solo está disponible en modo local. Configurá VITE_SMTP_MODE=local en el archivo .env',
-      });
-      return;
-    }
-
     setSending(true);
 
     try {
-      console.log('[SmtpServiceTab] Enviando email de prueba', { 
-        to: testEmail, 
-        mode: smtpConfig.mode,
-        localUrl: smtpConfig.localUrl 
+      const {
+        data: { session },
+        error: sessionError,
+      } = await supabase.auth.getSession();
+
+      if (sessionError || !session?.access_token) {
+        throw new Error('No hay sesión activa');
+      }
+
+      const { data, error } = await supabase.functions.invoke('smtp-send', {
+        body: {
+          to_emails: [testEmail],
+          subject: 'Correo de prueba - Sistema de Correspondencia',
+          body: `
+            <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+              <h2 style="color: #0d9488;">Correo de Prueba</h2>
+              <p>Este es un correo de prueba enviado desde el sistema de correspondencia.</p>
+              <p>Si recibiste este mensaje, significa que el servicio SMTP está funcionando correctamente.</p>
+              <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 20px 0;">
+              <p style="color: #6b7280; font-size: 12px;">
+                Enviado por: ${user?.email || 'Sistema'}<br>
+                Fecha: ${new Date().toLocaleString('es-ES')}<br>
+                Servicio: SMTP Corporativo (relay-smtp.ologistics.com)
+              </p>
+            </div>
+          `,
+          sender_email: 'no-reply-sro@ologistics.com',
+        },
       });
 
-      // ✅ CAMBIO CRÍTICO: Solo usar backend local, NUNCA Supabase Edge Functions
-      const result = await sendTestEmailLocal({
-        to: testEmail,
-        subject: 'Correo de prueba - Sistema de Correspondencia',
-        body: `
-          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-            <h2 style="color: #0d9488;">Correo de Prueba</h2>
-            <p>Este es un correo de prueba enviado desde el sistema de correspondencia.</p>
-            <p>Si recibiste este mensaje, significa que el servicio SMTP está funcionando correctamente.</p>
-            <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 20px 0;">
-            <p style="color: #6b7280; font-size: 12px;">
-              Enviado por: ${user?.email || 'Sistema'}<br>
-              Fecha: ${new Date().toLocaleString('es-ES')}<br>
-              Modo: ${smtpConfig.mode}<br>
-              Backend: ${smtpConfig.localUrl}
-            </p>
-          </div>
-        `,
-      });
+      if (error) {
+        throw error;
+      }
 
-      console.log('[SmtpServiceTab] Respuesta backend local', result);
-
-      if (!result.success) {
-        throw new Error(result.error || 'Error desconocido del backend local');
+      if (!data?.success) {
+        throw new Error(data?.error || 'Error desconocido al enviar el correo');
       }
 
       setPopup({
         isOpen: true,
         type: 'success',
         title: 'Email enviado',
-        message: `El correo de prueba se envió exitosamente a ${testEmail}${result.outboxId ? ` (ID: ${result.outboxId.slice(0, 8)}...)` : ''}`,
+        message: `El correo de prueba se envió exitosamente a ${testEmail}`,
       });
 
       setTestEmail('');
-    } catch (error) {
-      console.error('[SmtpServiceTab] Error al enviar email de prueba', error);
-
-      const errorMessage =
-        error instanceof Error ? error.message : 'Error desconocido al enviar el correo';
-
+    } catch (error: any) {
       setPopup({
         isOpen: true,
         type: 'error',
         title: 'Error al enviar',
-        message: `No se pudo enviar el correo de prueba: ${errorMessage}`,
+        message: error?.message || 'Error al enviar email de prueba',
       });
     } finally {
       setSending(false);
@@ -125,7 +107,6 @@ export default function SmtpServiceTab() {
 
   return (
     <div className="max-w-3xl mx-auto py-8">
-      {/* ✅ Popup de notificaciones */}
       <ConfirmModal
         isOpen={popup.isOpen}
         type={popup.type}
@@ -137,59 +118,35 @@ export default function SmtpServiceTab() {
 
       <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
         <div className="px-6 py-4 border-b border-gray-200 bg-gray-50">
-          <h3 className="text-lg font-semibold text-gray-900">Servicio de Correo</h3>
+          <h3 className="text-lg font-semibold text-gray-900">Servicio de Correo SMTP Corporativo</h3>
           <p className="text-sm text-gray-600 mt-1">
             Configuración centralizada de envío de correos electrónicos
           </p>
         </div>
 
         <div className="p-6">
-          {/* ✅ Indicador de modo SMTP */}
-          {isLocalMode() && (
-            <div className="mb-6 bg-amber-50 border border-amber-200 rounded-lg p-4">
-              <div className="flex gap-3">
-                <i className="ri-flask-line text-amber-600 text-xl flex-shrink-0 mt-0.5 w-6 h-6 flex items-center justify-center"></i>
-                <div className="text-sm text-amber-900">
-                  <p className="font-semibold mb-1">Modo de Desarrollo Activo</p>
-                  <p>
-                    Los correos se envían a través del backend local en{' '}
-                    <span className="font-mono font-semibold">{smtpConfig.localUrl}</span>
-                  </p>
-                  <p className="text-xs mt-2 text-amber-700">
-                    <strong>Flujo actual:</strong>
-                  </p>
-                  <ol className="text-xs mt-1 ml-4 list-decimal space-y-0.5">
-                    <li>Evento dispara Edge Function (correspondence-process-event)</li>
-                    <li>Edge Function evalúa reglas y encola en correspondence_outbox</li>
-                    <li>Worker local procesa cola cada 10s y envía por SMTP</li>
-                  </ol>
-                  <p className="text-xs mt-2 text-amber-700">
-                    Para producción, cambiá VITE_SMTP_MODE=supabase en el archivo .env
-                  </p>
-                </div>
+          <div className="mb-6 bg-teal-50 border border-teal-200 rounded-lg p-4">
+            <div className="flex gap-3">
+              <i className="ri-server-line text-teal-600 text-xl flex-shrink-0 mt-0.5 w-6 h-6 flex items-center justify-center"></i>
+              <div className="text-sm text-teal-900">
+                <p className="font-semibold mb-1">Servicio SMTP Corporativo Activo</p>
+                <p>
+                  Los correos se envían a través del relay SMTP corporativo en{' '}
+                  <span className="font-mono font-semibold">relay-smtp.ologistics.com:25</span>
+                </p>
+                <p className="text-xs mt-2 text-teal-700">
+                  <strong>Flujo actual:</strong>
+                </p>
+                <ol className="text-xs mt-1 ml-4 list-decimal space-y-0.5">
+                  <li>Evento dispara Edge Function (correspondence-process-event)</li>
+                  <li>Edge Function evalúa reglas y encola en correspondence_outbox</li>
+                  <li>Edge Function llama a smtp-send para envío inmediato</li>
+                  <li>smtp-send conecta al relay SMTP corporativo y envía el correo</li>
+                </ol>
               </div>
             </div>
-          )}
+          </div>
 
-          {/* ✅ Advertencia si NO está en modo local */}
-          {!isLocalMode() && (
-            <div className="mb-6 bg-red-50 border border-red-200 rounded-lg p-4">
-              <div className="flex gap-3">
-                <i className="ri-error-warning-line text-red-600 text-xl flex-shrink-0 mt-0.5 w-6 h-6 flex items-center justify-center"></i>
-                <div className="text-sm text-red-900">
-                  <p className="font-semibold mb-1">Modo Local No Activo</p>
-                  <p>
-                    El envío de prueba requiere que el backend local esté configurado.
-                  </p>
-                  <p className="text-xs mt-2">
-                    Configurá <span className="font-mono font-semibold">VITE_SMTP_MODE=local</span> en el archivo .env
-                  </p>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* ✅ Estado del servicio */}
           <div className="flex items-start gap-4 mb-6">
             <div className="w-12 h-12 rounded-full flex items-center justify-center bg-teal-100">
               <i className="ri-mail-send-line text-2xl text-teal-600" />
@@ -209,7 +166,6 @@ export default function SmtpServiceTab() {
             </div>
           </div>
 
-          {/* ✅ Información del servicio SMTP */}
           <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">
             <div className="flex gap-3">
               <i className="ri-information-line text-blue-600 text-xl flex-shrink-0 mt-0.5 w-6 h-6 flex items-center justify-center"></i>
@@ -218,14 +174,14 @@ export default function SmtpServiceTab() {
                 <ul className="space-y-1 list-disc list-inside">
                   <li>No necesitás conectar tu cuenta personal de Gmail</li>
                   <li>Los correos se envían automáticamente según las reglas configuradas</li>
-                  <li>El sistema usa credenciales SMTP seguras del servidor</li>
+                  <li>El sistema usa el relay SMTP corporativo seguro</li>
                   <li>Todos los envíos quedan registrados en la bitácora</li>
+                  <li>El envío es inmediato mediante Edge Functions de Supabase</li>
                 </ul>
               </div>
             </div>
           </div>
 
-          {/* ✅ Sección de prueba (solo admin) */}
           {isAdmin && (
             <div className="border-t border-gray-200 pt-6">
               <h4 className="text-sm font-semibold text-gray-900 mb-3 flex items-center gap-2">
@@ -244,12 +200,12 @@ export default function SmtpServiceTab() {
                   value={testEmail}
                   onChange={(e) => setTestEmail(e.target.value)}
                   placeholder="correo@ejemplo.com"
-                  disabled={sending || !isLocalMode()}
+                  disabled={sending}
                   className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent disabled:bg-gray-100 disabled:cursor-not-allowed text-sm"
                 />
                 <button
                   onClick={handleSendTestEmail}
-                  disabled={sending || !testEmail.trim() || !isLocalMode()}
+                  disabled={sending || !testEmail.trim()}
                   className="px-6 py-2 bg-teal-600 text-white rounded-lg hover:bg-teal-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 whitespace-nowrap text-sm font-medium"
                 >
                   {sending ? (
@@ -267,12 +223,11 @@ export default function SmtpServiceTab() {
               </div>
 
               <p className="text-xs text-gray-500 mt-2">
-                El correo de prueba se enviará desde no-reply-sro@ologistics.com
+                El correo de prueba se enviará desde no-reply-sro@ologistics.com vía relay-smtp.ologistics.com
               </p>
             </div>
           )}
 
-          {/* ✅ Información adicional para no-admin */}
           {!isAdmin && (
             <div className="border-t border-gray-200 pt-6">
               <div className="bg-gray-50 rounded-lg p-4">
@@ -292,7 +247,6 @@ export default function SmtpServiceTab() {
         </div>
       </div>
 
-      {/* ✅ Sección de ayuda */}
       <div className="mt-6 bg-gray-50 rounded-lg border border-gray-200 p-4">
         <h4 className="text-sm font-semibold text-gray-900 mb-2 flex items-center gap-2">
           <i className="ri-question-line w-5 h-5 flex items-center justify-center"></i>

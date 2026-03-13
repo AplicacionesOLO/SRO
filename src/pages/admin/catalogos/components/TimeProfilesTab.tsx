@@ -18,6 +18,7 @@ export default function TimeProfilesTab({ orgId }: TimeProfilesTabProps) {
   const [loading, setLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingProfile, setEditingProfile] = useState<ProviderCargoTimeProfile | undefined>();
+  const [error, setError] = useState<string | undefined>();
 
   const canRead = can('time_profiles.view');
   const canCreate = can('time_profiles.create');
@@ -35,7 +36,7 @@ export default function TimeProfilesTab({ orgId }: TimeProfilesTabProps) {
   const loadData = async () => {
     try {
       setLoading(true);
-      console.log('[TimeProfilesTab] Loading data for orgId:', orgId);
+      //console.log('[TimeProfilesTab] Loading data for orgId:', orgId);
       
       const [profilesData, providersData, cargoTypesData] = await Promise.all([
         timeProfilesService.getAll(orgId),
@@ -43,17 +44,17 @@ export default function TimeProfilesTab({ orgId }: TimeProfilesTabProps) {
         cargoTypesService.getActive(orgId)
       ]);
 
-      console.log('[TimeProfilesTab] Data loaded:', {
+      /**console.log('[TimeProfilesTab] Data loaded:', {
         profiles: profilesData.length,
         providers: providersData.length,
         cargoTypes: cargoTypesData.length
-      });
+      });*/
 
       setTimeProfiles(profilesData);
       setProviders(providersData);
       setCargoTypes(cargoTypesData);
-    } catch (error) {
-      console.error('[TimeProfilesTab] Error loading data:', error);
+    } catch (error: any) {
+      setError(error?.message || 'Error al cargar perfiles de tiempo');
     } finally {
       setLoading(false);
     }
@@ -77,8 +78,8 @@ export default function TimeProfilesTab({ orgId }: TimeProfilesTabProps) {
     try {
       await timeProfilesService.delete(id);
       await loadData();
-    } catch (error) {
-      console.error('[TimeProfilesTab] Error deleting:', error);
+    } catch (error: any) {
+      setError(error?.message || 'Error al eliminar');
       alert('Error al eliminar el perfil de tiempo');
     }
   };

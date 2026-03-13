@@ -39,7 +39,6 @@ export default function DurationReportGrid({ orgId }: DurationReportGridProps) {
       const report = await casetillaService.getDurationReport(orgId);
       setData(report);
     } catch (error) {
-      console.error('Error loading duration report:', error);
       setData([]);
     } finally {
       setIsLoading(false);

@@ -99,41 +99,41 @@ export const userAccessService = {
       targetUserId,
     };
 
-    console.log('[userAccessService.get] 📤 Request payload', { reqId: id, payload });
+    //console.log('[userAccessService.get] 📤 Request payload', { reqId: id, payload });
 
     const { data, error } = await supabase.functions.invoke('admin-user-access', {
       body: payload,
     });
 
-    console.log('[userAccessService.get] 📥 Response', {
+    /**console.log('[userAccessService.get] 📥 Response', {
       reqId: id,
       hasData: !!data,
       hasError: !!error,
       data,
       error,
-    });
+    });*/
 
     if (error) {
       const ctx = (error as any)?.context;
-      console.error('[userAccessService.get] ❌ Invoke error', {
-        reqId: id,
-        message: error.message,
-        hasContext: !!ctx,
-        status: (ctx as any)?.status,
-        statusText: (ctx as any)?.statusText,
-        details: (error as any)?.details,
-      });
+      // console.error('[userAccessService.get] ❌ Invoke error', {
+      //   reqId: id,
+      //   message: error.message,
+      //   hasContext: !!ctx,
+      //   status: (ctx as any)?.status,
+      //   statusText: (ctx as any)?.statusText,
+      //   details: (error as any)?.details,
+      // });
 
       const raw = await safeReadResponseText(ctx);
-      if (raw) {
-        console.error('[userAccessService.get] 📄 Raw response body', { reqId: id, raw });
-      }
+      // if (raw) {
+      //   console.error('[userAccessService.get] 📄 Raw response body', { reqId: id, raw });
+      // }
 
       throw new Error(`Error al obtener accesos: ${error.message}`);
     }
 
     if (data && typeof data === 'object' && 'error' in (data as any)) {
-      console.error('[userAccessService.get] ❌ Server error', { reqId: id, serverError: (data as any).error });
+      // console.error('[userAccessService.get] ❌ Server error', { reqId: id, serverError: (data as any).error });
       throw new Error(`Error del servidor: ${(data as any).error}`);
     }
 
@@ -143,7 +143,7 @@ export const userAccessService = {
       restricted: !!(data as any)?.restricted,
     };
 
-    console.log('[userAccessService.get] ✅ Success', { reqId: id, result });
+    //console.log('[userAccessService.get] ✅ Success', { reqId: id, result });
 
     return result;
   },
@@ -169,38 +169,38 @@ export const userAccessService = {
       countryIds,
     };
 
-    console.log('[userAccessService.setCountries] 📤 Request payload', { reqId: id, payload });
+    //console.log('[userAccessService.setCountries] 📤 Request payload', { reqId: id, payload });
 
     const { data, error } = await supabase.functions.invoke('admin-user-access', {
       body: payload,
     });
 
-    console.log('[userAccessService.setCountries] 📥 Response', {
+    /**console.log('[userAccessService.setCountries] 📥 Response', {
       reqId: id,
       hasData: !!data,
       hasError: !!error,
       data,
       error,
-    });
+    });*/
 
     if (error) {
       const ctx = (error as any)?.context;
 
-      console.error('[userAccessService.setCountries] ❌ Invoke error', {
-        reqId: id,
-        message: error.message,
-        hasContext: !!ctx,
-        status: (ctx as any)?.status,
-        statusText: (ctx as any)?.statusText,
-        details: (error as any)?.details,
-      });
+      // console.error('[userAccessService.setCountries] ❌ Invoke error', {
+      //   reqId: id,
+      //   message: error.message,
+      //   hasContext: !!ctx,
+      //   status: (ctx as any)?.status,
+      //   statusText: (ctx as any)?.statusText,
+      //   details: (error as any)?.details,
+      // });
 
       const raw = await safeReadResponseText(ctx);
       if (raw) {
-        console.error('[userAccessService.setCountries] 📄 Raw response body', { reqId: id, raw });
+        // console.error('[userAccessService.setCountries] 📄 Raw response body', { reqId: id, raw });
         try {
           const parsed = JSON.parse(raw);
-          console.error('[userAccessService.setCountries] 📋 Parsed server body', { reqId: id, parsed });
+          // console.error('[userAccessService.setCountries] 📋 Parsed server body', { reqId: id, parsed });
 
           if (parsed?.error) {
             const extra = [
@@ -223,11 +223,11 @@ export const userAccessService = {
     }
 
     if (data && typeof data === 'object' && 'error' in (data as any)) {
-      console.error('[userAccessService.setCountries] ❌ Server error', { reqId: id, serverError: (data as any).error });
+      // console.error('[userAccessService.setCountries] ❌ Server error', { reqId: id, serverError: (data as any).error });
       throw new Error(`Error del servidor: ${(data as any).error}`);
     }
 
-    console.log('[userAccessService.setCountries] ✅ Success', { reqId: id });
+    //console.log('[userAccessService.setCountries] ✅ Success', { reqId: id });
   },
 
   async setWarehouses(params: SetWarehousesParams): Promise<void> {
@@ -253,39 +253,39 @@ export const userAccessService = {
       warehouseIds: params.restricted ? warehouseIds : [],
     };
 
-    console.log('[userAccessService.setWarehouses] 📤 Request payload', { reqId: id, payload });
+    //console.log('[userAccessService.setWarehouses] 📤 Request payload', { reqId: id, payload });
 
     const { data, error } = await supabase.functions.invoke('admin-user-access', {
       body: payload,
     });
 
-    console.log('[userAccessService.setWarehouses] 📥 Response', {
+    /**console.log('[userAccessService.setWarehouses] 📥 Response', {
       reqId: id,
       hasData: !!data,
       hasError: !!error,
       data,
       error,
-    });
+    });*/
 
     if (error) {
       const ctx = (error as any)?.context;
 
-      console.error('[userAccessService.setWarehouses] ❌ Invoke error', {
-        reqId: id,
-        message: error.message,
-        hasContext: !!ctx,
-        status: (ctx as any)?.status,
-        statusText: (ctx as any)?.statusText,
-        details: (error as any)?.details,
-      });
+      // console.error('[userAccessService.setWarehouses] ❌ Invoke error', {
+      //   reqId: id,
+      //   message: error.message,
+      //   hasContext: !!ctx,
+      //   status: (ctx as any)?.status,
+      //   statusText: (ctx as any)?.statusText,
+      //   details: (error as any)?.details,
+      // });
 
       const raw = await safeReadResponseText(ctx);
       if (raw) {
-        console.error('[userAccessService.setWarehouses] 📄 Raw response body', { reqId: id, raw });
+        // console.error('[userAccessService.setWarehouses] 📄 Raw response body', { reqId: id, raw });
 
         try {
           const parsed = JSON.parse(raw);
-          console.error('[userAccessService.setWarehouses] 📋 Parsed server body', { reqId: id, parsed });
+          // console.error('[userAccessService.setWarehouses] 📋 Parsed server body', { reqId: id, parsed });
 
           if (parsed?.error) {
             const extra = [
@@ -310,10 +310,10 @@ export const userAccessService = {
     }
 
     if (data && typeof data === 'object' && 'error' in (data as any)) {
-      console.error('[userAccessService.setWarehouses] ❌ Server error', { reqId: id, serverError: (data as any).error });
+      // console.error('[userAccessService.setWarehouses] ❌ Server error', { reqId: id, serverError: (data as any).error });
       throw new Error(`Error del servidor: ${(data as any).error}`);
     }
 
-    console.log('[userAccessService.setWarehouses] ✅ Success', { reqId: id });
+    //console.log('[userAccessService.setWarehouses] ✅ Success', { reqId: id });
   },
 };

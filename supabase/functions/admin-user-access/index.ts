@@ -35,14 +35,14 @@ serve(async (req) => {
   const authHeader = req.headers.get("authorization");
   const apiKeyHeader = req.headers.get("apikey");
 
-  console.log(`[${VERSION}] [${id}] START`, {
+  /**console.log(`[${VERSION}] [${id}] START`, {
     method: req.method,
     url: req.url,
     hasAuthHeader: !!authHeader,
     authPrefix: safePrefix(authHeader, 18),
     hasApiKey: !!apiKeyHeader,
     apikeyPrefix: safePrefix(apiKeyHeader, 16),
-  });
+  });*/
 
   try {
     const supabaseUrl = Deno.env.get("SUPABASE_URL");
@@ -69,12 +69,12 @@ serve(async (req) => {
     const { data: userData, error: userErr } = await supabaseAuth.auth.getUser();
     const user = userData?.user ?? null;
 
-    console.log(`[${VERSION}] [${id}] AUTH_CHECK`, {
+    /**console.log(`[${VERSION}] [${id}] AUTH_CHECK`, {
       ok: !!user && !userErr,
       userId: user?.id ?? null,
       userEmail: user?.email ?? null,
       authError: userErr ? { name: userErr.name, message: userErr.message } : null,
-    });
+    });*/
 
     if (!user) {
       return json({ error: "Unauthorized", details: "Auth session missing!", reqId: id, version: VERSION }, 401);
@@ -97,7 +97,7 @@ serve(async (req) => {
     // ✅ Soportar tanto userId como targetUserId (fallback)
     const finalTargetUserId = targetUserId || userId;
 
-    console.log(`[${VERSION}] [${id}] PAYLOAD`, {
+    /**console.log(`[${VERSION}] [${id}] PAYLOAD`, {
       action,
       targetUserId: finalTargetUserId ?? null,
       orgId: orgId ?? null,
@@ -109,7 +109,7 @@ serve(async (req) => {
       warehouseIdsCount: Array.isArray(warehouseIds) ? warehouseIds.length : 0,
       restricted: restricted ?? null,
       requester: user.id,
-    });
+    });*/
 
     // ✅ NUEVO: Acción GET - Obtener accesos del usuario
     if (action === "get") {
@@ -123,7 +123,7 @@ serve(async (req) => {
         return json({ error: "Bad Request", details: "Missing targetUserId", reqId: id, version: VERSION }, 400);
       }
 
-      console.log(`[${VERSION}] [${id}] GET_START`, { orgId, targetUserId: finalTargetUserId });
+      //console.log(`[${VERSION}] [${id}] GET_START`, { orgId, targetUserId: finalTargetUserId });
 
       // Obtener países asignados
       const { data: countriesData, error: countriesError } = await supabase
@@ -132,11 +132,11 @@ serve(async (req) => {
         .eq("user_id", finalTargetUserId)
         .eq("org_id", orgId);
 
-      console.log(`[${VERSION}] [${id}] GET_COUNTRIES`, {
+      /**console.log(`[${VERSION}] [${id}] GET_COUNTRIES`, {
         ok: !countriesError,
         count: countriesData?.length ?? 0,
         error: countriesError ? { message: countriesError.message } : null,
-      });
+      });*/
 
       if (countriesError) {
         return json({ error: "Database error", details: countriesError.message, reqId: id, version: VERSION }, 500);
@@ -152,11 +152,11 @@ serve(async (req) => {
         .eq("org_id", orgId)
         .limit(1);
 
-      console.log(`[${VERSION}] [${id}] GET_WAREHOUSES`, {
+      /**console.log(`[${VERSION}] [${id}] GET_WAREHOUSES`, {
         ok: !warehousesError,
         count: warehousesData?.length ?? 0,
         error: warehousesError ? { message: warehousesError.message } : null,
-      });
+      });*/
 
       if (warehousesError) {
         return json({ error: "Database error", details: warehousesError.message, reqId: id, version: VERSION }, 500);
@@ -186,7 +186,7 @@ serve(async (req) => {
         restricted: restrictedValue,
       };
 
-      console.log(`[${VERSION}] [${id}] GET_SUCCESS`, result);
+      //console.log(`[${VERSION}] [${id}] GET_SUCCESS`, result);
 
       return json(result, 200);
     }
@@ -208,11 +208,11 @@ serve(async (req) => {
         return json({ error: "Bad Request", details: "countryIds must be an array", reqId: id, version: VERSION }, 400);
       }
 
-      console.log(`[${VERSION}] [${id}] SET_COUNTRIES_START`, {
+      /**console.log(`[${VERSION}] [${id}] SET_COUNTRIES_START`, {
         orgId,
         targetUserId: finalTargetUserId,
         countryIds,
-      });
+      });*/
 
       // Eliminar países existentes
       const { error: deleteError } = await supabase
@@ -244,7 +244,7 @@ serve(async (req) => {
         }
       }
 
-      console.log(`[${VERSION}] [${id}] SET_COUNTRIES_SUCCESS`, { count: countryIds.length });
+      //console.log(`[${VERSION}] [${id}] SET_COUNTRIES_SUCCESS`, { count: countryIds.length });
 
       return json({ success: true, message: "Countries assigned", reqId: id, version: VERSION }, 200);
     }
@@ -271,12 +271,12 @@ serve(async (req) => {
         return json({ error: "Bad Request", details: "warehouseIds must be an array", reqId: id, version: VERSION }, 400);
       }
 
-      console.log(`[${VERSION}] [${id}] SET_WAREHOUSES_START`, {
+      /**console.log(`[${VERSION}] [${id}] SET_WAREHOUSES_START`, {
         orgId,
         targetUserId: finalTargetUserId,
         restricted,
         warehouseIds,
-      });
+      });*/
 
       // Eliminar almacenes existentes
       const { error: deleteError } = await supabase
@@ -324,7 +324,7 @@ serve(async (req) => {
         }
       }
 
-      console.log(`[${VERSION}] [${id}] SET_WAREHOUSES_SUCCESS`, { restricted, count: warehouseIds.length });
+      //console.log(`[${VERSION}] [${id}] SET_WAREHOUSES_SUCCESS`, { restricted, count: warehouseIds.length });
 
       return json({ success: true, message: "Warehouses assigned", reqId: id, version: VERSION }, 200);
     }
@@ -340,11 +340,11 @@ serve(async (req) => {
         .update({ access_status: "approved", access_approved_at: new Date().toISOString() })
         .eq("id", finalTargetUserId);
 
-      console.log(`[${VERSION}] [${id}] APPROVE`, {
+      /**console.log(`[${VERSION}] [${id}] APPROVE`, {
         ok: !error,
         targetUserId: finalTargetUserId,
         error: error ? { message: error.message, name: error.name } : null,
-      });
+      });*/
 
       if (error) return json({ error: "Update failed", details: error.message, reqId: id, version: VERSION }, 500);
 
@@ -360,11 +360,11 @@ serve(async (req) => {
         })
         .eq("id", finalTargetUserId);
 
-      console.log(`[${VERSION}] [${id}] REJECT`, {
+      /**console.log(`[${VERSION}] [${id}] REJECT`, {
         ok: !error,
         targetUserId: finalTargetUserId,
         error: error ? { message: error.message, name: error.name } : null,
-      });
+      });*/
 
       if (error) return json({ error: "Update failed", details: error.message, reqId: id, version: VERSION }, 500);
 
@@ -379,12 +379,12 @@ serve(async (req) => {
         .update({ access_status: status })
         .eq("id", finalTargetUserId);
 
-      console.log(`[${VERSION}] [${id}] UPDATE_STATUS`, {
+      /**console.log(`[${VERSION}] [${id}] UPDATE_STATUS`, {
         ok: !error,
         targetUserId: finalTargetUserId,
         status,
         error: error ? { message: error.message, name: error.name } : null,
-      });
+      });*/
 
       if (error) return json({ error: "Update failed", details: error.message, reqId: id, version: VERSION }, 500);
 
@@ -396,6 +396,6 @@ serve(async (req) => {
     console.error(`[${VERSION}] [${id}] UNHANDLED`, { message: e?.message ?? String(e) });
     return json({ error: "Server error", details: e?.message ?? String(e), reqId: id, version: VERSION }, 500);
   } finally {
-    console.log(`[${VERSION}] [${id}] END`, { ms: Date.now() - startedAt });
+    //console.log(`[${VERSION}] [${id}] END`, { ms: Date.now() - startedAt });
   }
 });

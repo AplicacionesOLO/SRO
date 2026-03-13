@@ -45,9 +45,8 @@ export default function ProviderModal({ orgId, provider, onClose, onSave }: Prov
       }
 
       onSave();
-    } catch (err) {
-      console.error('[ProviderModal] Error saving', err);
-      setError('Error al guardar proveedor');
+    } catch (err: any) {
+      setError(err?.message || 'Error al guardar');
     } finally {
       setSaving(false);
     }

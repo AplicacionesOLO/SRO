@@ -13,7 +13,7 @@ export default function Navbar() {
       logout();
       navigate('/login');
     } catch (error) {
-      console.error('Logout failed:', error);
+      // silenced
     }
   };
 

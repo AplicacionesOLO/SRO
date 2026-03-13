@@ -24,14 +24,6 @@ if (!SUPABASE_PUBLISHABLE_KEY.startsWith("sb_publishable_")) {
   throw new Error("🚨 INVALID KEY: VITE_SUPABASE_PUBLISHABLE_KEY debe empezar con sb_publishable_");
 }
 
-// No loguear datos sensibles en prod
-if (!isProd) {
-  console.log("[Supabase Config] ✅", {
-    url: SUPABASE_URL,
-    publishableType: SUPABASE_PUBLISHABLE_KEY.startsWith("sb_publishable_") ? "sb_publishable" : "unknown",
-  });
-}
-
 /* ===================== TYPES ===================== */
 export type Database = {
   public: {

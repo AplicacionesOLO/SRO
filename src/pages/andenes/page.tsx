@@ -136,8 +136,11 @@ export default function AndenesPage() {
       setCategories(categoriesData || []);
       setStatuses(statusesData || []);
       setWarehouses(warehousesData || []);
-    } catch (error) {
-      console.error('[Docks] loadError', error);
+    } catch (error: any) {
+      setPermissionErrorModal({
+        isOpen: true,
+        message: 'Error al cargar andenes'
+      });
     } finally {
       setLoadingData(false);
     }
@@ -188,8 +191,7 @@ export default function AndenesPage() {
       if (error) throw error;
 
       await loadData();
-    } catch (error) {
-      console.error('[Docks] saveError', error);
+    } catch (error: any) {
       setPermissionErrorModal({
         isOpen: true,
         message: 'Error al actualizar el andén'

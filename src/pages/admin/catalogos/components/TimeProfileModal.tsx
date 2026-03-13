@@ -72,15 +72,7 @@ export default function TimeProfileModal({
       onSave();
       onClose();
     } catch (err: any) {
-      console.error('[TimeProfileModal] Error saving:', err);
-
-      // Mensaje más útil si hay conflicto por unique (provider+cargo)
-      const msg =
-        err?.code === '23505'
-          ? 'Ya existe un perfil para ese Proveedor y Tipo de carga.'
-          : err?.message || 'Error al guardar el perfil de tiempo';
-
-      setError(msg);
+      setError(err?.message || 'Error al guardar');
     } finally {
       setSaving(false);
     }

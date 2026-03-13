@@ -66,9 +66,8 @@ export default function DockModal({ dock, categories, statuses, orgId, onClose, 
 
         if (error) throw error;
         setWarehouses(data || []);
-      } catch (error) {
-        console.error('[DockModal] loadWarehouses error', error);
-        setWarehouses([]);
+      } catch (error: any) {
+        setErrors({ general: 'Error al cargar almacenes' });
       } finally {
         setLoadingWarehouses(false);
       }
@@ -156,9 +155,8 @@ export default function DockModal({ dock, categories, statuses, orgId, onClose, 
       }
 
       onSave();
-    } catch (error) {
-      console.error('[Docks] saveError', error);
-      alert('Error al guardar el andén');
+    } catch (error: any) {
+      setErrors({ general: error?.message || 'Error al guardar andén' });
     } finally {
       setSaving(false);
     }

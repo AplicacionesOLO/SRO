@@ -35,14 +35,14 @@ serve(async (req) => {
   const authHeader = req.headers.get("authorization");
   const apiKeyHeader = req.headers.get("apikey");
 
-  console.log(`[${VERSION}] [${id}] START`, {
+  /**console.log(`[${VERSION}] [${id}] START`, {
     method: req.method,
     url: req.url,
     hasAuthHeader: !!authHeader,
     authPrefix: safePrefix(authHeader, 18),
     hasApiKey: !!apiKeyHeader,
     apikeyPrefix: safePrefix(apiKeyHeader, 16),
-  });
+  });*/
 
   try {
     const supabaseUrl = Deno.env.get("SUPABASE_URL");
@@ -93,7 +93,7 @@ serve(async (req) => {
       debug,
     } = payload ?? {};
 
-    console.log(`[${VERSION}] [${id}] PAYLOAD`, {
+    /**console.log(`[${VERSION}] [${id}] PAYLOAD`, {
       action,
       userId: userId ?? null,
       emailPrefix: email ? safePrefix(email, 6) : null,
@@ -105,7 +105,7 @@ serve(async (req) => {
       full_name: full_name ?? null,
       phone_e164: phone_e164 ?? null,
       debug: debug ?? false,
-    });
+    });*/
 
     // =========================
     // LIST
@@ -119,7 +119,7 @@ serve(async (req) => {
         );
       }
 
-      console.log(`[${VERSION}] [${id}] LIST_START`, { orgId });
+      //console.log(`[${VERSION}] [${id}] LIST_START`, { orgId });
 
       const { data: userOrgRoles, error: rolesError } = await supabaseAdmin
         .from("user_org_roles")
@@ -144,10 +144,10 @@ serve(async (req) => {
       }
 
       const orgUserIds = (userOrgRoles ?? []).map((uor: any) => uor.user_id);
-      console.log(`[${VERSION}] [${id}] LIST_ORG_USERS`, { count: orgUserIds.length });
+      //console.log(`[${VERSION}] [${id}] LIST_ORG_USERS`, { count: orgUserIds.length });
 
       if (orgUserIds.length === 0) {
-        console.log(`[${VERSION}] [${id}] LIST_SUCCESS_EMPTY`);
+        //console.log(`[${VERSION}] [${id}] LIST_SUCCESS_EMPTY`);
         return json({ users: [], reqId: id, version: VERSION }, 200);
       }
 
@@ -161,7 +161,7 @@ serve(async (req) => {
       }
 
       const authUsers = (authData?.users ?? []).filter((u: any) => orgUserIds.includes(u.id));
-      console.log(`[${VERSION}] [${id}] LIST_AUTH_USERS_FILTERED`, { count: authUsers.length });
+      //console.log(`[${VERSION}] [${id}] LIST_AUTH_USERS_FILTERED`, { count: authUsers.length });
 
       const { data: profiles, error: profilesError } = await supabaseAdmin
         .from("profiles")
@@ -173,7 +173,7 @@ serve(async (req) => {
       }
 
       const profilesMap = new Map((profiles ?? []).map((p: any) => [p.id, { name: p.name, email: p.email, phone_e164: p.phone_e164 }]));
-      console.log(`[${VERSION}] [${id}] LIST_PROFILES`, { count: profilesMap.size });
+      //console.log(`[${VERSION}] [${id}] LIST_PROFILES`, { count: profilesMap.size });
 
       const rolesMap = new Map(
         (userOrgRoles ?? []).map((uor: any) => [
@@ -201,7 +201,7 @@ serve(async (req) => {
         };
       });
 
-      console.log(`[${VERSION}] [${id}] LIST_SUCCESS`, {
+      /**console.log(`[${VERSION}] [${id}] LIST_SUCCESS`, {
         totalUsers: users.length,
         sample: users.slice(0, 3).map((u: any) => ({
           id: u.id,
@@ -210,7 +210,7 @@ serve(async (req) => {
           phone_e164: u.phone_e164,
           role_name: u.role_name,
         })),
-      });
+      });*/
 
       return json({ users, reqId: id, version: VERSION }, 200);
     }
@@ -235,7 +235,7 @@ serve(async (req) => {
         );
       }
 
-      console.log(`[${VERSION}] [${id}] CREATE_START`, { email: safePrefix(email, 6), orgId, roleId, phone_e164 });
+      //console.log(`[${VERSION}] [${id}] CREATE_START`, { email: safePrefix(email, 6), orgId, roleId, phone_e164 });
 
       const { data: existingAuthUsers } = await supabaseAdmin.auth.admin.listUsers();
       const existingUser = (existingAuthUsers?.users ?? []).find((u: any) => u.email?.toLowerCase() === email.toLowerCase());
@@ -246,7 +246,7 @@ serve(async (req) => {
       if (existingUser) {
         createdUserId = existingUser.id;
         alreadyExisted = true;
-        console.log(`[${VERSION}] [${id}] CREATE_USER_EXISTS`, { userId: createdUserId, email: safePrefix(email, 6) });
+        //console.log(`[${VERSION}] [${id}] CREATE_USER_EXISTS`, { userId: createdUserId, email: safePrefix(email, 6) });
 
         if (full_name || phone_e164) {
           const updateData: any = {};
@@ -261,7 +261,7 @@ serve(async (req) => {
           if (profileError) {
             console.warn(`[${VERSION}] [${id}] CREATE_UPDATE_PROFILE_ERROR`, { message: profileError.message });
           } else {
-            console.log(`[${VERSION}] [${id}] CREATE_UPDATE_PROFILE_SUCCESS`);
+            //console.log(`[${VERSION}] [${id}] CREATE_UPDATE_PROFILE_SUCCESS`);
           }
         }
       } else {
@@ -289,7 +289,7 @@ serve(async (req) => {
         }
 
         createdUserId = authData.user.id;
-        console.log(`[${VERSION}] [${id}] CREATE_AUTH_SUCCESS`, { userId: createdUserId });
+        //console.log(`[${VERSION}] [${id}] CREATE_AUTH_SUCCESS`, { userId: createdUserId });
 
         const { error: profileError } = await supabaseAdmin
           .from("profiles")
@@ -306,17 +306,17 @@ serve(async (req) => {
         if (profileError) {
           console.warn(`[${VERSION}] [${id}] CREATE_PROFILE_ERROR`, { message: profileError.message });
         } else {
-          console.log(`[${VERSION}] [${id}] CREATE_PROFILE_SUCCESS`);
+          //console.log(`[${VERSION}] [${id}] CREATE_PROFILE_SUCCESS`);
         }
       }
 
       if (roleId) {
-        console.log(`[${VERSION}] [${id}] INSERTING_USER_ORG_ROLE`, {
+        /**console.log(`[${VERSION}] [${id}] INSERTING_USER_ORG_ROLE`, {
           user_id: createdUserId,
           org_id: orgId,
           role_id: roleId,
           alreadyExisted,
-        });
+        });*/
 
         const { data: insertedRole, error: roleError } = await supabaseAdmin
           .from("user_org_roles")
@@ -339,16 +339,16 @@ serve(async (req) => {
           });
           console.warn(`[${VERSION}] [${id}] Usuario ${alreadyExisted ? 're-agregado' : 'creado'} pero sin rol asignado`);
         } else {
-          console.log(`[${VERSION}] [${id}] CREATE_ROLE_SUCCESS`, { 
+          /**console.log(`[${VERSION}] [${id}] CREATE_ROLE_SUCCESS`, { 
             insertedData: insertedRole,
             rowCount: insertedRole?.length || 0
-          });
+          });*/
         }
       } else {
         console.warn(`[${VERSION}] [${id}] NO_ROLE_ID_PROVIDED`);
       }
 
-      console.log(`[${VERSION}] [${id}] CREATE_SUCCESS`, { userId: createdUserId, alreadyExisted });
+      //console.log(`[${VERSION}] [${id}] CREATE_SUCCESS`, { userId: createdUserId, alreadyExisted });
 
       return json({ 
         userId: createdUserId, 
@@ -371,7 +371,7 @@ serve(async (req) => {
         );
       }
 
-      console.log(`[${VERSION}] [${id}] UPDATE_START`, { userId, orgId, roleId, full_name, phone_e164 });
+      //console.log(`[${VERSION}] [${id}] UPDATE_START`, { userId, orgId, roleId, full_name, phone_e164 });
 
       if (full_name || email || phone_e164 !== undefined) {
         const updateData: any = {};
@@ -387,16 +387,16 @@ serve(async (req) => {
         if (profileError) {
           console.warn(`[${VERSION}] [${id}] UPDATE_PROFILE_ERROR`, { message: profileError.message });
         } else {
-          console.log(`[${VERSION}] [${id}] UPDATE_PROFILE_SUCCESS`);
+          //console.log(`[${VERSION}] [${id}] UPDATE_PROFILE_SUCCESS`);
         }
       }
 
       if (roleId) {
-        console.log(`[${VERSION}] [${id}] UPDATING_USER_ORG_ROLE`, {
+        /**console.log(`[${VERSION}] [${id}] UPDATING_USER_ORG_ROLE`, {
           user_id: userId,
           org_id: orgId,
           role_id: roleId,
-        });
+        });*/
 
         const { data: updatedRole, error: roleError } = await supabaseAdmin
           .from("user_org_roles")
@@ -418,14 +418,14 @@ serve(async (req) => {
             code: roleError.code,
           });
         } else {
-          console.log(`[${VERSION}] [${id}] UPDATE_ROLE_SUCCESS`, { 
+          /**console.log(`[${VERSION}] [${id}] UPDATE_ROLE_SUCCESS`, { 
             updatedData: updatedRole,
             rowCount: updatedRole?.length || 0
-          });
+          });*/
         }
       }
 
-      console.log(`[${VERSION}] [${id}] UPDATE_SUCCESS`);
+      //console.log(`[${VERSION}] [${id}] UPDATE_SUCCESS`);
       return json({ success: true, reqId: id, version: VERSION }, 200);
     }
 
@@ -441,7 +441,7 @@ serve(async (req) => {
         );
       }
 
-      console.log(`[${VERSION}] [${id}] REMOVE_START`, { userId, orgId });
+      //console.log(`[${VERSION}] [${id}] REMOVE_START`, { userId, orgId });
 
       const { error: removeError } = await supabaseAdmin
         .from("user_org_roles")
@@ -475,7 +475,7 @@ serve(async (req) => {
         console.warn(`[${VERSION}] [${id}] REMOVE_USER_PROVIDERS_ERROR`, { message: providersError.message });
       }
 
-      console.log(`[${VERSION}] [${id}] REMOVE_SUCCESS - Usuario desasociado de la org`);
+      //console.log(`[${VERSION}] [${id}] REMOVE_SUCCESS - Usuario desasociado de la org`);
       return json({ success: true, reqId: id, version: VERSION }, 200);
     }
 
@@ -487,6 +487,6 @@ serve(async (req) => {
       500
     );
   } finally {
-    console.log(`[${VERSION}] [${id}] END`, { ms: Date.now() - startedAt });
+    //console.log(`[${VERSION}] [${id}] END`, { ms: Date.now() - startedAt });
   }
 });

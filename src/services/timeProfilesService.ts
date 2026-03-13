@@ -4,7 +4,7 @@ import type { ProviderCargoTimeProfile } from '../types/catalog';
 
 export const timeProfilesService = {
   async getAll(orgId: string): Promise<ProviderCargoTimeProfile[]> {
-    console.log('[TimeProfiles] Fetching time profiles', { orgId });
+    //console.log('[TimeProfiles] Fetching time profiles', { orgId });
 
     const { data, error } = await supabase
       .from('provider_cargo_time_profiles')
@@ -13,16 +13,16 @@ export const timeProfilesService = {
       .order('created_at', { ascending: false });
 
     if (error) {
-      console.error('[TimeProfiles] Error fetching time profiles', {
-        error,
-        message: (error as any)?.message,
-        details: (error as any)?.details,
-        hint: (error as any)?.hint,
-      });
+      // console.error('[TimeProfiles] Error fetching time profiles', {
+      //   error,
+      //   message: (error as any)?.message,
+      //   details: (error as any)?.details,
+      //   hint: (error as any)?.hint,
+      // });
       throw error;
     }
 
-    console.log('[TimeProfiles] Fetched', { count: data?.length || 0 });
+    //console.log('[TimeProfiles] Fetched', { count: data?.length || 0 });
     return data || [];
   },
 
@@ -33,7 +33,7 @@ export const timeProfilesService = {
     cargoTypeId: string,
     avgMinutes: number
   ): Promise<ProviderCargoTimeProfile> {
-    console.log('[TimeProfiles] Upserting(create)', { orgId, providerId, cargoTypeId, avgMinutes });
+    //console.log('[TimeProfiles] Upserting(create)', { orgId, providerId, cargoTypeId, avgMinutes });
 
     const avg = Number(avgMinutes);
 
@@ -55,16 +55,16 @@ export const timeProfilesService = {
       .single();
 
     if (error) {
-      console.error('[TimeProfiles] Error upserting(create)', {
-        error,
-        message: (error as any)?.message,
-        details: (error as any)?.details,
-        hint: (error as any)?.hint,
-      });
+      // console.error('[TimeProfiles] Error upserting(create)', {
+      //   error,
+      //   message: (error as any)?.message,
+      //   details: (error as any)?.details,
+      //   hint: (error as any)?.hint,
+      // });
       throw error;
     }
 
-    console.log('[TimeProfiles] Upserted(create)', { id: data.id });
+    //console.log('[TimeProfiles] Upserted(create)', { id: data.id });
     return data;
   },
 
@@ -80,7 +80,7 @@ export const timeProfilesService = {
       safeUpdates.avg_minutes = Number(safeUpdates.avg_minutes);
     }
 
-    console.log('[TimeProfiles] Updating', { orgId, id, updates: safeUpdates });
+    //console.log('[TimeProfiles] Updating', { orgId, id, updates: safeUpdates });
 
     const { data, error } = await supabase
       .from('provider_cargo_time_profiles')
@@ -91,21 +91,21 @@ export const timeProfilesService = {
       .single();
 
     if (error) {
-      console.error('[TimeProfiles] Error updating', {
-        error,
-        message: (error as any)?.message,
-        details: (error as any)?.details,
-        hint: (error as any)?.hint,
-      });
+      // console.error('[TimeProfiles] Error updating', {
+      //   error,
+      //   message: (error as any)?.message,
+      //   details: (error as any)?.details,
+      //   hint: (error as any)?.hint,
+      // });
       throw error;
     }
 
-    console.log('[TimeProfiles] Updated', { id: data.id });
+    //console.log('[TimeProfiles] Updated', { id: data.id });
     return data;
   },
 
   async delete(orgId: string, id: string): Promise<void> {
-    console.log('[TimeProfiles] Deleting', { orgId, id });
+    //console.log('[TimeProfiles] Deleting', { orgId, id });
 
     const { error } = await supabase
       .from('provider_cargo_time_profiles')
@@ -114,16 +114,16 @@ export const timeProfilesService = {
       .eq('org_id', orgId);
 
     if (error) {
-      console.error('[TimeProfiles] Error deleting', {
-        error,
-        message: (error as any)?.message,
-        details: (error as any)?.details,
-        hint: (error as any)?.hint,
-      });
+      // console.error('[TimeProfiles] Error deleting', {
+      //   error,
+      //   message: (error as any)?.message,
+      //   details: (error as any)?.details,
+      //   hint: (error as any)?.hint,
+      // });
       throw error;
     }
 
-    console.log('[TimeProfiles] Deleted', { id });
+    //console.log('[TimeProfiles] Deleted', { id });
   },
 
   // ✅ Nombre alineado con tu ReservationModal: getMatchingProfile(...)
@@ -132,7 +132,7 @@ export const timeProfilesService = {
     providerId: string,
     cargoTypeId: string
   ): Promise<ProviderCargoTimeProfile | null> {
-    console.log('[TimeProfiles] getMatchingProfile', { orgId, providerId, cargoTypeId });
+    //console.log('[TimeProfiles] getMatchingProfile', { orgId, providerId, cargoTypeId });
 
     const { data, error } = await supabase
       .from('provider_cargo_time_profiles')
@@ -145,16 +145,16 @@ export const timeProfilesService = {
       .maybeSingle();
 
     if (error) {
-      console.error('[TimeProfiles] Error getMatchingProfile', {
-        error,
-        message: (error as any)?.message,
-        details: (error as any)?.details,
-        hint: (error as any)?.hint,
-      });
+      // console.error('[TimeProfiles] Error getMatchingProfile', {
+      //   error,
+      //   message: (error as any)?.message,
+      //   details: (error as any)?.details,
+      //   hint: (error as any)?.hint,
+      // });
       throw error;
     }
 
-    console.log('[TimeProfiles] getMatchingProfile result', { found: !!data, avgMinutes: data?.avg_minutes });
+    //console.log('[TimeProfiles] getMatchingProfile result', { found: !!data, avgMinutes: data?.avg_minutes });
     return data;
   },
 
@@ -167,4 +167,3 @@ export const timeProfilesService = {
     return this.getMatchingProfile(orgId, providerId, cargoTypeId);
   },
 };
-

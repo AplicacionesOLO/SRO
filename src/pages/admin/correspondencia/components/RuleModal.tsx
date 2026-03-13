@@ -114,10 +114,6 @@ export default function RuleModal({ isOpen, onClose, onSave, rule, orgId }: Rule
   const loadData = async (isCancelled: () => boolean) => {
     // FIX: Validar que orgId existe antes de cargar
     if (!orgId) {
-      console.warn('[RuleModal] loadData: orgId is empty, skipping load');
-      setUsers([]);
-      setRoles([]);
-      setStatuses([]);
       return;
     }
 
@@ -125,7 +121,7 @@ export default function RuleModal({ isOpen, onClose, onSave, rule, orgId }: Rule
       // ============================
       // FIX: Usuarios (2 queries separadas para evitar PGRST200)
       // ============================
-      console.log('[RuleModal] Loading users for orgId:', orgId);
+      //console.log('[RuleModal] Loading users for orgId:', orgId);
 
       // Query 1: Obtener user_ids de la organización
       const { data: userOrgData, error: userOrgErr } = await supabase
@@ -143,7 +139,7 @@ export default function RuleModal({ isOpen, onClose, onSave, rule, orgId }: Rule
       }
 
       const userIds = userOrgData?.map((item: any) => item.user_id) || [];
-      console.log('[RuleModal] Found user_ids:', userIds.length);
+      //console.log('[RuleModal] Found user_ids:', userIds.length);
 
       let usersData: any[] = [];
 
@@ -246,14 +242,18 @@ export default function RuleModal({ isOpen, onClose, onSave, rule, orgId }: Rule
         );
       }
 
-      console.log('[RuleModal] loadData complete:', {
+      /**console.log('[RuleModal] loadData complete:', {
         users: usersData.length,
         roles: rolesData?.length || 0,
         statuses: statusesData?.length || 0,
-      });
+      });*/
     } catch (error) {
-      console.error('[RuleModal] loadData exception:', error);
-      // FIX: No romper el render, solo loggear el error
+      setPopup({
+        isOpen: true,
+        type: 'error',
+        title: 'Error',
+        message: 'Error al cargar los datos'
+      });
     }
   };
 
@@ -342,13 +342,12 @@ export default function RuleModal({ isOpen, onClose, onSave, rule, orgId }: Rule
     try {
       await onSave(formData);
       onClose();
-    } catch (error) {
-      console.error("Error al guardar regla:", error);
+    } catch (error: any) {
       setPopup({
         isOpen: true,
         type: 'error',
-        title: 'Error',
-        message: 'Error al guardar la regla'
+        title: 'Error al guardar',
+        message: error?.message || 'Error al guardar la regla'
       });
     } finally {
       setLoading(false);

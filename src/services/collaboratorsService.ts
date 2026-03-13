@@ -16,7 +16,7 @@ async enrichWithWarehouses(orgId: string, collaborators: any[]): Promise<Collabo
     .in('collaborator_id', collaboratorIds);
 
   if (linkErr) {
-    console.error('Error fetching warehouse links:', linkErr);
+    // console.error('Error fetching warehouse links:', linkErr);
     return collaborators;
   }
 
@@ -32,7 +32,7 @@ async enrichWithWarehouses(orgId: string, collaborators: any[]): Promise<Collabo
       .in('id', warehouseIds);
 
     if (whErr) {
-      console.error('Error fetching warehouses:', whErr);
+      // console.error('Error fetching warehouses:', whErr);
       return collaborators;
     }
 
@@ -108,7 +108,7 @@ async enrichWithWarehouses(orgId: string, collaborators: any[]): Promise<Collabo
           .eq('warehouse_id', warehouseId);
 
         if (linkErr) {
-          console.error('[CollaboratorsService] warehouse filter error', linkErr);
+          // console.error('[CollaboratorsService] warehouse filter error', linkErr);
           throw new Error(`Error filtrando por almacén: ${linkErr.message}`);
         }
 
@@ -121,14 +121,14 @@ async enrichWithWarehouses(orgId: string, collaborators: any[]): Promise<Collabo
       const { data, error } = await q;
 
       if (error) {
-        console.error('[CollaboratorsService] getCollaborators error', error);
+        // console.error('[CollaboratorsService] getCollaborators error', error);
         throw new Error(`Error al cargar colaboradores: ${error.message}`);
       }
 
       // Enriquecer con almacenes asignados
       return await this.enrichWithWarehouses(orgId, data ?? []);
     } catch (err) {
-      console.error('[CollaboratorsService] getCollaborators exception', err);
+      // console.error('[CollaboratorsService] getCollaborators exception', err);
       throw err;
     }
   },
@@ -142,11 +142,11 @@ async enrichWithWarehouses(orgId: string, collaborators: any[]): Promise<Collabo
     data: CollaboratorFormData
   ): Promise<Collaborator> {
     try {
-      console.log('[CollaboratorsService] createCollaborator', {
+      /**console.log('[CollaboratorsService] createCollaborator', {
         orgId,
         userId,
         data
-      });
+      });*/
 
       const payload: any = {
         org_id: orgId,
@@ -166,7 +166,7 @@ async enrichWithWarehouses(orgId: string, collaborators: any[]): Promise<Collabo
         .single();
 
       if (error) {
-        console.error('[CollaboratorsService] create error', error);
+        // console.error('[CollaboratorsService] create error', error);
         throw new Error(`Error al crear colaborador: ${error.message}`);
       }
 
@@ -183,7 +183,7 @@ async enrichWithWarehouses(orgId: string, collaborators: any[]): Promise<Collabo
           .insert(rows);
 
         if (whError) {
-          console.error('[CollaboratorsService] warehouses assign error', whError);
+          // console.error('[CollaboratorsService] warehouses assign error', whError);
 
           // rollback simple
           await supabase.from('collaborators').delete().eq('id', inserted.id).eq('org_id', orgId);
@@ -194,7 +194,7 @@ async enrichWithWarehouses(orgId: string, collaborators: any[]): Promise<Collabo
 
       return inserted as Collaborator;
     } catch (err) {
-      console.error('[CollaboratorsService] createCollaborator exception', err);
+      // console.error('[CollaboratorsService] createCollaborator exception', err);
       throw err;
     }
   },
@@ -222,7 +222,7 @@ async enrichWithWarehouses(orgId: string, collaborators: any[]): Promise<Collabo
       .single();
 
     if (collaboratorError) {
-      console.error('Error updating collaborator:', collaboratorError);
+      // console.error('Error updating collaborator:', collaboratorError);
       throw new Error(`Error al actualizar colaborador: ${collaboratorError.message}`);
     }
 
@@ -233,7 +233,7 @@ async enrichWithWarehouses(orgId: string, collaborators: any[]): Promise<Collabo
       .eq('org_id', orgId);
 
     if (deleteError) {
-      console.error('Error deleting warehouse links:', deleteError);
+      // console.error('Error deleting warehouse links:', deleteError);
       throw new Error(`Error al actualizar almacenes: ${deleteError.message}`);
     }
 
@@ -250,7 +250,7 @@ async enrichWithWarehouses(orgId: string, collaborators: any[]): Promise<Collabo
         .insert(warehouseLinks);
 
       if (linkError) {
-        console.error('Error linking warehouses:', linkError);
+        // console.error('Error linking warehouses:', linkError);
         throw new Error(`Error al asignar almacenes: ${linkError.message}`);
       }
     }
@@ -267,7 +267,7 @@ async enrichWithWarehouses(orgId: string, collaborators: any[]): Promise<Collabo
       .eq('org_id', orgId);
 
     if (error) {
-      console.error('Error deleting collaborator:', error);
+      // console.error('Error deleting collaborator:', error);
       throw new Error(`Error al eliminar colaborador: ${error.message}`);
     }
   },
@@ -277,7 +277,7 @@ async enrichWithWarehouses(orgId: string, collaborators: any[]): Promise<Collabo
   // =========================
   async getWorkTypes(orgId: string) {
     try {
-      console.log('[CollaboratorsService] getWorkTypes', { orgId });
+      //console.log('[CollaboratorsService] getWorkTypes', { orgId });
 
       const { data, error } = await supabase
         .from('work_types')
@@ -287,7 +287,7 @@ async enrichWithWarehouses(orgId: string, collaborators: any[]): Promise<Collabo
         .order('name', { ascending: true });
 
       if (error) {
-        console.error('Error fetching work types:', error);
+        // console.error('Error fetching work types:', error);
         throw new Error(`Error al obtener tipos de trabajo: ${error.message}`);
       }
 
@@ -303,7 +303,7 @@ async enrichWithWarehouses(orgId: string, collaborators: any[]): Promise<Collabo
           .order('name', { ascending: true });
 
         if (fallbackErr) {
-          console.error('Error fetching work types (fallback active):', fallbackErr);
+          // console.error('Error fetching work types (fallback active):', fallbackErr);
           throw new Error(`Error al obtener tipos de trabajo: ${fallbackErr.message}`);
         }
 

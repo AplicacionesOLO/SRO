@@ -10,7 +10,7 @@ export const operationalStatusService = {
    */
   async getStatuses(orgId: string): Promise<OperationalStatus[]> {
     try {
-      console.log('[operationalStatusService] getStatuses start', { orgId });
+      //console.log('[operationalStatusService] getStatuses start', { orgId });
 
       const { data, error } = await supabase
         .from('reservation_statuses')
@@ -20,18 +20,18 @@ export const operationalStatusService = {
         .order('name', { ascending: true });
 
       if (error) {
-        console.error('[operationalStatusService] getStatuses error', error);
+        // console.error('[operationalStatusService] getStatuses error', error);
         throw error;
       }
 
-      console.log('[operationalStatusService] getStatuses success', { 
+      /**console.log('[operationalStatusService] getStatuses success', { 
         orgId, 
         count: data?.length ?? 0 
-      });
+      });*/
 
       return data || [];
     } catch (error) {
-      console.error('[operationalStatusService] getStatuses exception', error);
+      // console.error('[operationalStatusService] getStatuses exception', error);
       throw error;
     }
   },
@@ -41,7 +41,7 @@ export const operationalStatusService = {
    */
   async isStatusInUse(statusId: string, orgId: string): Promise<boolean> {
     try {
-      console.log('[operationalStatusService] isStatusInUse start', { statusId, orgId });
+      //console.log('[operationalStatusService] isStatusInUse start', { statusId, orgId });
 
       const { data, error } = await supabase
         .from('correspondence_rules')
@@ -52,16 +52,16 @@ export const operationalStatusService = {
         .maybeSingle();
 
       if (error) {
-        console.error('[operationalStatusService] isStatusInUse error', error);
+        // console.error('[operationalStatusService] isStatusInUse error', error);
         throw error;
       }
 
       const inUse = !!data;
-      console.log('[operationalStatusService] isStatusInUse result', { statusId, inUse });
+      //console.log('[operationalStatusService] isStatusInUse result', { statusId, inUse });
 
       return inUse;
     } catch (error) {
-      console.error('[operationalStatusService] isStatusInUse exception', error);
+      // console.error('[operationalStatusService] isStatusInUse exception', error);
       throw error;
     }
   },
@@ -71,7 +71,7 @@ export const operationalStatusService = {
    */
   async createStatus(status: Omit<OperationalStatus, 'id' | 'created_at'>): Promise<OperationalStatus> {
     try {
-      console.log('[operationalStatusService] createStatus start', status);
+      //console.log('[operationalStatusService] createStatus start', status);
 
       const { data, error } = await supabase
         .from('reservation_statuses')
@@ -87,14 +87,14 @@ export const operationalStatusService = {
         .single();
 
       if (error) {
-        console.error('[operationalStatusService] createStatus error', error);
+        // console.error('[operationalStatusService] createStatus error', error);
         throw error;
       }
 
-      console.log('[operationalStatusService] createStatus success', data);
+      //console.log('[operationalStatusService] createStatus success', data);
       return data;
     } catch (error) {
-      console.error('[operationalStatusService] createStatus exception', error);
+      // console.error('[operationalStatusService] createStatus exception', error);
       throw error;
     }
   },
@@ -104,7 +104,7 @@ export const operationalStatusService = {
    */
   async updateStatus(id: string, updates: Partial<OperationalStatus>): Promise<OperationalStatus> {
     try {
-      console.log('[operationalStatusService] updateStatus start', { id, updates });
+      //console.log('[operationalStatusService] updateStatus start', { id, updates });
 
       const { data, error } = await supabase
         .from('reservation_statuses')
@@ -120,14 +120,14 @@ export const operationalStatusService = {
         .single();
 
       if (error) {
-        console.error('[operationalStatusService] updateStatus error', error);
+        // console.error('[operationalStatusService] updateStatus error', error);
         throw error;
       }
 
-      console.log('[operationalStatusService] updateStatus success', data);
+      //console.log('[operationalStatusService] updateStatus success', data);
       return data;
     } catch (error) {
-      console.error('[operationalStatusService] updateStatus exception', error);
+      // console.error('[operationalStatusService] updateStatus exception', error);
       throw error;
     }
   },
@@ -137,7 +137,7 @@ export const operationalStatusService = {
    */
   async deactivateStatus(id: string): Promise<void> {
     try {
-      console.log('[operationalStatusService] deactivateStatus start', { id });
+      //console.log('[operationalStatusService] deactivateStatus start', { id });
 
       const { error } = await supabase
         .from('reservation_statuses')
@@ -145,13 +145,13 @@ export const operationalStatusService = {
         .eq('id', id);
 
       if (error) {
-        console.error('[operationalStatusService] deactivateStatus error', error);
+        // console.error('[operationalStatusService] deactivateStatus error', error);
         throw error;
       }
 
-      console.log('[operationalStatusService] deactivateStatus success', { id });
+      //console.log('[operationalStatusService] deactivateStatus success', { id });
     } catch (error) {
-      console.error('[operationalStatusService] deactivateStatus exception', error);
+      // console.error('[operationalStatusService] deactivateStatus exception', error);
       throw error;
     }
   },
@@ -161,7 +161,7 @@ export const operationalStatusService = {
    */
   async activateStatus(id: string): Promise<void> {
     try {
-      console.log('[operationalStatusService] activateStatus start', { id });
+      //console.log('[operationalStatusService] activateStatus start', { id });
 
       const { error } = await supabase
         .from('reservation_statuses')
@@ -169,13 +169,13 @@ export const operationalStatusService = {
         .eq('id', id);
 
       if (error) {
-        console.error('[operationalStatusService] activateStatus error', error);
+        // console.error('[operationalStatusService] activateStatus error', error);
         throw error;
       }
 
-      console.log('[operationalStatusService] activateStatus success', { id });
+      //console.log('[operationalStatusService] activateStatus success', { id });
     } catch (error) {
-      console.error('[operationalStatusService] activateStatus exception', error);
+      // console.error('[operationalStatusService] activateStatus exception', error);
       throw error;
     }
   },
@@ -185,7 +185,7 @@ export const operationalStatusService = {
    */
   async deleteStatus(id: string): Promise<void> {
     try {
-      console.log('[operationalStatusService] deleteStatus start', { id });
+      //console.log('[operationalStatusService] deleteStatus start', { id });
 
       const { error } = await supabase
         .from('reservation_statuses')
@@ -193,13 +193,13 @@ export const operationalStatusService = {
         .eq('id', id);
 
       if (error) {
-        console.error('[operationalStatusService] deleteStatus error', error);
+        // console.error('[operationalStatusService] deleteStatus error', error);
         throw error;
       }
 
-      console.log('[operationalStatusService] deleteStatus success', { id });
+      //console.log('[operationalStatusService] deleteStatus success', { id });
     } catch (error) {
-      console.error('[operationalStatusService] deleteStatus exception', error);
+      // console.error('[operationalStatusService] deleteStatus exception', error);
       throw error;
     }
   },

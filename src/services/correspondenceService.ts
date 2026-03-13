@@ -205,7 +205,7 @@ export const correspondenceService = {
    */
   async getRules(orgId: string): Promise<CorrespondenceRule[]> {
     try {
-      console.log("[correspondenceService] getRules start", { orgId });
+      //console.log("[correspondenceService] getRules start", { orgId });
 
       // Query 1: reglas base
       const { data: rulesData, error: rulesError } = await supabase
@@ -215,12 +215,11 @@ export const correspondenceService = {
         .order("created_at", { ascending: false });
 
       if (rulesError) {
-        console.error("[correspondenceService] getRules error", rulesError);
         throw rulesError;
       }
 
       if (!rulesData || rulesData.length === 0) {
-        console.log("[correspondenceService] getRules success - no rules found", { orgId });
+        //console.log("[correspondenceService] getRules success - no rules found", { orgId });
         return [];
       }
 
@@ -347,7 +346,7 @@ export const correspondenceService = {
         };
       });
 
-      console.log("[correspondenceService] getRules success", { orgId, count: rules.length });
+      //console.log("[correspondenceService] getRules success", { orgId, count: rules.length });
       return rules;
     } catch (error) {
       console.error("[correspondenceService] getRules exception", error);
@@ -360,7 +359,7 @@ export const correspondenceService = {
    */
   async createRule(orgId: string, ruleData: CorrespondenceRuleFormData): Promise<CorrespondenceRule> {
     try {
-      console.log("[correspondenceService] createRule start", { orgId, ruleData });
+      //console.log("[correspondenceService] createRule start", { orgId, ruleData });
 
       const { data: userData } = await supabase.auth.getUser();
       if (!userData.user) throw new Error("Usuario no autenticado");
@@ -374,11 +373,10 @@ export const correspondenceService = {
         .single();
 
       if (error) {
-        console.error("[correspondenceService] createRule error", error, { payload });
         throw error;
       }
 
-      console.log("[correspondenceService] createRule success", { id: data.id });
+      //console.log("[correspondenceService] createRule success", { id: data.id });
       return data as any;
     } catch (error) {
       console.error("[correspondenceService] createRule exception", error);
@@ -391,7 +389,7 @@ export const correspondenceService = {
    */
   async updateRule(ruleId: string, ruleData: CorrespondenceRuleFormData): Promise<CorrespondenceRule> {
     try {
-      console.log("[correspondenceService] updateRule start", { ruleId, ruleData });
+      //console.log("[correspondenceService] updateRule start", { ruleId, ruleData });
 
       const { data: userData } = await supabase.auth.getUser();
       if (!userData.user) throw new Error("Usuario no autenticado");
@@ -426,11 +424,10 @@ export const correspondenceService = {
         .single();
 
       if (error) {
-        console.error("[correspondenceService] updateRule error", error, { payload });
         throw error;
       }
 
-      console.log("[correspondenceService] updateRule success", { id: data.id });
+      //console.log("[correspondenceService] updateRule success", { id: data.id });
       return data as any;
     } catch (error) {
       console.error("[correspondenceService] updateRule exception", error);
@@ -443,16 +440,15 @@ export const correspondenceService = {
    */
   async deleteRule(ruleId: string): Promise<void> {
     try {
-      console.log("[correspondenceService] deleteRule start", { ruleId });
+      //console.log("[correspondenceService] deleteRule start", { ruleId });
 
       const { error } = await supabase.from("correspondence_rules").delete().eq("id", ruleId);
 
       if (error) {
-        console.error("[correspondenceService] deleteRule error", error);
         throw error;
       }
 
-      console.log("[correspondenceService] deleteRule success", { ruleId });
+      //console.log("[correspondenceService] deleteRule success", { ruleId });
     } catch (error) {
       console.error("[correspondenceService] deleteRule exception", error);
       throw error;
@@ -464,7 +460,7 @@ export const correspondenceService = {
    */
   async getLogs(orgId: string): Promise<CorrespondenceLog[]> {
     try {
-      console.log("[correspondenceService] getLogs start", { orgId });
+      //console.log("[correspondenceService] getLogs start", { orgId });
 
       const { data, error } = await supabase
         .from("correspondence_outbox")
@@ -495,7 +491,7 @@ export const correspondenceService = {
         .eq("org_id", orgId)
         .order("created_at", { ascending: false });
 
-      console.log("[correspondenceService] getLogs result", {
+      /**console.log("[correspondenceService] getLogs result", {
         orgId,
         hasData: !!data,
         count: data?.length ?? 0,
@@ -507,15 +503,9 @@ export const correspondenceService = {
               hint: (error as any).hint,
             }
           : null,
-      });
+      });*/
 
       if (error) {
-        console.error("[Correspondence] getLogsError", {
-          code: (error as any).code,
-          message: (error as any).message,
-          details: (error as any).details,
-          hint: (error as any).hint,
-        });
         return [];
       }
 
@@ -537,7 +527,7 @@ export const correspondenceService = {
           .in("id", ruleIds);
 
         if (rulesError) {
-          console.warn("[Correspondence] getLogs – rule lookup failed", { error: rulesError });
+          // rule lookup failed silently
         } else if (rulesData) {
           rulesMap = Object.fromEntries((rulesData as any[]).map((rule) => [rule.id, rule.name]));
         }
@@ -579,7 +569,6 @@ export const correspondenceService = {
 
       return logs;
     } catch (ex) {
-      console.error("[Correspondence] getLogs exception", ex);
       return [];
     }
   },

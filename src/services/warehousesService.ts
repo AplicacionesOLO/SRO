@@ -11,7 +11,7 @@ const normalizeTime = (t?: string | null, fallback = '06:00:00') => {
 
 export const warehousesService = {
   async getWarehouses(orgId: string): Promise<Warehouse[]> {
-    console.log('[WarehousesService] getWarehouses', { orgId });
+    //console.log('[WarehousesService] getWarehouses', { orgId });
 
     const { data, error } = await supabase
       .from('warehouses')
@@ -20,12 +20,12 @@ export const warehousesService = {
       .order('created_at', { ascending: false });
 
     if (error) {
-      console.error('[WarehousesService] getWarehouses error', {
-        error,
-        message: error.message,
-        details: (error as any).details,
-        hint: (error as any).hint
-      });
+      // console.error('[WarehousesService] getWarehouses error', {
+      //   error,
+      //   message: error.message,
+      //   details: (error as any).details,
+      //   hint: (error as any).hint
+      // });
       throw error;
     }
 
@@ -38,7 +38,7 @@ export const warehousesService = {
   },
 
   async createWarehouse(orgId: string, formData: WarehouseFormData): Promise<Warehouse> {
-    console.log('[WarehousesService] createWarehouse', { orgId, name: formData.name });
+    //console.log('[WarehousesService] createWarehouse', { orgId, name: formData.name });
 
     if (!formData.country_id) throw new Error('El país es requerido');
 
@@ -57,7 +57,7 @@ export const warehousesService = {
       .single();
 
     if (error) {
-      console.error('[WarehousesService] createWarehouse error', error);
+      // console.error('[WarehousesService] createWarehouse error', error);
 
       if (error.code === '23505' && error.message?.includes('warehouses_org_name_unique')) {
         throw new Error('Ya existe un almacén con ese nombre en tu organización');
@@ -71,7 +71,7 @@ export const warehousesService = {
   },
 
   async updateWarehouse(id: string, orgId: string, formData: WarehouseFormData): Promise<Warehouse> {
-    console.log('[WarehousesService] updateWarehouse', { id, orgId, name: formData.name });
+    //console.log('[WarehousesService] updateWarehouse', { id, orgId, name: formData.name });
 
     if (!formData.country_id) throw new Error('El país es requerido');
 
@@ -91,7 +91,7 @@ export const warehousesService = {
       .single();
 
     if (error) {
-      console.error('[WarehousesService] updateWarehouse error', error);
+      // console.error('[WarehousesService] updateWarehouse error', error);
 
       if (error.code === '23505' && error.message?.includes('warehouses_org_name_unique')) {
         throw new Error('Ya existe otro almacén con ese nombre en tu organización');
@@ -109,7 +109,7 @@ export const warehousesService = {
   },
 
   async deleteWarehouse(id: string, orgId: string): Promise<void> {
-    console.log('[WarehousesService] deleteWarehouse', { id, orgId });
+    //console.log('[WarehousesService] deleteWarehouse', { id, orgId });
 
     const { error } = await supabase
       .from('warehouses')
@@ -118,7 +118,7 @@ export const warehousesService = {
       .eq('org_id', orgId);
 
     if (error) {
-      console.error('[WarehousesService] deleteWarehouse error', error);
+      // console.error('[WarehousesService] deleteWarehouse error', error);
 
       if (error.code === 'PGRST116') {
         throw new Error('No tienes permisos para eliminar este almacén o no existe');
@@ -132,7 +132,7 @@ export const warehousesService = {
    * Obtiene los IDs de clientes asignados a un almacén
    */
   async getWarehouseClients(orgId: string, warehouseId: string): Promise<string[]> {
-    console.log('[WarehousesService] getWarehouseClients', { orgId, warehouseId });
+    //console.log('[WarehousesService] getWarehouseClients', { orgId, warehouseId });
 
     const { data, error } = await supabase
       .from('warehouse_clients')
@@ -141,7 +141,7 @@ export const warehousesService = {
       .eq('warehouse_id', warehouseId);
 
     if (error) {
-      console.error('[WarehousesService] getWarehouseClients error', error);
+      // console.error('[WarehousesService] getWarehouseClients error', error);
       throw error;
     }
 
@@ -152,7 +152,7 @@ export const warehousesService = {
    * Asigna clientes a un almacén (diff: inserta nuevos, elimina desmarcados)
    */
   async setWarehouseClients(orgId: string, warehouseId: string, clientIds: string[]): Promise<void> {
-    console.log('[WarehousesService] setWarehouseClients', { orgId, warehouseId, clientIds });
+    //console.log('[WarehousesService] setWarehouseClients', { orgId, warehouseId, clientIds });
 
     try {
       // 1. Obtener asignaciones actuales
@@ -164,12 +164,12 @@ export const warehousesService = {
       const toInsert = clientIds.filter((id) => !currentSet.has(id));
       const toDelete = current.filter((id) => !newSet.has(id));
 
-      console.log('[WarehousesService] setWarehouseClients diff', {
+      /**console.log('[WarehousesService] setWarehouseClients diff', {
         current: current.length,
         new: clientIds.length,
         toInsert: toInsert.length,
         toDelete: toDelete.length,
-      });
+      });*/
 
       // 3. Eliminar desmarcados
       if (toDelete.length > 0) {
@@ -181,7 +181,7 @@ export const warehousesService = {
           .in('client_id', toDelete);
 
         if (deleteError) {
-          console.error('[WarehousesService] delete error', deleteError);
+          // console.error('[WarehousesService] delete error', deleteError);
           throw deleteError;
         }
       }
@@ -199,7 +199,7 @@ export const warehousesService = {
           .insert(rows);
 
         if (insertError) {
-          console.error('[WarehousesService] insert error', insertError);
+          // console.error('[WarehousesService] insert error', insertError);
 
           // Manejar duplicados (por si acaso)
           if (insertError.code === '23505') {
@@ -210,9 +210,9 @@ export const warehousesService = {
         }
       }
 
-      console.log('[WarehousesService] setWarehouseClients success');
+      //console.log('[WarehousesService] setWarehouseClients success');
     } catch (error) {
-      console.error('[WarehousesService] setWarehouseClients error', error);
+      // console.error('[WarehousesService] setWarehouseClients error', error);
       throw error;
     }
   }

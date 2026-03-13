@@ -3,7 +3,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const VERSION = "2026-02-06 DISPATCH-B + LOGGING + SMTP";
 
-console.log(`[correspondence-dispatch-event] VERSION ${VERSION}`);
+//console.log(`[correspondence-dispatch-event] VERSION ${VERSION}`);
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -33,11 +33,11 @@ serve(async (req) => {
     const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
     const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
 
-    console.log("[correspondence-dispatch-event][INIT]", {
+    /**console.log("[correspondence-dispatch-event][INIT]", {
       reqId,
       hasSupabaseUrl: !!supabaseUrl,
       hasServiceRoleKey: !!serviceRoleKey,
-    });
+    });*/
 
     if (!supabaseUrl || !serviceRoleKey) {
       return json(500, { error: "Missing env vars", reqId });
@@ -63,10 +63,10 @@ serve(async (req) => {
       return json(401, { error: "Unauthorized", details: userErr?.message, reqId });
     }
 
-    console.log("[correspondence-dispatch-event][AUTH_SUCCESS]", {
+    /**console.log("[correspondence-dispatch-event][AUTH_SUCCESS]", {
       reqId,
       userId: userData.user.id,
-    });
+    });*/
 
     let body: RequestBody | null = null;
     try {
@@ -78,13 +78,13 @@ serve(async (req) => {
 
     const { orgId, eventType, payload } = body ?? ({} as any);
 
-    console.log("[correspondence-dispatch-event][REQ]", {
+    /**console.log("[correspondence-dispatch-event][REQ]", {
       reqId,
       orgId,
       eventType,
       payloadKeys: payload ? Object.keys(payload) : [],
       payload,
-    });
+    });*/
 
     if (!orgId || !eventType) {
       console.error("[correspondence-dispatch-event][VALIDATION_ERROR]", {
@@ -111,26 +111,26 @@ serve(async (req) => {
       return json(500, { error: "Failed to fetch rules", details: rulesErr.message, reqId });
     }
 
-    console.log("[correspondence-dispatch-event][RULES]", {
+    /**console.log("[correspondence-dispatch-event][RULES]", {
       reqId,
       rulesCount: rules?.length ?? 0,
       ruleIds: rules?.map((r: any) => r.id) ?? [],
       ruleNames: rules?.map((r: any) => r.name) ?? [],
-    });
+    });*/
 
     if (!rules || rules.length === 0) {
-      console.log("[correspondence-dispatch-event][NO_RULES]", { reqId, orgId, eventType });
+      //console.log("[correspondence-dispatch-event][NO_RULES]", { reqId, orgId, eventType });
       return json(200, { success: true, message: "No active rules for this event", reqId });
     }
 
     // Process each rule
     const results = [];
     for (const rule of rules) {
-      console.log("[correspondence-dispatch-event][PROCESS_RULE]", {
+      /**console.log("[correspondence-dispatch-event][PROCESS_RULE]", {
         reqId,
         ruleId: rule.id,
         ruleName: rule.name,
-      });
+      });*/
 
       try {
         // Call the process-event function (que ahora usa smtp-send internamente)
@@ -150,13 +150,13 @@ serve(async (req) => {
 
         const processResult = await processRes.json();
         
-        console.log("[correspondence-dispatch-event][RULE_RESULT]", {
+        /**console.log("[correspondence-dispatch-event][RULE_RESULT]", {
           reqId,
           ruleId: rule.id,
           ruleName: rule.name,
           status: processRes.status,
           result: processResult,
-        });
+        });*/
 
         results.push({ ruleId: rule.id, ruleName: rule.name, result: processResult });
       } catch (e: any) {
@@ -170,11 +170,11 @@ serve(async (req) => {
       }
     }
 
-    console.log("[correspondence-dispatch-event][DONE]", {
+    /**console.log("[correspondence-dispatch-event][DONE]", {
       reqId,
       processedRules: results.length,
       results,
-    });
+    });*/
 
     return json(200, { success: true, results, reqId });
   } catch (e: any) {

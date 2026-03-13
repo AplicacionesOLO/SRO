@@ -36,11 +36,8 @@ export default function CountriesModal({ isOpen, orgId, onClose, onChanged }: Co
       const data = await countriesService.getAll(orgId);
       setCountries(data || []);
       onChanged?.(data || []);
-    } catch (e: any) {
-      console.error('[CountriesModal] load error', e);
-      setLoadError(e?.message || 'Error al cargar países');
-      setCountries([]);
-      onChanged?.([]);
+    } catch (e) {
+      setLoadError('Error al cargar países');
     } finally {
       setLoading(false);
     }
@@ -64,9 +61,8 @@ export default function CountriesModal({ isOpen, orgId, onClose, onChanged }: Co
       setNewName('');
       setNewCode('');
       await load();
-    } catch (e: any) {
-      console.error('[CountriesModal] create error', e);
-      setLoadError(e?.message || 'Error al crear país');
+    } catch (e) {
+      setLoadError('Error al crear país');
     } finally {
       setSavingNew(false);
     }
@@ -97,9 +93,8 @@ export default function CountriesModal({ isOpen, orgId, onClose, onChanged }: Co
       await countriesService.update(orgId, editingId, name, code);
       cancelEdit();
       await load();
-    } catch (e: any) {
-      console.error('[CountriesModal] update error', e);
-      setLoadError(e?.message || 'Error al actualizar país');
+    } catch (e) {
+      setLoadError('Error al actualizar país');
     } finally {
       setSavingEdit(false);
     }
@@ -111,9 +106,8 @@ export default function CountriesModal({ isOpen, orgId, onClose, onChanged }: Co
       setLoadError(null);
       await countriesService.remove(orgId, id);
       await load();
-    } catch (e: any) {
-      console.error('[CountriesModal] delete error', e);
-      setLoadError(e?.message || 'Error al eliminar país');
+    } catch (e) {
+      setLoadError('Error al eliminar país');
     } finally {
       setDeletingId(null);
     }

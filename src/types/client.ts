@@ -60,3 +60,23 @@ export interface ClientProviderPayload {
   provider_id: string;
   is_default?: boolean;
 }
+
+// Cliente Retira - Reglas de bloqueo automático
+export interface ClientPickupRule {
+  id: string;
+  org_id: string;
+  client_id: string;
+  dock_id: string;
+  block_minutes: number;
+  reblock_before_minutes: number;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ClientPickupRuleFormData {
+  dock_id: string;
+  block_minutes: number;
+  reblock_before_minutes: number;
+  is_active: boolean;
+}

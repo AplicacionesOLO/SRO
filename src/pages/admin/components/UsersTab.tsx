@@ -57,7 +57,7 @@ export default function UsersTab() {
         setSelectedRoleId(rolesData[0].id);
       }
     } catch (error) {
-      console.error('Error al cargar datos:', error);
+      // console.error('Error al cargar datos:', error);
     } finally {
       setLoading(false);
     }

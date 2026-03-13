@@ -386,7 +386,7 @@ export default function CalendarioPage() {
       try {
         const data = await calendarService.getWarehouses(orgId);
         setWarehouses(data);
-        console.log('[Calendar] warehouses loaded', { count: data.length });
+        // console.log('[Calendar] warehouses loaded', { count: data.length });
 
         // Inicializar warehouseId desde localStorage o mantener null (ver todos)
         const storageKey = `calendar_selected_warehouse_${orgId}`;
@@ -394,16 +394,16 @@ export default function CalendarioPage() {
 
         if (savedId === 'null' || savedId === '') {
           setWarehouseId(null);
-          console.log('[Calendar] warehouse set to "Ver todos" from localStorage');
+          // console.log('[Calendar] warehouse set to "Ver todos" from localStorage');
         } else if (savedId && data.some((w) => w.id === savedId)) {
           setWarehouseId(savedId);
-          console.log('[Calendar] warehouse restored from localStorage', { id: savedId });
+          // console.log('[Calendar] warehouse restored from localStorage', { id: savedId });
         } else {
           setWarehouseId(null);
-          console.log('[Calendar] warehouse initialized to "Ver todos" (default)');
+          // console.log('[Calendar] warehouse initialized to "Ver todos" (default)');
         }
       } catch (err) {
-        console.error('[Calendar] loadWarehouses error', err);
+        // console.error('[Calendar] loadWarehouses error', err);
       } finally {
         setWarehouseLoading(false);
       }
@@ -426,24 +426,24 @@ export default function CalendarioPage() {
         warehouseId || 'all'
       }:${filterCategory}`;
 
-      console.log('[Calendar] loadData', {
-        orgId,
-        warehouseId,
-        bufferStart: bufferStart.toISOString(),
-        bufferEnd: bufferEnd.toISOString(),
-        rangeDays,
-        cacheKey,
-        cached: cacheRef.current.has(cacheKey),
-      });
+      // // console.log('[Calendar] loadData', {
+      //   orgId,
+      //   warehouseId,
+      //   bufferStart: bufferStart.toISOString(),
+      //   bufferEnd: bufferEnd.toISOString(),
+      //   rangeDays,
+      //   cacheKey,
+      //   cached: cacheRef.current.has(cacheKey),
+      // });
 
       // Verificar caché
       const cached = cacheRef.current.get(cacheKey);
 
       if (cached) {
-        console.log('[Calendar] Using cached data', {
-          reservations: cached.reservations.length,
-          blocks: cached.blocks.length,
-        });
+        // // console.log('[Calendar] Using cached data', {
+        //   reservations: cached.reservations.length,
+        //   blocks: cached.blocks.length,
+        // });
         setReservations(cached.reservations);
         setBlocks(cached.blocks);
         setLoading(false);
@@ -459,28 +459,28 @@ export default function CalendarioPage() {
         calendarService.getDockCategories(orgId),
       ]);
 
-      console.log('[Calendar] docksCountBeforeFilter', { count: docksData.length, warehouseId });
+      // // console.log('[Calendar] docksCountBeforeFilter', { count: docksData.length, warehouseId });
 
       // Filtrar reservas y bloques para mostrar solo los del warehouse seleccionado
       const dockIds = new Set(docksData.map((d) => d.id));
       const filteredReservations = reservationsData.filter((r) => dockIds.has(r.dock_id));
       const filteredBlocks = blocksData.filter((b) => dockIds.has(b.dock_id));
 
-      console.log('[Calendar] docksCountAfterFilter', {
-        count: docksData.length,
-        reservations: filteredReservations.length,
-        blocks: filteredBlocks.length,
-        warehouseId,
-      });
+      // // console.log('[Calendar] docksCountAfterFilter', {
+      //   count: docksData.length,
+      //   reservations: filteredReservations.length,
+      //   blocks: filteredBlocks.length,
+      //   warehouseId,
+      // });
 
-      console.log('[Calendar] Data loaded', {
-        docks: docksData.length,
-        reservations: filteredReservations.length,
-        blocks: filteredBlocks.length,
-        statuses: statusesData.length,
-        categories: categoriesData.length,
-        warehouseId,
-      });
+      // // console.log('[Calendar] Data loaded', {
+      //   docks: docksData.length,
+      //   reservations: filteredReservations.length,
+      //   blocks: filteredBlocks.length,
+      //   statuses: statusesData.length,
+      //   categories: categoriesData.length,
+      //   warehouseId,
+      // });
 
       setDocks(docksData);
       setReservations(filteredReservations);
@@ -500,11 +500,11 @@ export default function CalendarioPage() {
         if (firstKey) cacheRef.current.delete(firstKey);
       }
     } catch (error: any) {
-      console.error('[Calendar] loadError', {
-        message: error.message,
-        code: error.code,
-        details: error.details,
-      });
+      // console.error('[Calendar] loadError', {
+      //   message: error.message,
+      //   code: error.code,
+      //   details: error.details,
+      // });
     } finally {
       setLoading(false);
     }
@@ -529,11 +529,11 @@ export default function CalendarioPage() {
     // Limpiar cache y recargar
     cacheRef.current.clear();
 
-    const selected = selectedId ? warehouses.find((w) => w.id === selectedId) : null;
-    console.log('[Calendar] warehouse selected', {
-      id: selectedId,
-      name: selected?.name || 'Ver todos',
-    });
+    // const selected = selectedId ? warehouses.find((w) => w.id === selectedId) : null;
+    // console.log('[Calendar] warehouse selected', {
+    //   id: selectedId,
+    //   name: selected?.name || 'Ver todos',
+    // });
 
     loadData();
   };
@@ -881,7 +881,7 @@ export default function CalendarioPage() {
 
   // ✅ NUEVO: Handler para confirmar preselección y activar modo selección
   const handlePreReservationConfirm = useCallback(async (payload: { cargoTypeId: string; providerId: string; clientId: string; requiredMinutes: number }) => {
-    console.log('[Calendar] Pre-reservation confirmed', payload);
+    // console.log('[Calendar] Pre-reservation confirmed', payload);
     setPreCargoTypeId(payload.cargoTypeId);
     setPreProviderId(payload.providerId);
     setRequiredMinutes(payload.requiredMinutes);
@@ -895,7 +895,7 @@ export default function CalendarioPage() {
     const clientId = payload.clientId;
 
     if (!clientId) {
-      console.warn('[DockAllocation] missing clientId - no client linked to provider');
+      // console.warn('[DockAllocation] missing clientId - no client linked to provider');
       setAllocationError('No se encontró un cliente vinculado al proveedor. Las reglas de andenes no se aplicarán.');
       setAllocationRule(null);
       setAllocationLoading(false);
@@ -904,7 +904,7 @@ export default function CalendarioPage() {
     }
 
     try {
-      console.log('[DockAllocation] context', { orgId, warehouseId, clientId });
+      // console.log('[DockAllocation] context', { orgId, warehouseId, clientId });
 
       const rule = await dockAllocationService.getDockAllocationRule(
         orgId!,
@@ -912,18 +912,18 @@ export default function CalendarioPage() {
       );
 
       if (!rule) {
-        console.warn('[DockAllocation] missing - could not load allocation rule for clientId', clientId);
+        // console.warn('[DockAllocation] missing - could not load allocation rule for clientId', clientId);
         setAllocationError('No se pudieron cargar las reglas del cliente. Contactá a un administrador.');
         setAllocationRule(null);
       } else {
         setAllocationRule(rule);
         setAllocationError('');
-        console.log('[DockAllocation] rule loaded successfully', {
-          clientId: rule.clientId,
-          clientName: rule.clientName,
-          mode: rule.dockAllocationMode,
-          docksCount: rule.clientDocks.length,
-        });
+        // console.log('[DockAllocation] rule loaded successfully', {
+        //   clientId: rule.clientId,
+        //   clientName: rule.clientName,
+        //   mode: rule.dockAllocationMode,
+        //   docksCount: rule.clientDocks.length,
+        // });
       }
     } catch (err: any) {
       console.error('[DockAllocation] error loading allocation rule', err);

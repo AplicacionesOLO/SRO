@@ -3,8 +3,8 @@ import type { Provider } from '../types/catalog';
 
 export const providersService = {
   async getAll(orgId: string): Promise<Provider[]> {
-    console.log('[providersService] ========== FETCHING ALL PROVIDERS ==========');
-    console.log('[providersService] Query params:', { orgId, filterActive: false });
+    //console.log('[providersService] ========== FETCHING ALL PROVIDERS ==========');
+    //console.log('[providersService] Query params:', { orgId, filterActive: false });
     
     const { data, error } = await supabase
       .from('providers')
@@ -13,18 +13,18 @@ export const providersService = {
       .order('created_at', { ascending: false });
 
     if (error) {
-      console.error('[providersService] ❌ ERROR fetching all providers', { 
-        error, 
-        message: error.message, 
-        details: error.details, 
-        hint: error.hint,
-        code: error.code
-      });
+      // console.error('[providersService] ❌ ERROR fetching all providers', { 
+      //   error, 
+      //   message: error.message, 
+      //   details: error.details, 
+      //   hint: error.hint,
+      //   code: error.code
+      // });
       throw error;
     }
 
-    console.log('[providersService] ✅ Query successful');
-    console.log('[providersService] Result:', { 
+    //console.log('[providersService] ✅ Query successful');
+    /**console.log('[providersService] Result:', { 
       count: data?.length || 0,
       firstRow: data && data.length > 0 ? {
         id: data[0].id,
@@ -32,15 +32,15 @@ export const providersService = {
         org_id: data[0].org_id,
         active: data[0].active
       } : null
-    });
-    console.log('[providersService] ================================================');
+    });*/
+    //console.log('[providersService] ================================================');
     
     return data || [];
   },
 
   async getActive(orgId: string): Promise<Provider[]> {
-    console.log('[providersService] ========== FETCHING ACTIVE PROVIDERS ==========');
-    console.log('[providersService] Query params:', { orgId, filterActive: true });
+    //console.log('[providersService] ========== FETCHING ACTIVE PROVIDERS ==========');
+    //console.log('[providersService] Query params:', { orgId, filterActive: true });
     
     const { data, error } = await supabase
       .from('providers')
@@ -50,18 +50,18 @@ export const providersService = {
       .order('name', { ascending: true });
 
     if (error) {
-      console.error('[providersService] ❌ ERROR fetching active providers', { 
-        error, 
-        message: error.message, 
-        details: error.details, 
-        hint: error.hint,
-        code: error.code
-      });
+      // console.error('[providersService] ❌ ERROR fetching active providers', { 
+      //   error, 
+      //   message: error.message, 
+      //   details: error.details, 
+      //   hint: error.hint,
+      //   code: error.code
+      // });
       throw error;
     }
 
-    console.log('[providersService] ✅ Query successful');
-    console.log('[providersService] Result:', { 
+    //console.log('[providersService] ✅ Query successful');
+    /**console.log('[providersService] Result:', { 
       count: data?.length || 0,
       firstRow: data && data.length > 0 ? {
         id: data[0].id,
@@ -69,14 +69,14 @@ export const providersService = {
         org_id: data[0].org_id,
         active: data[0].active
       } : null
-    });
-    console.log('[providersService] ================================================');
+    });*/
+    //console.log('[providersService] ================================================');
     
     return data || [];
   },
 
   async createProvider(orgId: string, name: string): Promise<Provider> {
-    console.log('[providersService] Creating provider:', { orgId, name });
+    //console.log('[providersService] Creating provider:', { orgId, name });
     
     const { data, error } = await supabase
       .from('providers')
@@ -89,22 +89,22 @@ export const providersService = {
       .single();
 
     if (error) {
-      console.error('[providersService] ❌ ERROR creating provider', { 
-        error, 
-        message: error.message, 
-        details: error.details, 
-        hint: error.hint,
-        code: error.code
-      });
+      // console.error('[providersService] ❌ ERROR creating provider', { 
+      //   error, 
+      //   message: error.message, 
+      //   details: error.details, 
+      //   hint: error.hint,
+      //   code: error.code
+      // });
       throw error;
     }
 
-    console.log('[providersService] ✅ Provider created:', { id: data.id, name: data.name });
+    //console.log('[providersService] ✅ Provider created:', { id: data.id, name: data.name });
     return data;
   },
 
   async updateProvider(id: string, updates: Partial<Pick<Provider, 'name' | 'active'>>): Promise<Provider> {
-    console.log('[providersService] Updating provider:', { id, updates });
+    //console.log('[providersService] Updating provider:', { id, updates });
     
     const { data, error } = await supabase
       .from('providers')
@@ -114,22 +114,22 @@ export const providersService = {
       .single();
 
     if (error) {
-      console.error('[providersService] ❌ ERROR updating provider', { 
-        error, 
-        message: error.message, 
-        details: error.details, 
-        hint: error.hint,
-        code: error.code
-      });
+      // console.error('[providersService] ❌ ERROR updating provider', { 
+      //   error, 
+      //   message: error.message, 
+      //   details: error.details, 
+      //   hint: error.hint,
+      //   code: error.code
+      // });
       throw error;
     }
 
-    console.log('[providersService] ✅ Provider updated:', { id: data.id });
+    //console.log('[providersService] ✅ Provider updated:', { id: data.id });
     return data;
   },
 
   async deleteProvider(id: string): Promise<void> {
-    console.log('[providersService] Soft deleting provider:', { id });
+    //console.log('[providersService] Soft deleting provider:', { id });
     
     const { error } = await supabase
       .from('providers')
@@ -137,16 +137,16 @@ export const providersService = {
       .eq('id', id);
 
     if (error) {
-      console.error('[providersService] ❌ ERROR soft deleting provider', { 
-        error, 
-        message: error.message, 
-        details: error.details, 
-        hint: error.hint,
-        code: error.code
-      });
+      // console.error('[providersService] ❌ ERROR soft deleting provider', { 
+      //   error, 
+      //   message: error.message, 
+      //   details: error.details, 
+      //   hint: error.hint,
+      //   code: error.code
+      // });
       throw error;
     }
 
-    console.log('[providersService] ✅ Provider soft deleted:', { id });
+    //console.log('[providersService] ✅ Provider soft deleted:', { id });
   }
 };

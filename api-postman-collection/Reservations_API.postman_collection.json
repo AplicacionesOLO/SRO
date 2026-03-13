@@ -1,0 +1,261 @@
+{
+  "info": {
+    "name": "Reservations API v1",
+    "description": "API endpoints for managing dock reservations. Requires JWT authentication and casetilla.view permission.\n\n**Base URL:** {{baseUrl}}\n**Authentication:** Bearer token in Authorization header\n\n**Required Variables:**\n- baseUrl: Supabase function base URL\n- token: JWT authentication token\n- orgId: Organization UUID\n- reservationId: Reservation UUID (for PATCH)\n- newStatusId: New status UUID (for PATCH)",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Get Reservations",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "// Test: Status code is 200",
+              "pm.test(\"Status code is 200\", function () {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "",
+              "// Test: Response has data array",
+              "pm.test(\"Response has data array\", function () {",
+              "    const jsonData = pm.response.json();",
+              "    pm.expect(jsonData).to.have.property('data');",
+              "    pm.expect(jsonData.data).to.be.an('array');",
+              "});",
+              "",
+              "// Test: Response has meta object",
+              "pm.test(\"Response has meta object\", function () {",
+              "    const jsonData = pm.response.json();",
+              "    pm.expect(jsonData).to.have.property('meta');",
+              "    pm.expect(jsonData.meta).to.have.property('limit');",
+              "    pm.expect(jsonData.meta).to.have.property('offset');",
+              "});",
+              "",
+              "// Test: org_id matches request (if data exists)",
+              "pm.test(\"org_id matches request parameter\", function () {",
+              "    const jsonData = pm.response.json();",
+              "    const requestedOrgId = pm.variables.get('orgId');",
+              "    ",
+              "    if (jsonData.data && jsonData.data.length > 0) {",
+              "        jsonData.data.forEach(function(reservation) {",
+              "            pm.expect(reservation.org_id).to.equal(requestedOrgId);",
+              "        });",
+              "    }",
+              "});",
+              "",
+              "// Test: Reservations have required fields",
+              "pm.test(\"Reservations contain required fields\", function () {",
+              "    const jsonData = pm.response.json();",
+              "    ",
+              "    if (jsonData.data && jsonData.data.length > 0) {",
+              "        const reservation = jsonData.data[0];",
+              "        pm.expect(reservation).to.have.property('id');",
+              "        pm.expect(reservation).to.have.property('org_id');",
+              "        pm.expect(reservation).to.have.property('dock_id');",
+              "        pm.expect(reservation).to.have.property('start_datetime');",
+              "        pm.expect(reservation).to.have.property('end_datetime');",
+              "        pm.expect(reservation).to.have.property('status_id');",
+              "    }",
+              "});",
+              "",
+              "// Test: Include parameter works (if requested)",
+              "pm.test(\"Include parameter returns nested objects\", function () {",
+              "    const jsonData = pm.response.json();",
+              "    const url = pm.request.url.toString();",
+              "    ",
+              "    if (url.includes('include=dock') && jsonData.data && jsonData.data.length > 0) {",
+              "        pm.expect(jsonData.data[0]).to.have.property('dock');",
+              "    }",
+              "    ",
+              "    if (url.includes('include=warehouse') && jsonData.data && jsonData.data.length > 0) {",
+              "        pm.expect(jsonData.data[0]).to.have.property('warehouse');",
+              "    }",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api-v1-reservations-get?org_id={{orgId}}&limit=50&offset=0&include=dock,warehouse",
+          "host": ["{{baseUrl}}"],
+          "path": ["api-v1-reservations-get"],
+          "query": [
+            {
+              "key": "org_id",
+              "value": "{{orgId}}",
+              "description": "Organization UUID (required)"
+            },
+            {
+              "key": "limit",
+              "value": "50",
+              "description": "Number of records to return (1-500, default 50)"
+            },
+            {
+              "key": "offset",
+              "value": "0",
+              "description": "Number of records to skip (default 0)"
+            },
+            {
+              "key": "include",
+              "value": "dock,warehouse",
+              "description": "Include related objects: dock, warehouse (comma-separated)"
+            },
+            {
+              "key": "from",
+              "value": "",
+              "description": "Filter by start_datetime >= (ISO 8601 format)",
+              "disabled": true
+            },
+            {
+              "key": "to",
+              "value": "",
+              "description": "Filter by start_datetime <= (ISO 8601 format)",
+              "disabled": true
+            },
+            {
+              "key": "dock_id",
+              "value": "",
+              "description": "Filter by dock UUID",
+              "disabled": true
+            },
+            {
+              "key": "status_id",
+              "value": "",
+              "description": "Filter by status UUID",
+              "disabled": true
+            },
+            {
+              "key": "is_cancelled",
+              "value": "",
+              "description": "Filter by cancellation status (true/false)",
+              "disabled": true
+            }
+          ]
+        },
+        "description": "**GET /api/v1/reservations**\n\nRetrieve reservations with all fields and optional filters.\n\n**Authentication:** Required (Bearer token)\n**Permission:** casetilla.view\n\n**Query Parameters:**\n- `org_id` (required): Organization UUID\n- `limit` (optional): 1-500, default 50\n- `offset` (optional): default 0\n- `include` (optional): dock, warehouse (comma-separated)\n- `from` (optional): ISO 8601 datetime\n- `to` (optional): ISO 8601 datetime\n- `dock_id` (optional): UUID\n- `status_id` (optional): UUID\n- `is_cancelled` (optional): true/false\n\n**Response (200):**\n```json\n{\n  \"data\": [\n    {\n      \"id\": \"uuid\",\n      \"org_id\": \"uuid\",\n      \"dock_id\": \"uuid\",\n      \"start_datetime\": \"2024-01-15T10:00:00Z\",\n      \"end_datetime\": \"2024-01-15T12:00:00Z\",\n      \"dua\": \"DUA123\",\n      \"invoice\": \"INV456\",\n      \"driver\": \"John Doe\",\n      \"status_id\": \"uuid\",\n      \"notes\": \"Special handling required\",\n      \"transport_type\": \"truck\",\n      \"cargo_type\": \"pallets\",\n      \"is_cancelled\": false,\n      \"cancel_reason\": null,\n      \"cancelled_by\": null,\n      \"cancelled_at\": null,\n      \"created_by\": \"uuid\",\n      \"created_at\": \"2024-01-10T08:00:00Z\",\n      \"updated_by\": \"uuid\",\n      \"updated_at\": \"2024-01-10T08:00:00Z\",\n      \"purchase_order\": \"PO789\",\n      \"truck_plate\": \"ABC-123\",\n      \"order_request_number\": \"ORD001\",\n      \"shipper_provider\": \"Provider Inc\",\n      \"recurrence\": null,\n      \"dock\": {\n        \"id\": \"uuid\",\n        \"name\": \"Dock A1\",\n        \"warehouse_id\": \"uuid\"\n      },\n      \"warehouse\": {\n        \"id\": \"uuid\",\n        \"name\": \"Main Warehouse\",\n        \"country_id\": \"uuid\"\n      }\n    }\n  ],\n  \"meta\": {\n    \"limit\": 50,\n    \"offset\": 0,\n    \"count\": null\n  }\n}\n```\n\n**Errors:**\n- 400: Invalid parameters\n- 401: Missing or invalid token\n- 403: No permission or org access\n- 500: Server error\n\n**cURL Example:**\n```bash\ncurl -X GET \"https://xypbohvarofufrdkfeaj.supabase.co/functions/v1/api-v1-reservations-get?org_id=YOUR_ORG_ID&limit=50&offset=0&include=dock,warehouse\" \\\n  -H \"Authorization: Bearer YOUR_JWT_TOKEN\" \\\n  -H \"Content-Type: application/json\"\n```\n\n**cURL with Date Filters:**\n```bash\ncurl -X GET \"https://xypbohvarofufrdkfeaj.supabase.co/functions/v1/api-v1-reservations-get?org_id=YOUR_ORG_ID&from=2024-01-01T00:00:00Z&to=2024-01-31T23:59:59Z&limit=100\" \\\n  -H \"Authorization: Bearer YOUR_JWT_TOKEN\" \\\n  -H \"Content-Type: application/json\"\n```"
+      },
+      "response": []
+    },
+    {
+      "name": "Update Reservation Status",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "// Test: Status code is 200",
+              "pm.test(\"Status code is 200\", function () {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "",
+              "// Test: Response has data object",
+              "pm.test(\"Response has data object\", function () {",
+              "    const jsonData = pm.response.json();",
+              "    pm.expect(jsonData).to.have.property('data');",
+              "    pm.expect(jsonData.data).to.be.an('object');",
+              "});",
+              "",
+              "// Test: org_id matches request",
+              "pm.test(\"org_id matches request\", function () {",
+              "    const jsonData = pm.response.json();",
+              "    const requestedOrgId = pm.variables.get('orgId');",
+              "    pm.expect(jsonData.data.org_id).to.equal(requestedOrgId);",
+              "});",
+              "",
+              "// Test: status_id was updated",
+              "pm.test(\"status_id was updated to new value\", function () {",
+              "    const jsonData = pm.response.json();",
+              "    const newStatusId = pm.variables.get('newStatusId');",
+              "    pm.expect(jsonData.data.status_id).to.equal(newStatusId);",
+              "});",
+              "",
+              "// Test: Response contains required fields",
+              "pm.test(\"Response contains required fields\", function () {",
+              "    const jsonData = pm.response.json();",
+              "    pm.expect(jsonData.data).to.have.property('id');",
+              "    pm.expect(jsonData.data).to.have.property('org_id');",
+              "    pm.expect(jsonData.data).to.have.property('status_id');",
+              "    pm.expect(jsonData.data).to.have.property('updated_by');",
+              "    pm.expect(jsonData.data).to.have.property('updated_at');",
+              "});",
+              "",
+              "// Test: updated_at is recent",
+              "pm.test(\"updated_at timestamp is recent\", function () {",
+              "    const jsonData = pm.response.json();",
+              "    const updatedAt = new Date(jsonData.data.updated_at);",
+              "    const now = new Date();",
+              "    const diffMinutes = (now - updatedAt) / 1000 / 60;",
+              "    pm.expect(diffMinutes).to.be.below(5); // Updated within last 5 minutes",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "PATCH",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token}}",
+            "type": "text"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json",
+            "type": "text"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"status_id\": \"{{newStatusId}}\",\n  \"org_id\": \"{{orgId}}\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api-v1-reservations-patch-status/{{reservationId}}",
+          "host": ["{{baseUrl}}"],
+          "path": ["api-v1-reservations-patch-status", "{{reservationId}}"]
+        },
+        "description": "**PATCH /api/v1/reservations/{id}/status**\n\nUpdate only the status_id of a reservation.\n\n**Authentication:** Required (Bearer token)\n**Permission:** casetilla.view\n\n**Path Parameters:**\n- `id` (required): Reservation UUID\n\n**Body Parameters:**\n```json\n{\n  \"status_id\": \"uuid\",\n  \"org_id\": \"uuid (optional if inferred)\"\n}\n```\n\n**Validation Rules:**\n- `id` and `status_id` must be valid UUIDs\n- Reservation must exist for the given `org_id`\n- Reservation cannot be cancelled (`is_cancelled=true`)\n- `status_id` must exist in `reservation_statuses` with `is_active=true`\n\n**Update Behavior:**\n- Updates ONLY: `status_id`, `updated_by`, `updated_at`\n- Automatically logs change in `reservation_activity_log`\n- Transaction fails if activity log insert fails (consistency)\n\n**Response (200):**\n```json\n{\n  \"data\": {\n    \"id\": \"uuid\",\n    \"org_id\": \"uuid\",\n    \"status_id\": \"uuid\",\n    \"updated_by\": \"uuid\",\n    \"updated_at\": \"2024-01-15T14:30:00Z\"\n  }\n}\n```\n\n**Errors:**\n- 400: Invalid parameters, invalid status, or inactive status\n- 401: Missing or invalid token\n- 403: No permission or org access\n- 404: Reservation not found\n- 409: Reservation is cancelled (cannot update)\n- 500: Server error or log failure (with rollback)\n\n**Activity Log Entry:**\nEach status update creates an entry in `reservation_activity_log`:\n```json\n{\n  \"org_id\": \"uuid\",\n  \"reservation_id\": \"uuid\",\n  \"event_type\": \"reservation_status_changed\",\n  \"field_name\": \"status_id\",\n  \"old_value\": \"previous-uuid\",\n  \"new_value\": \"new-uuid\",\n  \"changed_by\": \"user-uuid\",\n  \"changed_at\": \"2024-01-15T14:30:00Z\"\n}\n```\n\n**cURL Example:**\n```bash\ncurl -X PATCH \"https://xypbohvarofufrdkfeaj.supabase.co/functions/v1/api-v1-reservations-patch-status/YOUR_RESERVATION_ID\" \\\n  -H \"Authorization: Bearer YOUR_JWT_TOKEN\" \\\n  -H \"Content-Type: application/json\" \\\n  -d '{\n    \"status_id\": \"YOUR_NEW_STATUS_ID\",\n    \"org_id\": \"YOUR_ORG_ID\"\n  }'\n```\n\n**cURL Example (Minimal):**\n```bash\ncurl -X PATCH \"https://xypbohvarofufrdkfeaj.supabase.co/functions/v1/api-v1-reservations-patch-status/abc123-def456-ghi789\" \\\n  -H \"Authorization: Bearer eyJhbGc...\" \\\n  -H \"Content-Type: application/json\" \\\n  -d '{\"status_id\":\"xyz789-uvw456-rst123\"}'\n```"
+      },
+      "response": []
+    }
+  ],
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "https://xypbohvarofufrdkfeaj.supabase.co/functions/v1",
+      "type": "string"
+    },
+    {
+      "key": "token",
+      "value": "YOUR_JWT_TOKEN_HERE",
+      "type": "string"
+    },
+    {
+      "key": "orgId",
+      "value": "YOUR_ORG_UUID_HERE",
+      "type": "string"
+    },
+    {
+      "key": "reservationId",
+      "value": "YOUR_RESERVATION_UUID_HERE",
+      "type": "string"
+    },
+    {
+      "key": "newStatusId",
+      "value": "YOUR_NEW_STATUS_UUID_HERE",
+      "type": "string"
+    }
+  ]
+}

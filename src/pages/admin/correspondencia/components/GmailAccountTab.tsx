@@ -64,17 +64,17 @@ export default function GmailAccountTab() {
 
   const loadConnectionStatus = useCallback(async () => {
     if (authLoading || !user?.id || !orgId) {
-      console.log("[GmailAccountTab] loadConnectionStatus:skip", debugCtx);
+      // console.log("[GmailAccountTab] loadConnectionStatus:skip", debugCtx);
       return;
     }
 
     try {
       setLoading(true);
-      console.log("[GmailAccountTab] calling getGmailConnectionStatus", { orgId, userId: user.id });
+      // console.log("[GmailAccountTab] calling getGmailConnectionStatus", { orgId, userId: user.id });
 
       const connectionStatus = await getGmailConnectionStatus(orgId, user.id);
 
-      console.log("[GmailAccountTab] connectionStatus:ok", connectionStatus);
+      // console.log("[GmailAccountTab] connectionStatus:ok", connectionStatus);
       setStatus(connectionStatus);
     } catch (error) {
       const errorDetails = {
@@ -84,37 +84,37 @@ export default function GmailAccountTab() {
         raw: error,
       };
 
-      console.error("[GmailAccountTab] connectionStatus:error", {
-        error: errorDetails,
-        debugCtx,
-      });
+      // console.error("[GmailAccountTab] connectionStatus:error", {
+      //   error: errorDetails,
+      //   debugCtx,
+      // });
 
       setStatus(null);
     } finally {
       setLoading(false);
-      console.log("[GmailAccountTab] loadConnectionStatus:done", debugCtx);
+      // console.log("[GmailAccountTab] loadConnectionStatus:done", debugCtx);
     }
   }, [authLoading, user?.id, orgId, debugCtx]);
 
   useEffect(() => {
-    console.log("[GmailAccountTab] useEffect:init", debugCtx);
+    // console.log("[GmailAccountTab] useEffect:init", debugCtx);
     if (!authLoading) loadConnectionStatus();
   }, [authLoading, loadConnectionStatus, debugCtx]);
 
   const handleConnect = async () => {
-    console.log("[GmailAccountTab] handleConnect:start", {
-      orgId,
-      userId: user?.id,
-      redirectUrl,
-      origin: window.location.origin,
-    });
+    // console.log("[GmailAccountTab] handleConnect:start", {
+    //   orgId,
+    //   userId: user?.id,
+    //   redirectUrl,
+    //   origin: window.location.origin,
+    // });
 
     if (authLoading) {
-      console.warn("[GmailAccountTab] handleConnect blocked: authLoading=true");
+      // console.warn("[GmailAccountTab] handleConnect blocked: authLoading=true");
       return;
     }
     if (!user?.id || !orgId) {
-      console.warn("[GmailAccountTab] handleConnect blocked: missing user/orgId", debugCtx);
+      // console.warn("[GmailAccountTab] handleConnect blocked: missing user/orgId", debugCtx);
       setPopup({
         isOpen: true,
         type: 'warning',
@@ -129,10 +129,10 @@ export default function GmailAccountTab() {
 
       const authUrl = await getGmailAuthUrl(orgId, user.id, redirectUrl);
 
-      console.log("[GmailAccountTab] handleConnect:authUrl", { authUrl });
+      // console.log("[GmailAccountTab] handleConnect:authUrl", { authUrl });
       window.location.href = authUrl;
     } catch (error) {
-      console.error("[GmailAccountTab] handleConnect:error", error);
+      // console.error("[GmailAccountTab] handleConnect:error", error);
       setPopup({
         isOpen: true,
         type: 'error',
@@ -141,12 +141,12 @@ export default function GmailAccountTab() {
       });
     } finally {
       setConnecting(false);
-      console.log("[GmailAccountTab] handleConnect:finally", { orgId, userId: user?.id });
+      // console.log("[GmailAccountTab] handleConnect:finally", { orgId, userId: user?.id });
     }
   };
 
   const handleDisconnect = async () => {
-    console.log("[GmailAccountTab] handleDisconnect:start", { orgId, userId: user?.id });
+    // console.log("[GmailAccountTab] handleDisconnect:start", { orgId, userId: user?.id });
 
     if (authLoading) return;
     if (!user?.id || !orgId) return;
@@ -163,9 +163,9 @@ export default function GmailAccountTab() {
     try {
       setDisconnecting(true);
 
-      console.log("[GmailAccountTab] disconnect:calling disconnectGmailAccount", { orgId, userId: user.id });
+      // console.log("[GmailAccountTab] disconnect:calling disconnectGmailAccount", { orgId, userId: user.id });
       const res = await disconnectGmailAccount(orgId, user.id);
-      console.log("[GmailAccountTab] disconnect:ok", res);
+      // console.log("[GmailAccountTab] disconnect:ok", res);
 
       // ✅ Limpiar estado inmediatamente para evitar mostrar datos stale
       setStatus(null);
@@ -180,7 +180,7 @@ export default function GmailAccountTab() {
         message: 'Tu cuenta de Gmail ha sido desconectada exitosamente.'
       });
     } catch (error) {
-      console.error("[GmailAccountTab] handleDisconnect:error", error);
+      // console.error("[GmailAccountTab] handleDisconnect:error", error);
       setPopup({
         isOpen: true,
         type: 'error',
@@ -189,7 +189,7 @@ export default function GmailAccountTab() {
       });
     } finally {
       setDisconnecting(false);
-      console.log("[GmailAccountTab] handleDisconnect:finally", { orgId, userId: user?.id });
+      // console.log("[GmailAccountTab] handleDisconnect:finally", { orgId, userId: user?.id });
     }
   };
 
@@ -229,12 +229,12 @@ export default function GmailAccountTab() {
   const isConnected = status?.connected === true;
   
   // ✅ LOG DE RENDERSTATE para debugging
-  console.log("[GmailAccountTab] renderState", {
-    connected: status?.connected,
-    accountStatus: status?.account?.status,
-    gmail: status?.account?.gmail_email,
-    isConnected,
-  });
+  // console.log("[GmailAccountTab] renderState", {
+  //   connected: status?.connected,
+  //   accountStatus: status?.account?.status,
+  //   gmail: status?.account?.gmail_email,
+  //   isConnected,
+  // });
 
   const hasError = status?.account?.status?.toLowerCase() === "error";
 

@@ -45,7 +45,6 @@ export default function ManpowerPage() {
   // =========================
   const callCountriesService = useCallback(async (orgId: string) => {
     try {
-      // ✅ tu countriesService real tiene getAll/getActive y ahora también getCountries
       if (typeof (countriesService as any).getCountries === 'function') {
         return await (countriesService as any).getCountries(orgId);
       }
@@ -54,30 +53,25 @@ export default function ManpowerPage() {
       }
       return await countriesService.getAll(orgId);
     } catch (err) {
-      console.error('[Manpower] callCountriesService error', err);
       throw err;
     }
   }, []);
 
   const callWarehousesService = useCallback(async (orgId: string) => {
     try {
-      // ✅ tu warehousesService tiene getWarehouses y alias getAll
       if (typeof (warehousesService as any).getWarehouses === 'function') {
         return await (warehousesService as any).getWarehouses(orgId);
       }
       return await (warehousesService as any).getAll(orgId);
     } catch (err) {
-      console.error('[Manpower] callWarehousesService error', err);
       throw err;
     }
   }, []);
 
   const callWorkTypesService = useCallback(async (orgId: string) => {
     try {
-      // collaboratorsService.getWorkTypes existe en tu código original
       return await collaboratorsService.getWorkTypes(orgId);
     } catch (err) {
-      console.error('[Manpower] callWorkTypesService error', err);
       throw err;
     }
   }, []);
@@ -97,10 +91,6 @@ const workTypeNameById = useMemo(() => {
 // Carga inicial
 // =========================
 const loadInitialData = useCallback(async () => {
-  console.log('[Manpower] loadInitialData org resolve', {
-    resolvedOrgId: orgId
-  });
-
   if (!orgId) {
     setError('Sin organización asignada');
     setCountries([]);
@@ -120,17 +110,10 @@ const loadInitialData = useCallback(async () => {
       callWorkTypesService(orgId),
     ]);
 
-    console.log('[Manpower] initial data loaded', {
-      countries: Array.isArray(countriesData) ? countriesData.length : 'not-array',
-      warehouses: Array.isArray(warehousesData) ? warehousesData.length : 'not-array',
-      workTypes: Array.isArray(workTypesData) ? workTypesData.length : 'not-array'
-    });
-
     setCountries(Array.isArray(countriesData) ? countriesData : []);
     setWarehouses(Array.isArray(warehousesData) ? warehousesData : []);
     setWorkTypes(Array.isArray(workTypesData) ? workTypesData : []);
   } catch (err: any) {
-    console.error('[Manpower] Error loading initial data:', err);
     setError(err?.message || 'Error al cargar los datos iniciales');
     setCountries([]);
     setWarehouses([]);
@@ -143,13 +126,6 @@ const loadInitialData = useCallback(async () => {
 // Cargar colaboradores
 // =========================
 const loadCollaborators = useCallback(async () => {
-  console.log('[Manpower] loadCollaborators org resolve', {
-    resolvedOrgId: orgId,
-    viewAll,
-    selectedCountry,
-    selectedWarehouse
-  });
-
   if (!orgId) return;
 
   if (!viewAll && !selectedCountry && !selectedWarehouse) {
@@ -170,7 +146,6 @@ const loadCollaborators = useCallback(async () => {
     setCollaborators(Array.isArray(data) ? data : []);
     setCurrentPage(1);
   } catch (err: any) {
-    console.error('[Manpower] Error loading collaborators:', err);
     setError(err?.message || 'Error al cargar los colaboradores');
     setCollaborators([]);
   } finally {
@@ -237,7 +212,6 @@ const handleCreate = async (data: CollaboratorFormData) => {
     await loadCollaborators();
     setIsModalOpen(false);
   } catch (err) {
-    console.error('[Manpower] Error creating collaborator:', err);
     throw err;
   }
 };
@@ -252,7 +226,6 @@ const handleEdit = async (data: CollaboratorFormData) => {
     setIsModalOpen(false);
     setEditingCollaborator(null);
   } catch (err) {
-    console.error('[Manpower] Error updating collaborator:', err);
     throw err;
   }
 };
@@ -267,7 +240,6 @@ const handleDelete = async (collaborator: Collaborator) => {
     await collaboratorsService.deleteCollaborator(orgId, collaborator.id);
     await loadCollaborators();
   } catch (err) {
-    console.error('[Manpower] Error deleting collaborator:', err);
     alert('Error al eliminar el colaborador');
   }
 };

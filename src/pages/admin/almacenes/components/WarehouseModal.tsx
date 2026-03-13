@@ -39,29 +39,16 @@ export default function WarehouseModal({
   const [errors, setErrors] = useState<Record<string, string>>({});
 
   useEffect(() => {
-    console.log('[WarehouseModal] 🎬 Modal opened/updated', {
-      mode: warehouse ? 'edit' : 'create',
-      warehouseName: warehouse?.name || 'new',
-      clientsReceived: clients.length,
-      activeClients: clients.filter(c => c.is_active).length,
-      assignedClientIds: assignedClientIds.length,
-      canManageClients,
-      willShowSection: canManageClients
-    });
-
     if (warehouse) {
       setFormData({
-        name: warehouse.name,
-        location: warehouse.location || '',
+        name: warehouse.name || '',
+        location: (warehouse as any).location || '',
         country_id: warehouse.country_id || '',
-        business_start_time: warehouse.business_start_time?.substring(0, 5) || '06:00',
-        business_end_time: warehouse.business_end_time?.substring(0, 5) || '17:00',
-        slot_interval_minutes: warehouse.slot_interval_minutes || 60,
+        business_start_time: (warehouse as any).business_start_time || '06:00',
+        business_end_time: (warehouse as any).business_end_time || '17:00',
+        slot_interval_minutes: (warehouse as any).slot_interval_minutes || 60,
       });
-      setSelectedClientIds(assignedClientIds);
-      console.log('[WarehouseModal] ✅ Loaded warehouse data', {
-        selectedClientIds: assignedClientIds
-      });
+      setSelectedClientIds(assignedClientIds || []);
     } else {
       setFormData({
         name: '',
@@ -72,11 +59,9 @@ export default function WarehouseModal({
         slot_interval_minutes: 60,
       });
       setSelectedClientIds([]);
-      console.log('[WarehouseModal] ✅ Reset for new warehouse');
     }
     setErrors({});
-    setClientSearch('');
-  }, [warehouse, assignedClientIds, clients, canManageClients]);
+  }, [warehouse, assignedClientIds]);
 
   const validate = (): boolean => {
     const newErrors: Record<string, string> = {};
@@ -102,14 +87,9 @@ export default function WarehouseModal({
     e.preventDefault();
     if (!validate()) return;
 
-    console.log('[WarehouseModal] 💾 Submitting form', {
-      formData,
-      selectedClientIds: selectedClientIds.length,
-      canManageClients
-    });
-
+    setSaving(true);
+    setErrors({});
     try {
-      setSaving(true);
       await onSave(
         {
           ...formData,
@@ -118,11 +98,8 @@ export default function WarehouseModal({
         },
         selectedClientIds
       );
-      console.log('[WarehouseModal] ✅ Save successful');
-    } catch (error) {
-      console.error('[WarehouseModal] ❌ saveError', error);
-      const message = error instanceof Error ? error.message : 'Error al guardar el almacén';
-      setErrors({ submit: message });
+    } catch (error: any) {
+      setErrors((prev) => ({ ...prev, submit: error?.message || 'Error al guardar el almacén' }));
     } finally {
       setSaving(false);
     }
@@ -143,15 +120,6 @@ export default function WarehouseModal({
       (c.legal_id && c.legal_id.toLowerCase().includes(term)) ||
       (c.email && c.email.toLowerCase().includes(term))
     );
-  });
-
-  console.log('[WarehouseModal] 🔍 Render state', {
-    canManageClients,
-    totalClients: clients.length,
-    activeClientsCount: activeClients.length,
-    filteredClientsCount: filteredClients.length,
-    selectedCount: selectedClientIds.length,
-    searchTerm: clientSearch
   });
 
   return (
@@ -212,7 +180,7 @@ export default function WarehouseModal({
             </p>
           </div>
 
-          {/* País (select real con UUID) */}
+          {/* País */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
               País <span className="text-red-500">*</span>
@@ -372,41 +340,6 @@ export default function WarehouseModal({
                   )}
                 </div>
               )}
-            </div>
-          )}
-
-          {/* DEBUG: Mostrar info si NO aparece la sección */}
-          {!canManageClients && (
-            <div className="border-t border-gray-200 pt-4 mt-4">
-              <div className="p-4 bg-yellow-50 border border-yellow-300 rounded-lg">
-                <div className="flex items-start gap-3">
-                  <i className="ri-alert-line text-yellow-600 text-xl flex-shrink-0 mt-0.5"></i>
-                  <div className="flex-1">
-                    <h4 className="text-sm font-semibold text-yellow-900 mb-2">
-                      ⚠️ DEBUG: Sección "Clientes con acceso" oculta
-                    </h4>
-                    <div className="text-xs text-yellow-800 space-y-1">
-                      <p>
-                        <strong>Motivo:</strong> No tienes el permiso necesario para gestionar clientes de almacenes.
-                      </p>
-                      <p>
-                        <strong>Permisos requeridos (cualquiera de estos):</strong>
-                      </p>
-                      <ul className="list-disc list-inside ml-2 space-y-0.5">
-                        <li><code className="bg-yellow-100 px-1 rounded">admin.warehouses.update</code></li>
-                        <li><code className="bg-yellow-100 px-1 rounded">warehouses.update</code></li>
-                        <li><code className="bg-yellow-100 px-1 rounded">admin.warehouses.clients.manage</code></li>
-                      </ul>
-                      <p className="mt-2">
-                        <strong>Clientes disponibles:</strong> {clients.length} total ({clients.filter(c => c.is_active).length} activos)
-                      </p>
-                      <p className="mt-2 text-yellow-700">
-                        💡 <strong>Solución:</strong> Contacta al administrador para que te asigne uno de los permisos listados arriba.
-                      </p>
-                    </div>
-                  </div>
-                </div>
-              </div>
             </div>
           )}
 

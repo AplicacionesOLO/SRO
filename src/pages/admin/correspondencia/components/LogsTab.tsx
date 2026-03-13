@@ -13,11 +13,11 @@ export function LogsTab() {
   // ✅ FIX: Usar el resolver correcto de orgId (currentOrgId → user.orgId → fallback)
   const orgId = useMemo(() => {
     const resolved = currentOrgId || user?.orgId || null;
-    console.log('[LogsTab] orgId resolver', {
+    /**console.log('[LogsTab] orgId resolver', {
       currentOrgId,
       userOrgId: user?.orgId,
       resolved
-    });
+    });*/
     return resolved;
   }, [currentOrgId, user?.orgId]);
 
@@ -49,17 +49,17 @@ export function LogsTab() {
   // ✅ FIX: Remover lastOrgLoadedRef - permitir recargas cuando sea necesario
   const loadLogs = useCallback(async () => {
     if (!orgId) {
-      console.log('[LogsTab] loadLogs - no orgId, skipping');
+      //console.log('[LogsTab] loadLogs - no orgId, skipping');
       setLogs([]);
       setLoading(false);
       return;
     }
 
     try {
-      console.log('[LogsTab] loadLogs start', { orgId });
+      //console.log('[LogsTab] loadLogs start', { orgId });
       setLoading(true);
       const data = await correspondenceService.getLogs(orgId);
-      console.log('[LogsTab] loadLogs success', {
+      /**console.log('[LogsTab] loadLogs success', {
         orgId,
         count: data.length,
         sample: data.slice(0, 3).map(l => ({
@@ -68,11 +68,15 @@ export function LogsTab() {
           status: l.status,
           to: l.to_emails
         }))
-      });
+      });*/
       setLogs(data);
     } catch (error) {
-      console.error('[LogsTab] loadLogs error', { orgId, error });
-      setLogs([]);
+      setPopup({
+        isOpen: true,
+        type: 'error',
+        title: 'Error',
+        message: 'Error al cargar los logs'
+      });
     } finally {
       setLoading(false);
     }

@@ -12,7 +12,7 @@ export interface Country {
 
 export const countriesService = {
   async getAll(orgId: string): Promise<Country[]> {
-    console.log('[CountriesService] getAll', { orgId });
+    //console.log('[CountriesService] getAll', { orgId });
 
     try {
       const { data, error } = await supabase
@@ -23,18 +23,18 @@ export const countriesService = {
         .order('name', { ascending: true });
 
       if (error) {
-        console.error('[CountriesService] getAll error', {
-          error,
-          message: error.message,
-          details: (error as any)?.details,
-          hint: (error as any)?.hint
-        });
+        // console.error('[CountriesService] getAll error', {
+        //   error,
+        //   message: error.message,
+        //   details: (error as any)?.details,
+        //   hint: (error as any)?.hint
+        // });
         throw error;
       }
 
       return (data || []) as Country[];
     } catch (err) {
-      console.error('[CountriesService] getAll catch', err);
+      // console.error('[CountriesService] getAll catch', err);
       throw err;
     }
   },
@@ -58,7 +58,7 @@ export const countriesService = {
       throw new Error('El código debe tener 2 o 3 caracteres');
     }
 
-    console.log('[CountriesService] create', { orgId, name: cleanName, code: cleanCode });
+    //console.log('[CountriesService] create', { orgId, name: cleanName, code: cleanCode });
 
     try {
       const { data, error } = await supabase
@@ -73,12 +73,12 @@ export const countriesService = {
         .single();
 
       if (error) {
-        console.error('[CountriesService] create error', {
-          error,
-          message: error.message,
-          details: (error as any)?.details,
-          hint: (error as any)?.hint
-        });
+        // console.error('[CountriesService] create error', {
+        //   error,
+        //   message: error.message,
+        //   details: (error as any)?.details,
+        //   hint: (error as any)?.hint
+        // });
         if (error.code === '23505') {
           throw new Error('Ya existe un país con ese nombre o código');
         }
@@ -88,7 +88,7 @@ export const countriesService = {
       if (!data) throw new Error('No se pudo crear el país');
       return data as Country;
     } catch (err) {
-      console.error('[CountriesService] create catch', err);
+      // console.error('[CountriesService] create catch', err);
       throw err;
     }
   },
@@ -103,7 +103,7 @@ export const countriesService = {
       throw new Error('El código debe tener 2 o 3 caracteres');
     }
 
-    console.log('[CountriesService] update', { orgId, id, name: cleanName, code: cleanCode });
+    //console.log('[CountriesService] update', { orgId, id, name: cleanName, code: cleanCode });
 
     try {
       const { data, error } = await supabase
@@ -119,12 +119,12 @@ export const countriesService = {
         .single();
 
       if (error) {
-        console.error('[CountriesService] update error', {
-          error,
-          message: error.message,
-          details: (error as any)?.details,
-          hint: (error as any)?.hint
-        });
+        // console.error('[CountriesService] update error', {
+        //   error,
+        //   message: error.message,
+        //   details: (error as any)?.details,
+        //   hint: (error as any)?.hint
+        // });
         if (error.code === '23505') {
           throw new Error('Ya existe un país con ese nombre o código');
         }
@@ -134,13 +134,13 @@ export const countriesService = {
       if (!data) throw new Error('No se pudo actualizar el país');
       return data as Country;
     } catch (err) {
-      console.error('[CountriesService] update catch', err);
+      // console.error('[CountriesService] update catch', err);
       throw err;
     }
   },
 
   async delete(orgId: string, id: string): Promise<void> {
-    console.log('[CountriesService] delete (soft)', { orgId, id });
+    //console.log('[CountriesService] delete (soft)', { orgId, id });
 
     try {
       const { error } = await supabase
@@ -153,16 +153,16 @@ export const countriesService = {
         .eq('org_id', orgId);
 
       if (error) {
-        console.error('[CountriesService] delete error', {
-          error,
-          message: error.message,
-          details: (error as any)?.details,
-          hint: (error as any)?.hint
-        });
+        // console.error('[CountriesService] delete error', {
+        //   error,
+        //   message: error.message,
+        //   details: (error as any)?.details,
+        //   hint: (error as any)?.hint
+        // });
         throw error;
       }
     } catch (err) {
-      console.error('[CountriesService] delete catch', err);
+      // console.error('[CountriesService] delete catch', err);
       throw err;
     }
   },
@@ -172,7 +172,7 @@ export const countriesService = {
   },
 
   async getById(orgId: string, id: string): Promise<Country | null> {
-    console.log('[CountriesService] getById', { orgId, id });
+    //console.log('[CountriesService] getById', { orgId, id });
 
     try {
       const { data, error } = await supabase
@@ -184,20 +184,19 @@ export const countriesService = {
 
       if (error) {
         if (error.code === 'PGRST116') return null;
-        console.error('[CountriesService] getById error', {
-          error,
-          message: error.message,
-          details: (error as any)?.details,
-          hint: (error as any)?.hint
-        });
+        // console.error('[CountriesService] getById error', {
+        //   error,
+        //   message: error.message,
+        //   details: (error as any)?.details,
+        //   hint: (error as any)?.hint
+        // });
         throw error;
       }
 
       return data as Country;
     } catch (err) {
-      console.error('[CountriesService] getById catch', err);
+      // console.error('[CountriesService] getById catch', err);
       throw err;
     }
   }
 };
-

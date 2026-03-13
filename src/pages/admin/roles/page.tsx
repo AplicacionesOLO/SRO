@@ -63,18 +63,22 @@ export default function RolesPage() {
     setPopup(prev => ({ ...prev, isOpen: false }));
   };
 
+  const setError = (message: string) => {
+    showPopup('error', 'Error', message);
+  };
+
   // ✅ CORRECCIÓN PROBLEMA 1: Usar formato correcto con puntos (admin.roles.xxx)
   const canCreate = can('admin.roles.create');
   const canEdit = can('admin.roles.update');
   const canDelete = can('admin.roles.delete');
 
-  console.log('[RolesPage] Permisos evaluados', {
-    canCreate,
-    canEdit,
-    canDelete,
-    orgId,
-    permissionsLoading
-  });
+  // console.log('[RolesPage] Permisos evaluados', {
+  //   canCreate,
+  //   canEdit,
+  //   canDelete,
+  //   orgId,
+  //   permissionsLoading
+  // });
 
   useEffect(() => {
     if (!permissionsLoading && orgId) {
@@ -85,7 +89,7 @@ export default function RolesPage() {
 
   // ✅ Guard: Si está cargando permisos o no hay orgId, mostrar loading
   if (permissionsLoading || !orgId) {
-    console.log('[RolesPage] Guard triggered', { permissionsLoading, orgId });
+    // console.log('[RolesPage] Guard triggered', { permissionsLoading, orgId });
     return (
       <div className="flex items-center justify-center min-h-screen">
         <div className="text-center">
@@ -111,7 +115,7 @@ export default function RolesPage() {
 
       if (rolesError) throw rolesError;
 
-      console.log('[RolesPage] Roles cargados', { count: rolesData?.length || 0 });
+      // console.log('[RolesPage] Roles cargados', { count: rolesData?.length || 0 });
 
       // Paso 2: Contar usuarios por rol con filtro de organización
       const { data: countsData, error: countsError } = await supabase
@@ -120,13 +124,13 @@ export default function RolesPage() {
         .eq('org_id', orgId);
 
       if (countsError) {
-        console.error('[RolesPage] Error al contar usuarios:', countsError);
+        // non-blocking
       }
 
-      console.log('[RolesPage] Conteos obtenidos', { 
-        totalRecords: countsData?.length || 0,
-        orgId 
-      });
+      // console.log('[RolesPage] Conteos obtenidos', { 
+      //   totalRecords: countsData?.length || 0,
+      //   orgId 
+      // });
 
       // Paso 3: Agrupar conteos por role_id
       const countsByRole = (countsData || []).reduce((acc, record) => {
@@ -134,7 +138,7 @@ export default function RolesPage() {
         return acc;
       }, {} as Record<string, number>);
 
-      console.log('[RolesPage] Conteos agrupados', countsByRole);
+      // console.log('[RolesPage] Conteos agrupados', countsByRole);
 
       // Paso 4: Combinar roles con sus conteos
       const formattedRoles = (rolesData || []).map((role) => ({
@@ -142,14 +146,14 @@ export default function RolesPage() {
         user_count: countsByRole[role.id] || 0
       }));
 
-      console.log('[RolesPage] Roles formateados', {
-        total: formattedRoles.length,
-        sample: formattedRoles.slice(0, 3).map(r => ({ name: r.name, count: r.user_count }))
-      });
+      // console.log('[RolesPage] Roles formateados', {
+      //   total: formattedRoles.length,
+      //   sample: formattedRoles.slice(0, 3).map(r => ({ name: r.name, count: r.user_count }))
+      // });
 
       setRoles(formattedRoles);
-    } catch (error) {
-      console.error('[RolesPage] Error loading roles:', error);
+    } catch (error: any) {
+      setError('Error al cargar roles');
       setRoles([]); // ✅ Fallback a array vacío
     } finally {
       setLoading(false);
@@ -166,8 +170,8 @@ export default function RolesPage() {
 
       if (error) throw error;
       setPermissions(data || []);
-    } catch (error) {
-      console.error('[RolesPage] Error loading permissions:', error);
+    } catch (error: any) {
+      setError('Error al cargar permisos');
       setPermissions([]); // ✅ Fallback a array vacío
     }
   };
@@ -181,8 +185,8 @@ export default function RolesPage() {
 
       if (error) throw error;
       setSelectedPermissions(data?.map((rp: RolePermission) => rp.permission_id) || []);
-    } catch (error) {
-      console.error('[RolesPage] Error loading role permissions:', error);
+    } catch (error: any) {
+      setError('Error al cargar permisos del rol');
       setSelectedPermissions([]); // ✅ Fallback a array vacío
     }
   };
@@ -219,7 +223,7 @@ export default function RolesPage() {
       setFormData({ name: '', description: '' });
       loadRoles();
     } catch (error: any) {
-      console.error('[RolesPage] Error saving role:', error);
+      setError('Error al guardar rol');
       showPopup('error', 'Error al guardar', error.message || 'No se pudo guardar el rol. Intenta nuevamente.');
     }
   };
@@ -255,7 +259,7 @@ export default function RolesPage() {
       loadRoles();
       showPopup('success', 'Rol eliminado', `El rol "${roleName}" se ha eliminado correctamente.`);
     } catch (error: any) {
-      console.error('[RolesPage] Error deleting role:', error);
+      setError('Error al eliminar rol');
       setShowDeleteModal(false);
       setRoleToDelete(null);
       showPopup('error', 'Error al eliminar', error.message || 'No se pudo eliminar el rol. Puede que tenga usuarios asignados.');
@@ -306,7 +310,7 @@ export default function RolesPage() {
       setSelectedPermissions([]);
       showPopup('success', 'Permisos guardados', `Los permisos del rol "${roleName}" se han actualizado correctamente.`);
     } catch (error: any) {
-      console.error('[RolesPage] Error saving permissions:', error);
+      setError('Error al guardar permisos');
       showPopup('error', 'Error al guardar permisos', error.message || 'No se pudieron guardar los permisos. Intenta nuevamente.');
     }
   };

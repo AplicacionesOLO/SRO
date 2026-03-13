@@ -13,20 +13,20 @@ export const activityLogService = {
   ): Promise<ActivityLog[]> {
     // ✅ Validación de parámetros
     if (!orgId || !entityId) {
-      console.error('[ActivityLogService] ❌ Missing required params', {
-        orgId,
-        entityType,
-        entityId
-      });
+      // console.error('[ActivityLogService] ❌ Missing required params', {
+      //   orgId,
+      //   entityType,
+      //   entityId
+      // });
       throw new Error('Falta orgId o reservationId');
     }
 
-    console.log('[ActivityLogService] 🔍 Fetching activity logs', {
+    /**console.log('[ActivityLogService] 🔍 Fetching activity logs', {
       orgId,
       entityType,
       entityId,
       orderAsc
-    });
+    });*/
 
     // ✅ Query EXACTO sin join primero
     const query = supabase
@@ -37,7 +37,7 @@ export const activityLogService = {
       .eq('entity_id', entityId)
       .order('created_at', { ascending: orderAsc });
 
-    console.log('[ActivityLogService] 📊 Query filters', {
+    /**console.log('[ActivityLogService] 📊 Query filters', {
       table: 'activity_log',
       filters: {
         org_id: orgId,
@@ -45,31 +45,31 @@ export const activityLogService = {
         entity_id: entityId
       },
       order: orderAsc ? 'ASC' : 'DESC'
-    });
+    });*/
 
     const { data, error } = await query;
 
     if (error) {
-      console.error('[ActivityLogService] ❌ Error fetching logs:', {
-        code: error.code,
-        message: error.message,
-        details: error.details,
-        hint: error.hint
-      });
+      // console.error('[ActivityLogService] ❌ Error fetching logs:', {
+      //   code: error.code,
+      //   message: error.message,
+      //   details: error.details,
+      //   hint: error.hint
+      // });
       throw error;
     }
 
-    console.log('[ActivityLogService] ✅ Logs fetched', {
+    /**console.log('[ActivityLogService] ✅ Logs fetched', {
       count: data?.length || 0,
       firstLog: data?.[0] || null
-    });
+    });*/
 
     // ✅ Opcional: resolver actor_user_id contra profiles (sin romper si falla)
     if (data && data.length > 0) {
       const actorIds = [...new Set(data.map(log => log.actor_user_id).filter(Boolean))];
       
       if (actorIds.length > 0) {
-        console.log('[ActivityLogService] 🔍 Fetching actors', { actorIds });
+        //console.log('[ActivityLogService] 🔍 Fetching actors', { actorIds });
         
         // ✅ Usar columnas reales: id, name, email
         const { data: profiles, error: profilesError } = await supabase
@@ -78,9 +78,9 @@ export const activityLogService = {
           .in('id', actorIds);
 
         if (profilesError) {
-          console.warn('[ActivityLogService] ⚠️ Could not fetch profiles (RLS?)', profilesError);
+          // console.warn('[ActivityLogService] ⚠️ Could not fetch profiles (RLS?)', profilesError);
         } else {
-          console.log('[ActivityLogService] ✅ Actors fetched', { count: profiles?.length || 0 });
+          //console.log('[ActivityLogService] ✅ Actors fetched', { count: profiles?.length || 0 });
           
           // ✅ Mapear actores a los logs con fallback: name || email || 'Usuario'
           const profilesMap = new Map(

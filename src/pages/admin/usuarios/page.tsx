@@ -100,18 +100,6 @@ export default function UsuariosPage() {
   const loadUsersRunningRef = useRef(false);
   const loadUsers401RetryRef = useRef(false);
 
-  console.log('[AdminUsers] debug', {
-    orgId,
-    userId,
-    permissionsLoading,
-    permissionsSetType: typeof permissionsSet,
-    permissionsSetSize: (permissionsSet as any)?.size || 0,
-    usersType: typeof users,
-    usersLength: users?.length || 0,
-    rolesType: typeof roles,
-    rolesLength: roles?.length || 0
-  });
-
   const canCreate = can('admin.users.create') || can('users.create');
   const canEdit = can('admin.users.update') || can('users.update');
   const canDelete = can('admin.users.delete') || can('users.delete');
@@ -137,14 +125,6 @@ export default function UsuariosPage() {
       const now = Math.floor(Date.now() / 1000);
       const isExpired = Number(payloadJson?.exp ?? 0) < now;
 
-      console.log('[UsersPage] 🔍 ensureSession token', {
-        hasToken: true,
-        isExpired,
-        exp: payloadJson?.exp,
-        now,
-        sub: payloadJson?.sub,
-      });
-
       if (isExpired) {
         const refresh2 = await supabase.auth.refreshSession();
         session = refresh2.data.session ?? null;
@@ -154,7 +134,7 @@ export default function UsuariosPage() {
         }
       }
     } catch (e) {
-      console.warn('[UsersPage] ⚠️ ensureSession JWT decode failed (non-blocking)', e);
+      // non-blocking JWT decode
     }
 
     return session;
@@ -162,12 +142,10 @@ export default function UsuariosPage() {
 
   const loadUsers = useCallback(async () => {
     if (loadUsersRunningRef.current) {
-      console.log('[UsersPage] loadUsers skipped: already running');
       return;
     }
 
     if (!orgId) {
-      console.log('[UsersPage] loadUsers skipped: orgId is null');
       return;
     }
 
@@ -181,13 +159,6 @@ export default function UsuariosPage() {
 
       const { data, error } = await supabase.functions.invoke('admin-users', {
         body: { action: 'list', orgId, debug: true },
-      });
-
-      console.log('[UsersPage] 📥 Response from admin-users (list):', {
-        hasData: !!data,
-        hasError: !!error,
-        errorDetails: error,
-        orgId,
       });
 
       if (error) {
@@ -208,13 +179,6 @@ export default function UsuariosPage() {
             body: { action: 'list', orgId, debug: true },
           });
 
-          console.log('[UsersPage] 📥 Retry response from admin-users (list):', {
-            hasData: !!retry.data,
-            hasError: !!retry.error,
-            errorDetails: retry.error,
-            orgId,
-          });
-
           if (retry.error) throw retry.error;
 
           setUsers((retry.data as any)?.users || []);
@@ -225,9 +189,8 @@ export default function UsuariosPage() {
       }
 
       setUsers((data as any)?.users || []);
-    } catch (err) {
-      console.error('[UsersPage] ❌ Error loading users:', err);
-      setLoadError(err instanceof Error ? err.message : 'Error al cargar usuarios');
+    } catch (err: any) {
+      setLoadError('Error al cargar usuarios');
     } finally {
       setLoading(false);
       loadUsersRunningRef.current = false;
@@ -236,24 +199,17 @@ export default function UsuariosPage() {
 
   const loadRoles = useCallback(async () => {
     try {
-      console.log('[UsersPage] 🔄 Loading roles...');
-      
       const { data, error } = await supabase
         .from('roles')
         .select('id, name')
         .order('name');
 
-      if (error) {
-        console.error('[UsersPage] ❌ Error loading roles:', error);
-        throw error;
-      }
+      if (error) throw error;
       
       const safeRoles = data ?? [];
-      console.log('[UsersPage] ✅ Roles loaded', { count: safeRoles.length, roles: safeRoles });
       setRoles(safeRoles);
-    } catch (error) {
-      console.error('[UsersPage] ❌ Error loading roles:', error);
-      setRoles([]); // Asegurar que roles sea un array vacío en caso de error
+    } catch (error: any) {
+      setLoadError('Error al cargar roles');
     }
   }, []);
 
@@ -261,22 +217,15 @@ export default function UsuariosPage() {
     if (!orgId) return;
 
     try {
-      console.log('[UsersPage] 🔄 Loading countries and warehouses...');
-      
       const [countriesData, warehousesData] = await Promise.all([
         countriesService.getActive(orgId),
         warehousesService.getAll(orgId)
       ]);
 
-      console.log('[UsersPage] ✅ Countries and warehouses loaded', {
-        countriesCount: countriesData.length,
-        warehousesCount: warehousesData.length,
-      });
-
       setCountries(countriesData);
       setWarehouses(warehousesData);
-    } catch (error) {
-      console.error('[UsersPage] ❌ Error loading countries/warehouses:', error);
+    } catch (error: any) {
+      setLoadError('Error al cargar países y almacenes');
     }
   }, [orgId]);
 
@@ -285,15 +234,12 @@ export default function UsuariosPage() {
     if (!orgId) return;
 
     try {
-      console.log('[UsersPage] 🔄 Loading providers...');
       setProvidersLoading(true);
       
       const providersData = await providersService.getActive(orgId);
-      
-      console.log('[UsersPage] ✅ Providers loaded', { count: providersData.length });
       setProviders(providersData);
-    } catch (error) {
-      console.error('[UsersPage] ❌ Error loading providers:', error);
+    } catch (error: any) {
+      setLoadError('Error al cargar proveedores');
     } finally {
       setProvidersLoading(false);
     }
@@ -301,7 +247,6 @@ export default function UsuariosPage() {
 
   const loadUserAccess = useCallback(async (targetUserId: string) => {
     if (!orgId || !targetUserId) {
-      console.warn('[UsersPage] loadUserAccess skipped: missing orgId or targetUserId', { orgId, targetUserId });
       return;
     }
 
@@ -309,9 +254,6 @@ export default function UsuariosPage() {
     setAccessError(null);
 
     try {
-      console.log('[UsersPage] 🔄 Loading user access...', { orgId, targetUserId });
-      
-      // ✅ CAMBIO: asegurar sesión antes de invocar
       await ensureSession();
 
       const accessData = await userAccessService.get(orgId, targetUserId);
@@ -320,39 +262,15 @@ export default function UsuariosPage() {
       setRestrictedByWarehouse(accessData.restricted);
       setSelectedWarehouseIds(accessData.warehouseIds);
 
-      console.log('[UsersPage] ✅ User access loaded:', accessData);
-
-      // ✅ CORREGIDO: Cargar proveedores asignados y mapear a IDs
       try {
         const userProviders = await userProvidersService.getUserProviders(orgId, targetUserId);
-        
-        // ✅ CORREGIDO: getUserProviders devuelve UserProvider[] con { id, name }
-        // Necesitamos extraer solo los IDs para selectedProviderIds
         const providerIds = userProviders.map(up => up.id);
-        
         setSelectedProviderIds(providerIds);
-        
-        console.log('[UsersPage] ✅ User providers loaded:', { 
-          count: userProviders.length,
-          selectedProviderIdsCount: providerIds.length,
-          providerIds: providerIds,
-          providerNames: userProviders.map(up => up.name)
-        });
-      } catch (providerError) {
-        console.error('[UsersPage] ⚠️ Error loading user providers (non-blocking):', providerError);
-        setSelectedProviderIds([]);
+      } catch (providerError: any) {
+        // non-blocking
       }
-    } catch (error) {
-      console.error('[UsersPage] ❌ Error loading user access:', error);
-      const errorMessage = error instanceof Error ? error.message : 'Error al cargar accesos';
-      setAccessError(errorMessage);
-      
-      // ✅ NUEVO: Mostrar error en UI pero no romper el modal
-      console.warn('[UsersPage] ⚠️ Continuing with empty access data');
-      setSelectedCountryIds([]);
-      setRestrictedByWarehouse(false);
-      setSelectedWarehouseIds([]);
-      setSelectedProviderIds([]);
+    } catch (error: any) {
+      setAccessError('Error al cargar accesos del usuario');
     } finally {
       setAccessLoading(false);
     }
@@ -361,11 +279,11 @@ export default function UsuariosPage() {
   useEffect(() => {
     const run = async () => {
       if (permissionsLoading || !orgId) {
-        console.log('[UsersPage] waiting for permissions or orgId...', { permissionsLoading, orgId });
+        // console.log('[UsersPage] waiting for permissions or orgId...', { permissionsLoading, orgId });
         return;
       }
 
-      console.log('[UsersPage] loading users & roles...');
+      // console.log('[UsersPage] loading users & roles...');
       loadUsers401RetryRef.current = false;
       loadUsers();
       loadRoles();
@@ -377,16 +295,16 @@ export default function UsuariosPage() {
   }, [permissionsLoading, orgId, loadUsers, loadRoles, loadCountriesAndWarehouses, loadProviders]);
 
   useEffect(() => {
-    console.log('[UsersPage] button permissions (final render)', {
-      canCreate,
-      canEdit,
-      canDelete,
-      canAssign,
-      willShowCreateButton: canCreate,
-      willShowEditButtons: canEdit,
-      willShowDeleteButtons: canDelete,
-      willShowAssignRole: canAssign
-    });
+    // console.log('[UsersPage] button permissions (final render)', {
+    //   canCreate,
+    //   canEdit,
+    //   canDelete,
+    //   canAssign,
+    //   willShowCreateButton: canCreate,
+    //   willShowEditButtons: canEdit,
+    //   willShowDeleteButtons: canDelete,
+    //   willShowAssignRole: canAssign
+    // });
   }, [canCreate, canEdit, canDelete, canAssign]);
 
   // ✅ NUEVO: Estado para manejar el userId recién creado
@@ -401,8 +319,6 @@ export default function UsuariosPage() {
       const phoneE164 = formData.phone_e164?.trim() || null;
 
       if (editingUser) {
-        console.log('[UsersPage] 🔄 Updating user via admin-users function');
-
         const { data, error } = await supabase.functions.invoke('admin-users', {
           body: {
             debug: true,
@@ -422,7 +338,7 @@ export default function UsuariosPage() {
           throw new Error((error as any).message || 'Error al actualizar usuario');
         }
 
-        console.log('[UsersPage] ✅ User updated successfully', { ok: !!data });
+        // console.log('[UsersPage] ✅ User updated successfully', { ok: !!data });
 
         // ✅ Sincronizar países, almacenes y proveedores al actualizar
         if (canAssignAccess && orgId) {
@@ -448,7 +364,7 @@ export default function UsuariosPage() {
 
           // ✅ NUEVO: Guardar proveedores
           await userProvidersService.setUserProviders(orgId, editingUser.id, selectedProviderIds);
-          console.log('[UsersPage] ✅ User providers saved');
+          // console.log('[UsersPage] ✅ User providers saved');
         }
 
         setShowModal(false);
@@ -473,8 +389,6 @@ export default function UsuariosPage() {
           onConfirm: () => setPopup(prev => ({ ...prev, isOpen: false }))
         });
       } else {
-        console.log('[UsersPage] ➕ Creating user via admin-users function');
-
         const { data, error } = await supabase.functions.invoke('admin-users', {
           body: {
             action: 'create',
@@ -491,25 +405,22 @@ export default function UsuariosPage() {
         const msg = String((error as any)?.message ?? 'Error al crear usuario');
         const ctx = (error as any)?.context;
 
-        // Intentar leer body real del edge function (cuando supabase lo trae como Response)
         let raw = '';
         try {
           if (ctx && typeof ctx.text === 'function') raw = await ctx.text();
         } catch (parseError) {
-          console.warn('[UsersPage] No se pudo leer el contexto del error:', parseError);
+          // ignore
         }
 
-        // Intentar parsear JSON del server
         let server: any = null;
         try {
           if (raw) server = JSON.parse(raw);
         } catch (jsonError) {
-          console.warn('[UsersPage] No se pudo parsear JSON del error:', jsonError);
+          // ignore
         }
 
         console.error('[UsersPage] ❌ Error response (create):', { msg, raw, server });
 
-        // Caso duplicado (tu edge function responde 409 con error=DUPLICATE_EMAIL o EMAIL_CONFLICT_IN_PROFILES)
         const serverCode = server?.error;
         if (serverCode === 'DUPLICATE_EMAIL') {
           setPopup({
@@ -537,7 +448,7 @@ export default function UsuariosPage() {
         throw new Error(server?.details || msg);
       }
 
-        console.log('[UsersPage] ✅ User created successfully', { ok: !!data });
+        // console.log('[UsersPage] ✅ User created successfully', { ok: !!data });
 
         // ✅ FIX: la edge function devuelve userId y user_id (compat). NO devuelve data.user.id.
         const createdUserId =
@@ -552,19 +463,13 @@ export default function UsuariosPage() {
           throw new Error('No se pudo obtener el ID del usuario (respuesta sin userId).');
         }
 
-        console.log('[UsersPage] 📝 Usuario creado con ID:', createdUserId, {
-          alreadyExisted: (data as any)?.alreadyExisted,
-          createdNew: (data as any)?.createdNew,
-        });
-
-
-        console.log('[UsersPage] 📝 Usuario creado con ID:', createdUserId);
+        // console.log('[UsersPage] 📝 Usuario creado con ID:', createdUserId);
 
         // ✅ NUEVO: Asignar países, almacenes y proveedores si se seleccionaron
         if (canAssignAccess && orgId) {
           // Guardar países si hay seleccionados
           if (selectedCountryIds.length > 0) {
-            console.log('[UsersPage] 🌍 Asignando países al nuevo usuario...');
+            // console.log('[UsersPage] 🌍 Asignando países al nuevo usuario...');
             await userAccessService.setCountries({
               orgId,
               targetUserId: createdUserId,
@@ -574,7 +479,7 @@ export default function UsuariosPage() {
 
           // Guardar almacenes si hay restricción activa
           if (restrictedByWarehouse && selectedWarehouseIds.length > 0) {
-            console.log('[UsersPage] 🏢 Asignando almacenes al nuevo usuario...');
+            // console.log('[UsersPage] 🏢 Asignando almacenes al nuevo usuario...');
             await userAccessService.setWarehouses({
               orgId,
               targetUserId: createdUserId,
@@ -593,7 +498,7 @@ export default function UsuariosPage() {
 
           // ✅ NUEVO: Guardar proveedores si hay seleccionados
           if (selectedProviderIds.length > 0) {
-            console.log('[UsersPage] 🚚 Asignando proveedores al nuevo usuario...');
+            // console.log('[UsersPage] 🚚 Asignando proveedores al nuevo usuario...');
             await userProvidersService.setUserProviders(orgId, createdUserId, selectedProviderIds);
           }
         }
@@ -621,12 +526,11 @@ export default function UsuariosPage() {
         });
       }
     } catch (error: any) {
-      console.error('[UsersPage] ❌ Error saving user:', error);
       setPopup({
         isOpen: true,
         type: 'error',
         title: 'Error',
-        message: error?.message || 'Error al guardar el usuario',
+        message: error?.message || 'Error al guardar usuario',
         showCancel: false,
         onConfirm: () => setPopup(prev => ({ ...prev, isOpen: false }))
       });
@@ -634,7 +538,7 @@ export default function UsuariosPage() {
   };
 
   const handleEdit = async (user: User) => {
-    console.log('[UsersPage] 🔄 Opening edit modal for user:', { userId: user.id, email: user.email });
+    // console.log('[UsersPage] 🔄 Opening edit modal for user:', { userId: user.id, email: user.email });
     
     setEditingUser(user);
     setFormData({
@@ -669,7 +573,7 @@ export default function UsuariosPage() {
     setDeleteConfirm({ isOpen: false, userId: '', userName: '' });
 
     try {
-      console.log('[UsersPage] 🗑️ Deleting user via admin-users function');
+      // console.log('[UsersPage] 🗑️ Deleting user via admin-users function');
 
       await ensureSession();
 
@@ -686,7 +590,7 @@ export default function UsuariosPage() {
         throw new Error((error as any).message || 'Error al eliminar usuario');
       }
 
-      console.log('[UsersPage] ✅ User deleted successfully', { ok: !!data });
+      // console.log('[UsersPage] ✅ User deleted successfully', { ok: !!data });
       loadUsers401RetryRef.current = false;
       loadUsers();
 
@@ -700,12 +604,11 @@ export default function UsuariosPage() {
         onConfirm: () => setPopup(prev => ({ ...prev, isOpen: false }))
       });
     } catch (error: any) {
-      console.error('[UsersPage] ❌ Error deleting user:', error);
       setPopup({
         isOpen: true,
         type: 'error',
         title: 'Error',
-        message: error?.message || 'Error al eliminar el usuario',
+        message: error?.message || 'Error al eliminar usuario',
         showCancel: false,
         onConfirm: () => setPopup(prev => ({ ...prev, isOpen: false }))
       });
@@ -739,18 +642,9 @@ export default function UsuariosPage() {
         showCancel: false,
         onConfirm: () => setPopup(prev => ({ ...prev, isOpen: false }))
       });
-      console.log('[UsersPage] ✅ Countries saved successfully');
-    } catch (error) {
-      console.error('[UsersPage] ❌ Error saving countries:', error);
-      setAccessError(error instanceof Error ? error.message : 'Error al guardar países');
-      setPopup({
-        isOpen: true,
-        type: 'error',
-        title: 'Error',
-        message: error instanceof Error ? error.message : 'Error al guardar países',
-        showCancel: false,
-        onConfirm: () => setPopup(prev => ({ ...prev, isOpen: false }))
-      });
+      // console.log('[UsersPage] ✅ Countries saved successfully');
+    } catch (error: any) {
+      setAccessError(error?.message || 'Error al guardar países');
     } finally {
       setAccessLoading(false);
     }
@@ -765,12 +659,12 @@ export default function UsuariosPage() {
     try {
       await ensureSession();
 
-      console.log('[UsersPage] sending set_warehouses', {
-        orgId,
-        targetUserId: editingUser.id,
-        restricted: restrictedByWarehouse,
-        warehouseIds: restrictedByWarehouse ? selectedWarehouseIds : [],
-      });
+      // console.log('[UsersPage] sending set_warehouses', {
+      //   orgId,
+      //   targetUserId: editingUser.id,
+      //   restricted: restrictedByWarehouse,
+      //   warehouseIds: restrictedByWarehouse ? selectedWarehouseIds : [],
+      // });
 
       await userAccessService.setWarehouses({
         orgId,
@@ -788,18 +682,9 @@ export default function UsuariosPage() {
         showCancel: false,
         onConfirm: () => setPopup(prev => ({ ...prev, isOpen: false }))
       });
-      console.log('[UsersPage] ✅ Warehouses saved successfully');
-    } catch (error) {
-      console.error('[UsersPage] ❌ Error saving warehouses:', error);
-      setAccessError(error instanceof Error ? error.message : 'Error al guardar almacenes');
-      setPopup({
-        isOpen: true,
-        type: 'error',
-        title: 'Error',
-        message: error instanceof Error ? error.message : 'Error al guardar almacenes',
-        showCancel: false,
-        onConfirm: () => setPopup(prev => ({ ...prev, isOpen: false }))
-      });
+      // console.log('[UsersPage] ✅ Warehouses saved successfully');
+    } catch (error: any) {
+      setAccessError(error?.message || 'Error al guardar almacenes');
     } finally {
       setAccessLoading(false);
     }
@@ -842,7 +727,7 @@ export default function UsuariosPage() {
           warehouseIds: []
         });
 
-        console.log('[UsersPage] ✅ Warehouse restriction removed');
+        // console.log('[UsersPage] ✅ Warehouse restriction removed');
       } catch (error) {
         console.error('[UsersPage] ❌ Error removing restriction:', error);
         setAccessError(error instanceof Error ? error.message : 'Error al quitar restricción');
@@ -1418,8 +1303,8 @@ export default function UsuariosPage() {
                     setSelectedCountryIds([]);
                     setRestrictedByWarehouse(false);
                     setSelectedWarehouseIds([]);
-                    setSelectedProviderIds([]);
-                    setProviderSearchTerm('');
+                    setSelectedProviderIds([]); // ✅ NUEVO
+                    setProviderSearchTerm(''); // ✅ NUEVO
                     setNewlyCreatedUserId(null);
                   }}
                   className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors whitespace-nowrap"

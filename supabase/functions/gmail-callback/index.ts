@@ -3,7 +3,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const VERSION = "2026-02-06 CALLBACK-GMAIL-PROFILE-REQUIRED";
 
-console.log(`[gmail-callback] VERSION ${VERSION}`);
+//console.log(`[gmail-callback] VERSION ${VERSION}`);
 
 serve(async (req) => {
   const reqId = crypto.randomUUID();
@@ -15,14 +15,14 @@ serve(async (req) => {
     const stateParam = url.searchParams.get("state");
     const error = url.searchParams.get("error");
 
-    console.log("[gmail-callback][INIT]", {
+    /**console.log("[gmail-callback][INIT]", {
       reqId,
       hasCode: !!code,
       codePrefix: code ? code.slice(0, 12) : null,
       hasState: !!stateParam,
       error: error ?? null,
       timestamp: new Date().toISOString(),
-    });
+    });*/
 
     if (error) {
       console.error("[gmail-callback][OAUTH_ERROR]", { reqId, error });
@@ -37,12 +37,12 @@ serve(async (req) => {
     let state: { orgId: string; userId: string; redirectUrl: string };
     try {
       state = JSON.parse(atob(stateParam));
-      console.log("[gmail-callback][STATE_DECODED]", {
+      /**console.log("[gmail-callback][STATE_DECODED]", {
         reqId,
         orgId: state.orgId,
         userId: state.userId,
         redirectUrlPrefix: state.redirectUrl.slice(0, 50),
-      });
+      });*/
     } catch (e) {
       console.error("[gmail-callback][STATE_DECODE_ERROR]", { reqId, error: String(e) });
       return new Response("Invalid state parameter", { status: 400 });
@@ -53,14 +53,14 @@ serve(async (req) => {
     const clientId = Deno.env.get("GMAIL_CLIENT_ID") ?? "";
     const clientSecret = Deno.env.get("GMAIL_CLIENT_SECRET") ?? "";
 
-    console.log("[gmail-callback][ENV_CHECK]", {
+    /**console.log("[gmail-callback][ENV_CHECK]", {
       reqId,
       hasSupabaseUrl: !!supabaseUrl,
       hasServiceRoleKey: !!serviceRoleKey,
       hasClientId: !!clientId,
       clientIdPrefix: clientId ? clientId.slice(0, 12) : null,
       hasClientSecret: !!clientSecret,
-    });
+    });*/
 
     if (!supabaseUrl || !serviceRoleKey || !clientId || !clientSecret) {
       console.error("[gmail-callback][MISSING_ENV]", { reqId });
@@ -69,11 +69,11 @@ serve(async (req) => {
 
     const callbackUrl = `${supabaseUrl}/functions/v1/gmail-callback`;
 
-    console.log("[gmail-callback][TOKEN_EXCHANGE_START]", {
+    /**console.log("[gmail-callback][TOKEN_EXCHANGE_START]", {
       reqId,
       callbackUrl,
       timestamp: new Date().toISOString(),
-    });
+    });*/
 
     const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
       method: "POST",
@@ -102,7 +102,7 @@ serve(async (req) => {
 
     const tokens = await tokenRes.json();
 
-    console.log("[gmail-callback][TOKEN_EXCHANGE_SUCCESS]", {
+    /**console.log("[gmail-callback][TOKEN_EXCHANGE_SUCCESS]", {
       reqId,
       hasAccessToken: !!tokens.access_token,
       accessTokenPrefix: tokens.access_token ? tokens.access_token.slice(0, 12) : null,
@@ -111,7 +111,7 @@ serve(async (req) => {
       expiresIn: tokens.expires_in,
       tokenType: tokens.token_type,
       scope: tokens.scope,
-    });
+    });*/
 
     if (!tokens.refresh_token) {
       console.warn("[gmail-callback][NO_REFRESH_TOKEN]", {
@@ -122,7 +122,7 @@ serve(async (req) => {
       });
     }
 
-    console.log("[gmail-callback][GMAIL_PROFILE_FETCH_START]", { reqId });
+    //console.log("[gmail-callback][GMAIL_PROFILE_FETCH_START]", { reqId });
 
     const profileRes = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/profile", {
       headers: { Authorization: `Bearer ${tokens.access_token}` },
@@ -159,26 +159,26 @@ serve(async (req) => {
       return new Response("Gmail profile does not contain emailAddress. Cannot proceed.", { status: 500 });
     }
 
-    console.log("[gmail-callback][GMAIL_PROFILE_SUCCESS]", {
+    /**console.log("[gmail-callback][GMAIL_PROFILE_SUCCESS]", {
       reqId,
       gmailEmail,
       messagesTotal: profile.messagesTotal ?? null,
       threadsTotal: profile.threadsTotal ?? null,
       historyId: profile.historyId ?? null,
-    });
+    });*/
 
     const supabase = createClient(supabaseUrl, serviceRoleKey);
 
     const expiresAt = new Date(Date.now() + (tokens.expires_in ?? 3600) * 1000).toISOString();
 
-    console.log("[gmail-callback][DB_UPSERT_START]", {
+    /**console.log("[gmail-callback][DB_UPSERT_START]", {
       reqId,
       orgId: state.orgId,
       userId: state.userId,
       gmailEmail,
       expiresAt,
       hasRefreshToken: !!tokens.refresh_token,
-    });
+    });*/
 
     const { data: existing } = await supabase
       .from("gmail_accounts")
@@ -199,7 +199,7 @@ serve(async (req) => {
 
     let dbResult;
     if (existing) {
-      console.log("[gmail-callback][DB_UPDATE]", { reqId, existingId: existing.id });
+      //console.log("[gmail-callback][DB_UPDATE]", { reqId, existingId: existing.id });
       dbResult = await supabase
         .from("gmail_accounts")
         .update(upsertData)
@@ -207,7 +207,7 @@ serve(async (req) => {
         .select()
         .single();
     } else {
-      console.log("[gmail-callback][DB_INSERT]", { reqId });
+      //console.log("[gmail-callback][DB_INSERT]", { reqId });
       dbResult = await supabase
         .from("gmail_accounts")
         .insert({
@@ -231,20 +231,20 @@ serve(async (req) => {
       return new Response(`Database error: ${dbResult.error.message}`, { status: 500 });
     }
 
-    console.log("[gmail-callback][DB_SUCCESS]", {
+    /**console.log("[gmail-callback][DB_SUCCESS]", {
       reqId,
       accountId: dbResult.data.id,
       status: dbResult.data.status,
       gmailEmail: dbResult.data.gmail_email,
       expiresAt: dbResult.data.expires_at,
       hasRefreshTokenPersisted: !!dbResult.data.refresh_token,
-    });
+    });*/
 
-    console.log("[gmail-callback][DONE]", {
+    /**console.log("[gmail-callback][DONE]", {
       reqId,
       durationMs: Date.now() - startedAt,
       redirectUrl: state.redirectUrl,
-    });
+    });*/
 
     const redirectUrl = new URL(state.redirectUrl);
     redirectUrl.searchParams.set("gmail_connected", "true");

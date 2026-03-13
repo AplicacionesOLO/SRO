@@ -11,6 +11,7 @@ import MatrizPermisos from "../pages/admin/matriz-permisos/page";
 import AccessPending from "../pages/access-pending/page";
 import { lazy } from "react";
 import RequirePermission from "./RequirePermission";
+import ProtectedRoute from "./ProtectedRoute";
 
 const AdminPage = lazy(() => import('../pages/admin/page'));
 const MatrizPermisosPage = lazy(() => import('../pages/admin/matriz-permisos/page'));
@@ -26,99 +27,156 @@ const CasetillaPage = lazy(() => import('../pages/casetilla/page'));
 const PerfilPage = lazy(() => import('../pages/perfil/page'));
 
 const routes: RouteObject[] = [
-  { path: '/', element: <Navigate to="/calendario" replace /> },
+  { 
+    path: '/', 
+    element: (
+      <ProtectedRoute>
+        <Navigate to="/calendario" replace />
+      </ProtectedRoute>
+    )
+  },
   { 
     path: '/dashboard', 
     element: (
-      <RequirePermission permission="menu.dashboard.view" fallbackPath="/calendario">
-        <Dashboard />
-      </RequirePermission>
+      <ProtectedRoute>
+        <RequirePermission permission="menu.dashboard.view" fallbackPath="/calendario">
+          <Dashboard />
+        </RequirePermission>
+      </ProtectedRoute>
     )
   },
-  { path: '/calendario', element: <Calendario /> },
-  { path: '/reservas', element: <Reservas /> },
-  { path: '/andenes', element: <Andenes /> },
+  { 
+    path: '/calendario', 
+    element: (
+      <ProtectedRoute>
+        <Calendario />
+      </ProtectedRoute>
+    )
+  },
+  { 
+    path: '/reservas', 
+    element: (
+      <ProtectedRoute>
+        <Reservas />
+      </ProtectedRoute>
+    )
+  },
+  { 
+    path: '/andenes', 
+    element: (
+      <ProtectedRoute>
+        <Andenes />
+      </ProtectedRoute>
+    )
+  },
   { 
     path: '/manpower', 
     element: (
-      <RequirePermission permission="manpower.view">
-        <ManpowerPage />
-      </RequirePermission>
+      <ProtectedRoute>
+        <RequirePermission permission="manpower.view">
+          <ManpowerPage />
+        </RequirePermission>
+      </ProtectedRoute>
     )
   },
   { 
     path: '/casetilla', 
     element: (
-      <RequirePermission permission="casetilla.view">
-        <CasetillaPage />
-      </RequirePermission>
+      <ProtectedRoute>
+        <RequirePermission permission="casetilla.view">
+          <CasetillaPage />
+        </RequirePermission>
+      </ProtectedRoute>
     )
   },
   { 
     path: '/admin', 
     element: (
-      <RequirePermission requireAnyAdmin>
-        <AdminPage />
-      </RequirePermission>
+      <ProtectedRoute>
+        <RequirePermission requireAnyAdmin>
+          <AdminPage />
+        </RequirePermission>
+      </ProtectedRoute>
     )
   },
   { 
     path: '/admin/matriz-permisos', 
     element: (
-      <RequirePermission permission="admin.matrix.view">
-        <MatrizPermisosPage />
-      </RequirePermission>
+      <ProtectedRoute>
+        <RequirePermission permission="admin.matrix.view">
+          <MatrizPermisosPage />
+        </RequirePermission>
+      </ProtectedRoute>
     )
   },
   { 
     path: '/admin/usuarios', 
     element: (
-      <RequirePermission permission="admin.users.view">
-        <UsuariosPage />
-      </RequirePermission>
+      <ProtectedRoute>
+        <RequirePermission permission="admin.users.view">
+          <UsuariosPage />
+        </RequirePermission>
+      </ProtectedRoute>
     )
   },
   { 
     path: '/admin/roles', 
     element: (
-      <RequirePermission permission="admin.roles.view">
-        <RolesPage />
-      </RequirePermission>
+      <ProtectedRoute>
+        <RequirePermission permission="admin.roles.view">
+          <RolesPage />
+        </RequirePermission>
+      </ProtectedRoute>
     )
   },
   { 
     path: '/admin/catalogos', 
     element: (
-      <RequirePermission requireAnyAdmin>
-        <CatalogosPage />
-      </RequirePermission>
+      <ProtectedRoute>
+        <RequirePermission requireAnyAdmin>
+          <CatalogosPage />
+        </RequirePermission>
+      </ProtectedRoute>
     )
   },
   { 
     path: '/admin/almacenes', 
     element: (
-      <RequirePermission permission="warehouses.view">
-        <AlmacenesPage />
-      </RequirePermission>
+      <ProtectedRoute>
+        <RequirePermission permission="warehouses.view">
+          <AlmacenesPage />
+        </RequirePermission>
+      </ProtectedRoute>
     )
   },
   { 
     path: '/admin/clientes', 
     element: (
-      <RequirePermission permission="admin.clients.view">
-        <ClientesPage />
-      </RequirePermission>
+      <ProtectedRoute>
+        <RequirePermission permission="admin.clients.view">
+          <ClientesPage />
+        </RequirePermission>
+      </ProtectedRoute>
     )
   },
   { 
     path: '/admin/correspondencia', 
     element: (
-      <RequirePermission permission="correspondence.view">
-        <CorrespondenciaPage />
-      </RequirePermission>
+      <ProtectedRoute>
+        <RequirePermission permission="correspondence.view">
+          <CorrespondenciaPage />
+        </RequirePermission>
+      </ProtectedRoute>
     )
   },
-  { path: '/perfil', element: <PerfilPage /> },
+  { 
+    path: '/perfil', 
+    element: (
+      <ProtectedRoute>
+        <PerfilPage />
+      </ProtectedRoute>
+    )
+  },
   { path: '/access-pending', element: <AccessPending /> },
   { path: '/login', element: <Login /> },
   { path: '*', element: <NotFound /> },

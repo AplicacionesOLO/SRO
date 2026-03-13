@@ -19,9 +19,8 @@ interface AuthContextType {
   logout: () => void;
   isAuthenticated: boolean;
   loading: boolean;
-  pendingAccess: boolean; // ✅ Nuevo: indica si el usuario está esperando asignación
-  // ✅ Nuevo: Sistema de caché de permisos
-  permissionsSet: Set<string> | null; // ✅ null = no cargado, Set = cargado
+  pendingAccess: boolean;
+  permissionsSet: Set<string> | null;
   permissionsLoading: boolean;
   canLocal: (permission: string) => boolean;
 }
@@ -32,37 +31,61 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [supabaseUser, setSupabaseUser] = useState<SupabaseUser | null>(null);
   const [loading, setLoading] = useState(true);
-  const [pendingAccess, setPendingAccess] = useState(false); // ✅ Nuevo
+  const [pendingAccess, setPendingAccess] = useState(false);
   
-  // ✅ Nuevo: Cache de permisos en memoria (null = no cargado)
   const [permissionsSet, setPermissionsSet] = useState<Set<string> | null>(null);
   const [permissionsLoading, setPermissionsLoading] = useState(true);
 
-  // ✅ Log de estado cuando cambia
-  useEffect(() => {
-    console.log('[AuthContext] state', {
-      userId: user?.id || null,
-      email: user?.email || null,
-      orgId: user?.orgId || null,
-      role: user?.role || null,
-      loading,
-      pendingAccess, // ✅ Nuevo log
-      permissionsLoading,
-      permsCount: permissionsSet?.size || 0,
-      permsIsNull: permissionsSet === null
+  // useEffect(() => {
+  //   console.log('[AuthContext] state', {
+  //     userId: user?.id || null,
+  //     email: user?.email || null,
+  //     orgId: user?.orgId || null,
+  //     role: user?.role || null,
+  //     loading,
+  //     pendingAccess,
+  //     permissionsLoading,
+  //     permsCount: permissionsSet?.size || 0,
+  //     permsIsNull: permissionsSet === null
+  //   });
+  // }, [user, loading, pendingAccess, permissionsLoading, permissionsSet]);
+
+  const clearCorruptedSession = async () => {
+    Object.keys(localStorage).forEach((key) => {
+      if (key.startsWith('sb-') || key.includes('supabase')) {
+        localStorage.removeItem(key);
+      }
     });
-  }, [user, loading, pendingAccess, permissionsLoading, permissionsSet]);
+    await supabase.auth.signOut();
+    setUser(null);
+    setSupabaseUser(null);
+    setPermissionsSet(null);
+    setPendingAccess(false);
+    setLoading(false);
+    setPermissionsLoading(false);
+  };
 
   useEffect(() => {
-    console.log('[AuthContext] init', { authLoading: loading });
+    // console.log('[AuthContext] init', { authLoading: loading });
     
-    // Verificar sesión actual
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      console.log('[AuthContext] getSession', { 
-        hasSession: !!session, 
-        userId: session?.user?.id || null,
-        email: session?.user?.email || null
-      });
+    supabase.auth.getSession().then(({ data: { session }, error }) => {
+      if (error) {
+        const msg = error.message || '';
+        if (
+          msg.includes('Refresh Token Not Found') ||
+          msg.includes('Invalid Refresh Token') ||
+          msg.includes('refresh_token_not_found')
+        ) {
+          clearCorruptedSession();
+          return;
+        }
+      }
+
+      // console.log('[AuthContext] getSession', { 
+      //   hasSession: !!session, 
+      //   userId: session?.user?.id || null,
+      //   email: session?.user?.email || null
+      // });
       
       if (session?.user) {
         setSupabaseUser(session.user);
@@ -74,13 +97,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
     });
 
-    // Escuchar cambios de autenticación
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      console.log('[AuthContext] onAuthStateChange', { 
-        event: _event,
-        hasSession: !!session,
-        userId: session?.user?.id || null 
-      });
+      // console.log('[AuthContext] onAuthStateChange', { 
+      //   event: _event,
+      //   hasSession: !!session,
+      //   userId: session?.user?.id || null 
+      // });
+
+      if (_event === 'TOKEN_REFRESHED' && !session) {
+        clearCorruptedSession();
+        return;
+      }
       
       if (session?.user) {
         setSupabaseUser(session.user);
@@ -88,39 +115,54 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       } else {
         setSupabaseUser(null);
         setUser(null);
-        setPermissionsSet(null); // ✅ null = no cargado
+        setPermissionsSet(null);
         setPendingAccess(false);
         setLoading(false);
         setPermissionsLoading(false);
       }
     });
 
-    return () => subscription.unsubscribe();
+    const handleUnhandledRejection = (event: PromiseRejectionEvent) => {
+      const msg = event?.reason?.message || '';
+      if (
+        msg.includes('Refresh Token Not Found') ||
+        msg.includes('Invalid Refresh Token') ||
+        msg.includes('refresh_token_not_found')
+      ) {
+        event.preventDefault();
+        clearCorruptedSession();
+      }
+    };
+
+    window.addEventListener('unhandledrejection', handleUnhandledRejection);
+
+    return () => {
+      subscription.unsubscribe();
+      window.removeEventListener('unhandledrejection', handleUnhandledRejection);
+    };
   }, []);
 
   const loadUserProfile = async (userId: string, userEmail: string) => {
     try {
-      console.log('[AuthContext] loadUserProfile start', { userId, userEmail });
+      // console.log('[AuthContext] loadUserProfile start', { userId, userEmail });
       setPermissionsLoading(true);
       
-      // 🔍 DIAGNÓSTICO: Probar RLS en user_org_roles
-      console.log('[AuthContext] RLS probe - user_org_roles');
+      // console.log('[AuthContext] RLS probe - user_org_roles');
       const { data: uorProbe, error: uorProbeErr } = await supabase
         .from('user_org_roles')
         .select('*')
         .limit(5);
       
-      console.log('[AuthContext] RLS probe result', {
-        uorDataLen: uorProbe?.length || 0,
-        uorErr: uorProbeErr ? {
-          code: uorProbeErr.code,
-          message: uorProbeErr.message,
-          details: uorProbeErr.details,
-          hint: uorProbeErr.hint
-        } : null
-      });
+      // console.log('[AuthContext] RLS probe result', {
+      //   uorDataLen: uorProbe?.length || 0,
+      //   uorErr: uorProbeErr ? {
+      //     code: uorProbeErr.code,
+      //     message: uorProbeErr.message,
+      //     details: uorProbeErr.details,
+      //     hint: uorProbeErr.hint
+      //   } : null
+      // });
       
-      // Obtener perfil y rol del usuario
       const { data: userOrgRole, error } = await supabase
         .from('user_org_roles')
         .select(`
@@ -134,58 +176,43 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         .eq('user_id', userId)
         .maybeSingle();
 
-      console.log('[AuthContext] user_org_roles query', {
-        hasData: !!userOrgRole,
-        orgId: userOrgRole?.org_id || null,
-        roleId: userOrgRole?.role_id || null,
-        roleName: (userOrgRole?.roles as any)?.name || null,
-        error: error ? {
-          code: error.code,
-          message: error.message,
-          details: error.details,
-          hint: error.hint
-        } : null
-      });
+      // console.log('[AuthContext] user_org_roles query', {
+      //   hasData: !!userOrgRole,
+      //   orgId: userOrgRole?.org_id || null,
+      //   roleId: userOrgRole?.role_id || null,
+      //   roleName: (userOrgRole?.roles as any)?.name || null,
+      //   error: error ? {
+      //     code: error.code,
+      //     message: error.message,
+      //     details: error.details,
+      //     hint: error.hint
+      //   } : null
+      // });
 
       if (error) {
-        console.error('[AuthContext] ERROR loading user profile:', {
-          code: error.code,
-          message: error.message,
-          details: error.details,
-          hint: error.hint
-        });
         setLoading(false);
         setPermissionsLoading(false);
         setPendingAccess(false);
         return;
       }
 
-      // ✅ Si el usuario no tiene rol asignado, marcar como pendingAccess
       if (!userOrgRole) {
-        console.warn('[AuthContext] Usuario sin rol asignado. Debe ser asignado a una organización.');
-        
-        // Crear perfil básico sin rol
         const { data: profile } = await supabase
           .from('profiles')
           .select('name, email')
           .eq('id', userId)
           .maybeSingle();
 
-        console.log('[AuthContext] profile without role', {
-          hasProfile: !!profile,
-          name: profile?.name || null
-        });
-
         setUser({
           id: userId,
           name: profile?.name || userEmail.split('@')[0] || 'Usuario',
           email: profile?.email || userEmail,
-          role: 'OPERADOR', // Rol por defecto temporal
+          role: 'OPERADOR',
           orgId: null
         });
         
-        setPermissionsSet(new Set()); // ✅ Set vacío = sin permisos
-        setPendingAccess(true); // ✅ Marcar como pendiente SOLO cuando loading terminó
+        setPermissionsSet(new Set());
+        setPendingAccess(true);
         setLoading(false);
         setPermissionsLoading(false);
         return;
@@ -194,19 +221,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (userOrgRole && userOrgRole.roles) {
         const roleName = (userOrgRole.roles as any)?.name || 'OPERADOR';
         
-        // Obtener perfil del usuario
         const { data: profile } = await supabase
           .from('profiles')
           .select('name, email')
           .eq('id', userId)
           .maybeSingle();
-
-        console.log('[AuthContext] setting user', {
-          userId,
-          roleName,
-          orgId: userOrgRole.org_id,
-          profileName: profile?.name || null
-        });
 
         setUser({
           id: userId,
@@ -216,14 +235,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           orgId: userOrgRole.org_id
         });
 
-        setPendingAccess(false); // ✅ Usuario tiene acceso completo
+        setPendingAccess(false);
         
-        // ✅ Cargar permisos del rol en paralelo
         await loadPermissions(userOrgRole.role_id, userOrgRole.org_id);
       }
     } catch (err) {
-      console.error('[AuthContext] Exception loading user profile:', err);
-      setPermissionsSet(new Set()); // ✅ Set vacío = sin permisos
+      setPermissionsSet(new Set());
       setPendingAccess(false);
     } finally {
       setLoading(false);
@@ -231,29 +248,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  // ✅ Nuevo: Cargar permisos una sola vez
   const loadPermissions = async (roleId: string, orgId: string) => {
     try {
-      console.log('[AuthContext] loadPermissions start', { roleId, orgId });
+      // console.log('[AuthContext] loadPermissions start', { roleId, orgId });
       
-      // 🔍 DIAGNÓSTICO: Probar RLS en role_permissions
-      console.log('[AuthContext] RLS probe - role_permissions');
+      // console.log('[AuthContext] RLS probe - role_permissions');
       const { data: rpProbe, error: rpProbeErr } = await supabase
         .from('role_permissions')
         .select('role_id, permission_id')
         .limit(5);
       
-      console.log('[AuthContext] RLS probe result', {
-        rpDataLen: rpProbe?.length || 0,
-        rpErr: rpProbeErr ? {
-          code: rpProbeErr.code,
-          message: rpProbeErr.message,
-          details: rpProbeErr.details,
-          hint: rpProbeErr.hint
-        } : null
-      });
+      // console.log('[AuthContext] RLS probe result', {
+      //   rpDataLen: rpProbe?.length || 0,
+      //   rpErr: rpProbeErr ? {
+      //     code: rpProbeErr.code,
+      //     message: rpProbeErr.message,
+      //     details: rpProbeErr.details,
+      //     hint: rpProbeErr.hint
+      //   } : null
+      // });
       
-      // Obtener permisos del rol mediante JOIN
       const { data: rolePermissions, error } = await supabase
         .from('role_permissions')
         .select(`
@@ -263,29 +277,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         `)
         .eq('role_id', roleId);
 
-      console.log('[AuthContext] role_permissions query', {
-        roleId,
-        count: rolePermissions?.length || 0,
-        error: error ? {
-          code: error.code,
-          message: error.message,
-          details: error.details,
-          hint: error.hint
-        } : null
-      });
+      // console.log('[AuthContext] role_permissions query', {
+      //   roleId,
+      //   count: rolePermissions?.length || 0,
+      //   error: error ? {
+      //     code: error.code,
+      //     message: error.message,
+      //     details: error.details,
+      //     hint: error.hint
+      //   } : null
+      // });
 
       if (error) {
-        console.error('[AuthContext] ERROR al cargar permisos:', {
-          code: error.code,
-          message: error.message,
-          details: error.details,
-          hint: error.hint
-        });
-        setPermissionsSet(new Set()); // ✅ Set vacío = sin permisos
+        setPermissionsSet(new Set());
         return;
       }
 
-      // Construir Set de permisos para lookup O(1)
       const permSet = new Set<string>();
       if (rolePermissions) {
         rolePermissions.forEach((rp: any) => {
@@ -295,37 +302,35 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         });
       }
 
-      const permArray = Array.from(permSet);
-      console.log('[AuthContext] permissions loaded', {
-        orgId,
-        count: permSet.size,
-        sampleFirst30: permArray.slice(0, 30),
-        has_admin_users_create: permSet.has('admin.users.create'),
-        has_admin_users_update: permSet.has('admin.users.update'),
-        has_admin_users_delete: permSet.has('admin.users.delete'),
-        has_admin_users_assign_roles: permSet.has('admin.users.assign_roles'),
-        has_admin_matrix_view: permSet.has('admin.matrix.view'),
-        has_admin_matrix_update: permSet.has('admin.matrix.update'),
-        has_users_create: permSet.has('users.create'),
-        has_users_update: permSet.has('users.update'),
-        has_users_delete: permSet.has('users.delete')
-      });
+      // const permArray = Array.from(permSet);
+      // console.log('[AuthContext] permissions loaded', {
+      //   orgId,
+      //   count: permSet.size,
+      //   sampleFirst30: permArray.slice(0, 30),
+      //   has_admin_users_create: permSet.has('admin.users.create'),
+      //   has_admin_users_update: permSet.has('admin.users.update'),
+      //   has_admin_users_delete: permSet.has('admin.users.delete'),
+      //   has_admin_users_assign_roles: permSet.has('admin.users.assign_roles'),
+      //   has_admin_matrix_view: permSet.has('admin.matrix.view'),
+      //   has_admin_matrix_update: permSet.has('admin.matrix.update'),
+      //   has_users_create: permSet.has('users.create'),
+      //   has_users_update: permSet.has('users.update'),
+      //   has_users_delete: permSet.has('users.delete')
+      // });
 
       setPermissionsSet(permSet);
     } catch (err) {
-      console.error('[AuthContext] Exception al cargar permisos:', err);
-      setPermissionsSet(new Set()); // ✅ Set vacío = sin permisos
+      setPermissionsSet(new Set());
     }
   };
 
-  // ✅ Nuevo: Verificación local de permisos (sin RPC)
   const canLocal = (permission: string): boolean => {
     if (permissionsSet === null) {
-      console.log('[AuthContext] canLocal - perms not loaded', { permission });
-      return false; // ✅ No cargado = sin permisos
+      // console.log('[AuthContext] canLocal - perms not loaded', { permission });
+      return false;
     }
     const result = permissionsSet.has(permission);
-    console.log('[AuthContext] canLocal', { permission, result, totalPerms: permissionsSet.size });
+    // console.log('[AuthContext] canLocal', { permission, result, totalPerms: permissionsSet.size });
     return result;
   };
 
@@ -341,7 +346,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       });
 
       if (error) {
-        console.error('Login error:', error);
         return false;
       }
 
@@ -353,7 +357,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       return false;
     } catch (err) {
-      console.error('Login error:', err);
       return false;
     } finally {
       setLoading(false);
@@ -365,7 +368,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await supabase.auth.signOut();
     setUser(null);
     setSupabaseUser(null);
-    setPermissionsSet(null); // ✅ null = no cargado
+    setPermissionsSet(null);
     setPendingAccess(false);
   };
 
@@ -377,8 +380,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       logout, 
       isAuthenticated: !!user,
       loading,
-      pendingAccess, // ✅ Exponer estado
-      // ✅ Exponer sistema de caché
+      pendingAccess,
       permissionsSet,
       permissionsLoading,
       canLocal

@@ -61,9 +61,8 @@ export default function CargoTypesTab({ orgId }: CargoTypesTabProps) {
       setError(null);
       const data = await cargoTypesService.getAll(orgId);
       setCargoTypes(data);
-    } catch (err) {
-      console.error('[CargoTypesTab] Error loading cargo types:', err);
-      setError('Error al cargar tipos de carga');
+    } catch (err: any) {
+      setError(err?.message || 'Error al cargar tipos de carga');
     } finally {
       setLoading(false);
     }
@@ -97,8 +96,8 @@ export default function CargoTypesTab({ orgId }: CargoTypesTabProps) {
     try {
       await cargoTypesService.deleteCargoType(cargoType.id);
       await loadCargoTypes();
-    } catch (err) {
-      console.error('[CargoTypesTab] Error deleting', err);
+    } catch (err: any) {
+      setError(err?.message || 'Error al eliminar');
       setConfirmModal({
         isOpen: true,
         type: 'error',

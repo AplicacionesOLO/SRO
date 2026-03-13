@@ -40,7 +40,7 @@ export default function PermissionsTab() {
       const data = await adminService.getPermissions();
       setPermissions(data);
     } catch (error) {
-      console.error('Error al cargar permisos:', error);
+      // console.error('Error al cargar permisos:', error);
     } finally {
       setLoading(false);
     }

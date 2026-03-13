@@ -86,25 +86,25 @@ export default function CorrespondenciaPage() {
   const loadRules = useCallback(async () => {
     // FIX: Solo cargar si orgId existe
     if (!orgId) {
-      console.log('[CorrespondenciaPage] loadRules - no orgId, skipping');
+      // console.log('[CorrespondenciaPage] loadRules - no orgId, skipping');
       setRules([]);
       setLoadingRules(false);
       return;
     }
     
-    console.log('[CorrespondenciaPage] loadRules start', { orgId });
+    // console.log('[CorrespondenciaPage] loadRules start', { orgId });
     setLoadingRules(true);
     
     try {
       const data = await correspondenceService.getRules(orgId);
-      console.log('[CorrespondenciaPage] loadRules success', { 
-        orgId, 
-        count: data.length,
-        rules: data.map(r => ({ id: r.id, name: r.name }))
-      });
+      // console.log('[CorrespondenciaPage] loadRules success', { 
+      //   orgId, 
+      //   count: data.length,
+      //   rules: data.map(r => ({ id: r.id, name: r.name }))
+      // });
       setRules(data);
     } catch (error) {
-      console.error('[CorrespondenciaPage] loadRules error', { orgId, error });
+      // console.error('[CorrespondenciaPage] loadRules error', { orgId, error });
       setRules([]);
     } finally {
       setLoadingRules(false);
@@ -130,7 +130,7 @@ export default function CorrespondenciaPage() {
       await loadRules();
       setIsModalOpen(false);
     } catch (error) {
-      console.error('Error al crear regla:', error);
+      // console.error('Error al crear regla:', error);
       throw error;
     }
   };
@@ -144,7 +144,7 @@ export default function CorrespondenciaPage() {
       setIsModalOpen(false);
       setSelectedRule(null);
     } catch (error) {
-      console.error('Error al actualizar regla:', error);
+      // console.error('Error al actualizar regla:', error);
       throw error;
     }
   };
@@ -154,7 +154,7 @@ export default function CorrespondenciaPage() {
       await correspondenceService.toggleRuleStatus(ruleId, !currentStatus);
       await loadRules();
     } catch (error) {
-      console.error('Error al cambiar estado de regla:', error);
+      // console.error('Error al cambiar estado de regla:', error);
       setPopup({
         isOpen: true,
         type: 'error',
@@ -187,7 +187,7 @@ export default function CorrespondenciaPage() {
         message: 'La regla de correspondencia se ha eliminado correctamente.'
       });
     } catch (error) {
-      console.error('Error al eliminar regla:', error);
+      // console.error('Error al eliminar regla:', error);
       setPopup({
         isOpen: true,
         type: 'error',

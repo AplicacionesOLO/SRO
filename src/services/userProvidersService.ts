@@ -13,8 +13,8 @@ export const userProvidersService = {
    * @returns Lista de proveedores activos asignados al usuario
    */
   async getUserProviders(orgId: string, userId: string): Promise<UserProvider[]> {
-    console.log('[userProvidersService] ========== FETCHING USER PROVIDERS ==========');
-    console.log('[userProvidersService] Query params:', { orgId, userId });
+    //console.log('[userProvidersService] ========== FETCHING USER PROVIDERS ==========');
+    //console.log('[userProvidersService] Query params:', { orgId, userId });
     
     const { data, error } = await supabase
       .from('user_providers')
@@ -30,21 +30,21 @@ export const userProvidersService = {
       .eq('user_id', userId);
 
     if (error) {
-      console.error('[userProvidersService] ❌ ERROR fetching user providers', { 
-        error, 
-        message: error.message, 
-        details: error.details, 
-        hint: error.hint,
-        code: error.code
-      });
+      // console.error('[userProvidersService] ❌ ERROR fetching user providers', { 
+      //   error, 
+      //   message: error.message, 
+      //   details: error.details, 
+      //   hint: error.hint,
+      //   code: error.code
+      // });
       throw error;
     }
 
-    console.log('[userProvidersService] ✅ Query successful');
-    console.log('[userProvidersService] Raw result:', { 
+    //console.log('[userProvidersService] ✅ Query successful');
+    /**console.log('[userProvidersService] Raw result:', { 
       count: data?.length || 0,
       firstRow: data && data.length > 0 ? data[0] : null
-    });
+    });*/
 
     // Filtrar solo proveedores activos y mapear a formato simple
     const activeProviders = data
@@ -54,11 +54,11 @@ export const userProvidersService = {
         name: up.providers.name
       })) || [];
 
-    console.log('[userProvidersService] Filtered active providers:', { 
+    /**console.log('[userProvidersService] Filtered active providers:', { 
       count: activeProviders.length,
       providers: activeProviders
-    });
-    console.log('[userProvidersService] ================================================');
+    });*/
+    //console.log('[userProvidersService] ================================================');
     
     return activeProviders;
   },
@@ -70,8 +70,8 @@ export const userProvidersService = {
    * @param providerIds - Array de IDs de proveedores a asignar
    */
   async setUserProviders(orgId: string, userId: string, providerIds: string[]): Promise<void> {
-    console.log('[userProvidersService] ========== SETTING USER PROVIDERS ==========');
-    console.log('[userProvidersService] Params:', { orgId, userId, providerIds });
+    //console.log('[userProvidersService] ========== SETTING USER PROVIDERS ==========');
+    //console.log('[userProvidersService] Params:', { orgId, userId, providerIds });
 
     // 1. Obtener proveedores actuales
     const { data: currentData, error: fetchError } = await supabase
@@ -81,18 +81,18 @@ export const userProvidersService = {
       .eq('user_id', userId);
 
     if (fetchError) {
-      console.error('[userProvidersService] ❌ ERROR fetching current providers', fetchError);
+      // console.error('[userProvidersService] ❌ ERROR fetching current providers', fetchError);
       throw fetchError;
     }
 
     const currentProviderIds = currentData?.map((up: any) => up.provider_id) || [];
-    console.log('[userProvidersService] Current providers:', currentProviderIds);
+    //console.log('[userProvidersService] Current providers:', currentProviderIds);
 
     // 2. Calcular diff
     const toInsert = providerIds.filter(id => !currentProviderIds.includes(id));
     const toDelete = currentProviderIds.filter(id => !providerIds.includes(id));
 
-    console.log('[userProvidersService] Diff:', { toInsert, toDelete });
+    //console.log('[userProvidersService] Diff:', { toInsert, toDelete });
 
     // 3. Eliminar proveedores removidos
     if (toDelete.length > 0) {
@@ -104,11 +104,11 @@ export const userProvidersService = {
         .in('provider_id', toDelete);
 
       if (deleteError) {
-        console.error('[userProvidersService] ❌ ERROR deleting providers', deleteError);
+        // console.error('[userProvidersService] ❌ ERROR deleting providers', deleteError);
         throw deleteError;
       }
 
-      console.log('[userProvidersService] ✅ Deleted providers:', toDelete.length);
+      //console.log('[userProvidersService] ✅ Deleted providers:', toDelete.length);
     }
 
     // 4. Insertar nuevos proveedores
@@ -124,14 +124,14 @@ export const userProvidersService = {
         .insert(insertData);
 
       if (insertError) {
-        console.error('[userProvidersService] ❌ ERROR inserting providers', insertError);
+        // console.error('[userProvidersService] ❌ ERROR inserting providers', insertError);
         throw insertError;
       }
 
-      console.log('[userProvidersService] ✅ Inserted providers:', toInsert.length);
+      //console.log('[userProvidersService] ✅ Inserted providers:', toInsert.length);
     }
 
-    console.log('[userProvidersService] ✅ User providers updated successfully');
-    console.log('[userProvidersService] ================================================');
+    //console.log('[userProvidersService] ✅ User providers updated successfully');
+    //console.log('[userProvidersService] ================================================');
   }
 };

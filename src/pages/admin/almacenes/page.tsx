@@ -56,12 +56,12 @@ export default function AlmacenesPage() {
   // Estado para eliminación pendiente
   const [pendingDeleteWarehouse, setPendingDeleteWarehouse] = useState<Warehouse | null>(null);
 
-  console.log('[AlmacenesPage] snapshot', {
-    orgId,
-    userId,
-    canView: can('warehouses.view'),
-    warehousesCount: warehouses.length,
-  });
+  // console.log('[AlmacenesPage] snapshot', {
+  //   orgId,
+  //   userId,
+  //   canView: can('warehouses.view'),
+  //   warehousesCount: warehouses.length,
+  // });
 
   const loadCountries = async () => {
     if (!orgId) return;
@@ -70,7 +70,7 @@ export default function AlmacenesPage() {
       const data = await countriesService.getAll(orgId);
       setCountries(data || []);
     } catch (e) {
-      console.error('[AlmacenesPage] loadCountries error', e);
+      // console.error('[AlmacenesPage] loadCountries error', e);
       setCountries([]);
     } finally {
       setLoadingCountries(false);
@@ -80,15 +80,15 @@ export default function AlmacenesPage() {
   const loadClients = async () => {
     if (!orgId) return;
     try {
-      console.log('[AlmacenesPage] 🔍 loadClients START', { orgId });
+      // console.log('[AlmacenesPage] 🔍 loadClients START', { orgId });
       const data = await clientsService.listClients(orgId);
-      console.log('[AlmacenesPage] ✅ loadClients SUCCESS', { 
-        count: data?.length || 0,
-        clients: data?.map(c => ({ id: c.id, name: c.name, is_active: c.is_active }))
-      });
+      // console.log('[AlmacenesPage] ✅ loadClients SUCCESS', { 
+      //   count: data?.length || 0,
+      //   clients: data?.map(c => ({ id: c.id, name: c.name, is_active: c.is_active }))
+      // });
       setClients(data || []);
     } catch (e) {
-      console.error('[AlmacenesPage] ❌ loadClients error', e);
+      // console.error('[AlmacenesPage] ❌ loadClients error', e);
       setClients([]);
     }
   };
@@ -100,13 +100,13 @@ export default function AlmacenesPage() {
       setLoading(true);
       setLoadError(null);
 
-      console.log('[AlmacenesPage] loadWarehouses request', { orgId });
+      // console.log('[AlmacenesPage] loadWarehouses request', { orgId });
       const data = await warehousesService.getWarehouses(orgId);
 
-      console.log('[AlmacenesPage] loadWarehouses success', { count: data.length });
+      // console.log('[AlmacenesPage] loadWarehouses success', { count: data.length });
       setWarehouses(data);
     } catch (error) {
-      console.error('[AlmacenesPage] loadWarehouses error', error);
+      // console.error('[AlmacenesPage] loadWarehouses error', error);
       const message = error instanceof Error ? error.message : 'Error al cargar almacenes';
       setLoadError(message);
     } finally {
@@ -116,11 +116,11 @@ export default function AlmacenesPage() {
 
   useEffect(() => {
     if (!permissionsLoading && orgId) {
-      console.log('[AlmacenesPage] 🚀 Initializing - loading data...', {
-        orgId,
-        userId,
-        permissionsLoaded: !permissionsLoading
-      });
+      // console.log('[AlmacenesPage] 🚀 Initializing - loading data...', {
+      //   orgId,
+      //   userId,
+      //   permissionsLoaded: !permissionsLoading
+      // });
       loadCountries();
       loadClients();
       loadWarehouses();
@@ -161,11 +161,11 @@ export default function AlmacenesPage() {
     setEditingWarehouse(null);
     setAssignedClientIds([]);
     
-    console.log('[AlmacenesPage] 🆕 handleCreate - Opening modal', {
-      clientsCount: clients.length,
-      activeClientsCount: clients.filter(c => c.is_active).length,
-      canManageClients: can('admin.warehouses.update') || can('warehouses.update') || can('admin.warehouses.clients.manage')
-    });
+    // console.log('[AlmacenesPage] 🆕 handleCreate - Opening modal', {
+    //   clientsCount: clients.length,
+    //   activeClientsCount: clients.filter(c => c.is_active).length,
+    //   canManageClients: can('admin.warehouses.update') || can('warehouses.update') || can('admin.warehouses.clients.manage')
+    // });
     
     setShowModal(true);
   };
@@ -182,25 +182,24 @@ export default function AlmacenesPage() {
       return;
     }
 
-    // Cargar clientes asignados
     try {
-      console.log('[AlmacenesPage] 📝 handleEdit - Loading warehouse clients', { warehouseId: warehouse.id });
+      // console.log('[AlmacenesPage] 📝 handleEdit - Loading warehouse clients', { warehouseId: warehouse.id });
       const clientIds = await warehousesService.getWarehouseClients(orgId!, warehouse.id);
-      console.log('[AlmacenesPage] ✅ Warehouse clients loaded', { count: clientIds.length, clientIds });
+      // console.log('[AlmacenesPage] ✅ Warehouse clients loaded', { count: clientIds.length, clientIds });
       setAssignedClientIds(clientIds);
     } catch (error) {
-      console.error('[AlmacenesPage] ❌ loadWarehouseClients error', error);
+      // console.error('[AlmacenesPage] ❌ loadWarehouseClients error', error);
       setAssignedClientIds([]);
     }
 
     setEditingWarehouse(warehouse);
     
-    console.log('[AlmacenesPage] 📝 handleEdit - Opening modal', {
-      warehouseName: warehouse.name,
-      clientsCount: clients.length,
-      assignedCount: assignedClientIds.length,
-      canManageClients: can('admin.warehouses.update') || can('warehouses.update') || can('admin.warehouses.clients.manage')
-    });
+    // console.log('[AlmacenesPage] 📝 handleEdit - Opening modal', {
+    //   warehouseName: warehouse.name,
+    //   clientsCount: clients.length,
+    //   assignedCount: assignedClientIds.length,
+    //   canManageClients: can('admin.warehouses.update') || can('warehouses.update') || can('admin.warehouses.clients.manage')
+    // });
     
     setShowModal(true);
   };
@@ -208,11 +207,11 @@ export default function AlmacenesPage() {
   const handleSave = async (formData: WarehouseFormData, clientIds: string[]) => {
     if (!orgId) throw new Error('No hay organización seleccionada');
 
-    console.log('[AlmacenesPage] 💾 handleSave', {
-      mode: editingWarehouse ? 'update' : 'create',
-      payload: formData,
-      clientIds,
-    });
+    // console.log('[AlmacenesPage] 💾 handleSave', {
+    //   mode: editingWarehouse ? 'update' : 'create',
+    //   payload: formData,
+    //   clientIds,
+    // });
 
     try {
       let warehouseId: string;
@@ -227,24 +226,22 @@ export default function AlmacenesPage() {
         setSuccessMessage('Almacén creado correctamente');
       }
 
-      // Guardar asignación de clientes (si tiene permiso)
-      // Fallback: usar warehouses.update o admin.warehouses.clients.manage si admin.warehouses.update no existe
       const canManageClients = can('admin.warehouses.update') || can('warehouses.update') || can('admin.warehouses.clients.manage');
-      console.log('[AlmacenesPage] 💾 Saving client assignments', { 
-        canManageClients, 
-        clientIdsCount: clientIds.length,
-        permissions: {
-          'admin.warehouses.update': can('admin.warehouses.update'),
-          'warehouses.update': can('warehouses.update'),
-          'admin.warehouses.clients.manage': can('admin.warehouses.clients.manage')
-        }
-      });
+      // console.log('[AlmacenesPage] 💾 Saving client assignments', { 
+      //   canManageClients, 
+      //   clientIdsCount: clientIds.length,
+      //   permissions: {
+      //     'admin.warehouses.update': can('admin.warehouses.update'),
+      //     'warehouses.update': can('warehouses.update'),
+      //     'admin.warehouses.clients.manage': can('admin.warehouses.clients.manage')
+      //   }
+      // });
       
       if (canManageClients) {
         await warehousesService.setWarehouseClients(orgId, warehouseId, clientIds);
-        console.log('[AlmacenesPage] ✅ Client assignments saved');
+        // console.log('[AlmacenesPage] ✅ Client assignments saved');
       } else {
-        console.warn('[AlmacenesPage] ⚠️ User cannot manage clients - skipping assignment');
+        // console.warn('[AlmacenesPage] ⚠️ User cannot manage clients - skipping assignment');
       }
 
       setShowModal(false);
@@ -254,7 +251,7 @@ export default function AlmacenesPage() {
 
       setTimeout(() => setSuccessMessage(null), 3000);
     } catch (error) {
-      console.error('[AlmacenesPage] handleSave error', error);
+      // console.error('[AlmacenesPage] handleSave error', error);
       throw error;
     }
   };
@@ -291,13 +288,13 @@ export default function AlmacenesPage() {
     setConfirmModal(prev => ({ ...prev, isOpen: false }));
     
     try {
-      console.log('[AlmacenesPage] delete request', { id: warehouse.id });
+      // console.log('[AlmacenesPage] delete request', { id: warehouse.id });
       await warehousesService.deleteWarehouse(warehouse.id, orgId!);
       setSuccessMessage('Almacén eliminado correctamente');
       await loadWarehouses();
       setTimeout(() => setSuccessMessage(null), 3000);
     } catch (error) {
-      console.error('[AlmacenesPage] delete error', error);
+      // console.error('[AlmacenesPage] delete error', error);
       const message = error instanceof Error ? error.message : 'Error al eliminar el almacén';
       setConfirmModal({
         isOpen: true,
@@ -350,14 +347,14 @@ export default function AlmacenesPage() {
   // Fallback: usar warehouses.update o admin.warehouses.clients.manage si admin.warehouses.update no existe
   const canManageClients = can('admin.warehouses.update') || can('warehouses.update') || can('admin.warehouses.clients.manage');
   
-  console.log('[AlmacenesPage] 🔐 Permissions check', {
-    'admin.warehouses.update': can('admin.warehouses.update'),
-    'warehouses.update': can('warehouses.update'),
-    'admin.warehouses.clients.manage': can('admin.warehouses.clients.manage'),
-    'canManageClients (final)': canManageClients,
-    'clients.length': clients.length,
-    'activeClients': clients.filter(c => c.is_active).length
-  });
+  // console.log('[AlmacenesPage] 🔐 Permissions check', {
+  //   'admin.warehouses.update': can('admin.warehouses.update'),
+  //   'warehouses.update': can('warehouses.update'),
+  //   'admin.warehouses.clients.manage': can('admin.warehouses.clients.manage'),
+  //   'canManageClients (final)': canManageClients,
+  //   'clients.length': clients.length,
+  //   'activeClients': clients.filter(c => c.is_active).length
+  // });
 
   return (
     <div className="p-6">

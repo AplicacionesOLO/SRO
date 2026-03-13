@@ -66,7 +66,7 @@ export default function ReservasPage() {
       setProviders(providersData);
 
     } catch (error: any) {
-      console.error('[Reservas] loadError', error);
+      // silenced
     } finally {
       setLoading(false);
     }
@@ -185,7 +185,6 @@ export default function ReservasPage() {
       await loadData();
       setDeleteModal({ isOpen: false, reservationId: null, reservationName: '' });
     } catch (error) {
-      console.error('[Reservas] deleteError', error);
       setDeleteModal({ isOpen: false, reservationId: null, reservationName: '' });
     }
   };

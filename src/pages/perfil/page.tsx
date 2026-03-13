@@ -1,4 +1,3 @@
-
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
@@ -21,7 +20,7 @@ interface ProfileData {
 }
 
 export default function PerfilPage() {
-  const { user, logout, loading: authLoading } = useAuth();
+  const { user, supabaseUser, logout, loading: authLoading } = useAuth();
   const { orgId } = usePermissions();
   const navigate = useNavigate();
 
@@ -43,20 +42,20 @@ export default function PerfilPage() {
 
   // Carga el perfil cuando el usuario y la organización están disponibles
   useEffect(() => {
-    if (user && orgId) {
+    if (user && supabaseUser && orgId) {
       loadProfile();
     }
-  }, [user, orgId]);
+  }, [user, supabaseUser, orgId]);
 
   const loadProfile = async () => {
-    if (!user || !orgId) return;
+    if (!user || !supabaseUser || !orgId) return;
     setLoading(true);
     try {
       // ---------- Perfil básico ----------
       const { data: profileData } = await supabase
         .from('profiles')
         .select('name, email, created_at, updated_at, country_id')
-        .eq('id', user.id)
+        .eq('id', supabaseUser.id)
         .maybeSingle();
 
       // ---------- Rol y organización ----------
@@ -67,7 +66,7 @@ export default function PerfilPage() {
           roles!user_org_roles_role_id_fkey ( name ),
           organizations!user_org_roles_org_id_fkey ( name )
         `)
-        .eq('user_id', user.id)
+        .eq('user_id', supabaseUser.id)
         .maybeSingle();
 
       // ---------- País ----------
@@ -86,7 +85,7 @@ export default function PerfilPage() {
         .from('user_providers')
         .select('provider_id, providers!user_providers_provider_id_fkey ( id, name )')
         .eq('org_id', orgId)
-        .eq('user_id', user.id);
+        .eq('user_id', supabaseUser.id);
 
       const providers = (userProviders || [])
         .map((up: any) => ({
@@ -95,19 +94,89 @@ export default function PerfilPage() {
         }))
         .filter(p => p.name !== 'Sin nombre');
 
-      // ---------- Almacenes ----------
-      const { data: userWarehouses } = await supabase
-        .from('user_warehouses')
-        .select('warehouse_id, warehouses!user_warehouses_warehouse_id_fkey ( id, name )')
-        .eq('org_id', orgId)
-        .eq('user_id', user.id);
+      // ---------- Almacenes (CORREGIDO) ----------
+      let warehouses: { id: string; name: string }[] = [];
 
-      const warehouses = (userWarehouses || [])
-        .map((uw: any) => ({
-          id: uw.warehouses?.id || uw.warehouse_id,
-          name: uw.warehouses?.name || 'Sin nombre',
-        }))
-        .filter(w => w.name !== 'Sin nombre');
+      // Paso 1: Verificar si el usuario tiene acceso a almacenes
+      const { data: warehouseAccess, error: accessError } = await supabase
+        .from('user_warehouse_access')
+        .select('warehouse_id, restricted')
+        .eq('org_id', orgId)
+        .eq('user_id', supabaseUser.id);
+
+      // Debug temporal (comentar después de verificar)
+      // console.log('[PerfilPage] Warehouse Access Query:', {
+      //   orgId,
+      //   userId: supabaseUser.id,
+      //   accessError,
+      //   accessData: warehouseAccess,
+      //   accessCount: warehouseAccess?.length || 0
+      // });
+
+      if (!accessError && warehouseAccess && warehouseAccess.length > 0) {
+        // Verificar si tiene acceso restringido o no
+        const isRestricted = warehouseAccess[0]?.restricted === true;
+
+        if (isRestricted) {
+          // Acceso restringido: obtener solo los almacenes específicos
+          const warehouseIds = warehouseAccess
+            .map((wa: any) => wa.warehouse_id)
+            .filter(Boolean);
+
+          // Debug temporal
+          // console.log('[PerfilPage] Restricted Access - Warehouse IDs:', warehouseIds);
+
+          if (warehouseIds.length > 0) {
+            const { data: warehouseData, error: whError } = await supabase
+              .from('warehouses')
+              .select('id, name')
+              .eq('org_id', orgId)
+              .in('id', warehouseIds)
+              .order('name', { ascending: true });
+
+            // Debug temporal
+            // console.log('[PerfilPage] Warehouses Query (Restricted):', {
+            //   whError,
+            //   warehouseData,
+            //   count: warehouseData?.length || 0
+            // });
+
+            if (!whError && warehouseData) {
+              warehouses = warehouseData.map((w: any) => ({
+                id: w.id,
+                name: w.name || 'Sin nombre',
+              }));
+            }
+          }
+        } else {
+          // Acceso NO restringido: obtener TODOS los almacenes de la org
+          const { data: allWarehouses, error: allWhError } = await supabase
+            .from('warehouses')
+            .select('id, name')
+            .eq('org_id', orgId)
+            .order('name', { ascending: true });
+
+          // Debug temporal
+          // console.log('[PerfilPage] Warehouses Query (Unrestricted):', {
+          //   allWhError,
+          //   allWarehouses,
+          //   count: allWarehouses?.length || 0
+          // });
+
+          if (!allWhError && allWarehouses) {
+            warehouses = allWarehouses.map((w: any) => ({
+              id: w.id,
+              name: w.name || 'Sin nombre',
+            }));
+          }
+        }
+      }
+
+      // Debug temporal - resultado final
+      // console.log('[PerfilPage] Final Warehouses:', {
+      //   count: warehouses.length,
+      //   warehouses: warehouses.map(w => ({ id: w.id, name: w.name }))
+      // });
 
       // ---------- Seteo del estado ----------
       setProfile({
@@ -122,7 +191,7 @@ export default function PerfilPage() {
         warehouses,
       });
     } catch (err) {
-      console.error('[PerfilPage] Error loading profile:', err);
+      // silenced
     } finally {
       setLoading(false);
     }

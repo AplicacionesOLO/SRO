@@ -60,9 +60,8 @@ export default function ClientModal({ isOpen, client, onClose, onSave }: ClientM
       setSaving(true);
       await onSave(formData);
       onClose();
-    } catch (err) {
-      console.error('[ClientModal] save error', err);
-      setError(err instanceof Error ? err.message : 'Error al guardar el cliente');
+    } catch (err: any) {
+      setError(err?.message || 'Error al guardar cliente');
     } finally {
       setSaving(false);
     }

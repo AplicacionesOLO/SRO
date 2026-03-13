@@ -48,11 +48,11 @@ export default function ClientesPage() {
     onConfirm: () => {}
   });
 
-  console.log('[ClientesPage] snapshot', {
-    orgId,
-    canView: can('admin.clients.view'),
-    clientsCount: clients.length
-  });
+  // console.log('[ClientesPage] snapshot', {
+  //   orgId,
+  //   canView: can('admin.clients.view'),
+  //   clientsCount: clients.length
+  // });
 
   const loadClients = async () => {
     if (!orgId) return;
@@ -61,13 +61,13 @@ export default function ClientesPage() {
       setLoading(true);
       setLoadError(null);
 
-      console.log('[ClientesPage] loadClients request', { orgId });
+      // console.log('[ClientesPage] loadClients request', { orgId });
       const data = await clientsService.listClients(orgId, searchTerm);
 
-      console.log('[ClientesPage] loadClients success', { count: data.length });
+      // console.log('[ClientesPage] loadClients success', { count: data.length });
       setClients(data);
     } catch (error) {
-      console.error('[ClientesPage] loadClients error', error);
+      // console.error('[ClientesPage] loadClients error', error);
       const message = error instanceof Error ? error.message : 'Error al cargar clientes';
       setLoadError(message);
     } finally {
@@ -77,7 +77,7 @@ export default function ClientesPage() {
 
   useEffect(() => {
     if (!permissionsLoading && orgId) {
-      console.log('[ClientesPage] loading clients...');
+      // console.log('[ClientesPage] loading clients...');
       loadClients();
     }
   }, [permissionsLoading, orgId]);
@@ -132,10 +132,10 @@ export default function ClientesPage() {
   const handleSave = async (formData: ClientFormData) => {
     if (!orgId) throw new Error('No hay organización seleccionada');
 
-    console.log('[ClientesPage] handleSave', {
-      mode: editingClient ? 'update' : 'create',
-      payload: formData
-    });
+    // console.log('[ClientesPage] handleSave', {
+    //   mode: editingClient ? 'update' : 'create',
+    //   payload: formData
+    // });
 
     try {
       if (editingClient) {
@@ -152,7 +152,7 @@ export default function ClientesPage() {
 
       setTimeout(() => setSuccessMessage(null), 3000);
     } catch (error) {
-      console.error('[ClientesPage] handleSave error', error);
+      // console.error('[ClientesPage] handleSave error', error);
       throw error;
     }
   };
@@ -186,13 +186,13 @@ export default function ClientesPage() {
     setConfirmModal((prev) => ({ ...prev, isOpen: false }));
 
     try {
-      console.log('[ClientesPage] disable request', { id: client.id });
+      // console.log('[ClientesPage] disable request', { id: client.id });
       await clientsService.disableClient(orgId!, client.id);
       setSuccessMessage('Cliente desactivado correctamente');
       await loadClients();
       setTimeout(() => setSuccessMessage(null), 3000);
     } catch (error) {
-      console.error('[ClientesPage] disable error', error);
+      // console.error('[ClientesPage] disable error', error);
       const message = error instanceof Error ? error.message : 'Error al desactivar el cliente';
       setConfirmModal({
         isOpen: true,
@@ -208,32 +208,27 @@ export default function ClientesPage() {
     if (!can('admin.clients.view')) return;
 
     try {
-      console.log('[ClientesPage] loading client detail', { clientId: client.id });
+      // console.log('[ClientesPage] loading client detail', { clientId: client.id });
 
-      // Cargar reglas
       const rules = await clientsService.getClientRules(orgId!, client.id);
       setSelectedClientRules(rules);
 
-      // Cargar andenes disponibles
       const docks = await clientsService.listDocks(orgId!);
       setAllDocks(docks);
 
-      // Cargar andenes del cliente
       const clientDockIds = await clientsService.getClientDocks(orgId!, client.id);
       setSelectedClientDockIds(clientDockIds);
 
-      // Cargar proveedores disponibles (solo activos)
       const providers = await providersService.getActive(orgId!);
       setAllProviders(providers);
 
-      // Cargar proveedores del cliente
       const clientProviders = await clientsService.getClientProviders(orgId!, client.id);
       setSelectedClientProviders(clientProviders);
 
       setSelectedClient(client);
       setShowDrawer(true);
     } catch (error) {
-      console.error('[ClientesPage] load detail error', error);
+      // console.error('[ClientesPage] load detail error', error);
       setConfirmModal({
         isOpen: true,
         type: 'error',

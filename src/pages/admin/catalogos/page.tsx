@@ -10,12 +10,12 @@ export default function CatalogosPage() {
   const [activeTab, setActiveTab] = useState<'providers' | 'cargo_types' | 'time_profiles'>('providers');
 
   useEffect(() => {
-    console.log('[CatalogosPage] mounted', {
-      orgId,
-      loading,
-      typeof_orgId: typeof orgId,
-      typeof_loading: typeof loading
-    });
+    // console.log('[CatalogosPage] mounted', {
+    //   orgId,
+    //   loading,
+    //   typeof_orgId: typeof orgId,
+    //   typeof_loading: typeof loading
+    // });
   }, [orgId, loading]);
 
   // ✅ Guard 1: Verificar loading

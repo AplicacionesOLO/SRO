@@ -120,8 +120,7 @@ export default function ReservationModal({
         try {
           userProviders = await userProvidersService.getUserProviders(orgId, user.id);
         } catch (error: any) {
-          console.error('[ReservationModal] Error loading user providers', error);
-          setProvidersError('Error al cargar proveedores asignados');
+          console.error('Error al cargar proveedores del usuario:', error);
         }
       }
 
@@ -135,7 +134,7 @@ export default function ReservationModal({
       setProviders(providersData);
       setCargoTypes(cargoTypesData);
     } catch (error) {
-      console.error('[ReservationModal] Error loading catalogs', error);
+      console.error('Error al cargar catálogos:', error);
     } finally {
       setLoadingProviders(false);
     }
@@ -176,8 +175,7 @@ export default function ReservationModal({
 
         setFiles(mapped);
       } catch (e) {
-        console.error('[ReservationModal] loadReservationFiles error', e);
-        setFiles([]);
+        // non-blocking file load
       }
     };
 
@@ -304,9 +302,13 @@ export default function ReservationModal({
       } else {
         setSuggestedMinutes(null);
       }
-    } catch (error) {
-      console.error('[ReservationModal] Error fetching time profile', error);
-      setSuggestedMinutes(null);
+    } catch (error: any) {
+      setNotifyModal({
+        isOpen: true,
+        type: 'error',
+        title: 'Error al cargar',
+        message: 'Error al cargar perfil de tiempo',
+      });
     }
   };
 
@@ -480,31 +482,12 @@ export default function ReservationModal({
 
       onSave();
     } catch (error: any) {
-      console.error('[Reservation] saveError', {
-        code: error.code,
-        message: error.message,
-        details: error.details,
-        hint: error.hint,
-        payload
+      setNotifyModal({
+        isOpen: true,
+        type: 'error',
+        title: 'Error al guardar',
+        message: error?.message || 'Error al guardar reserva',
       });
-
-      const errCode = error.code || '';
-      const errMsg = error.message?.toLowerCase() || '';
-      if (errCode === 'PGRST116' || errMsg.includes('0 rows') || errMsg.includes('pgrst116')) {
-        setNotifyModal({
-          isOpen: true,
-          type: 'error',
-          title: 'Sin permisos para editar',
-          message: 'No tenés permisos para modificar esta reserva (RLS). Solo el creador o un usuario Admin/Full Access puede editarla.'
-        });
-      } else {
-        setNotifyModal({
-          isOpen: true,
-          type: 'error',
-          title: 'Error al guardar',
-          message: error.message || 'Error al guardar la reserva'
-        });
-      }
     } finally {
       setSaving(false);
     }
@@ -539,17 +522,7 @@ export default function ReservationModal({
 
       window.open(signedUrl, '_blank', 'noopener,noreferrer');
     } catch (e: any) {
-      console.error('[ReservationModal] openFile error', e);
-      const msg = e?.message || 'Error al abrir el archivo';
-      setOpenFileError(msg);
-      setNotifyModal({
-        isOpen: true,
-        type: 'error',
-        title: 'Error al abrir archivo',
-        message: msg
-      });
-    } finally {
-      setOpeningFileId(null);
+      // non-blocking file open
     }
   };
 

@@ -11,8 +11,8 @@ interface CargoTypeModalProps {
 
 export default function CargoTypeModal({ orgId, cargoType, onClose, onSave }: CargoTypeModalProps) {
   // Log del service al cargar el componente
-  console.log('[CargoTypeModal] using service', cargoTypesService);
-  console.log('[CargoTypeModal] service methods', Object.keys(cargoTypesService));
+  //console.log('[CargoTypeModal] using service', cargoTypesService);
+  //console.log('[CargoTypeModal] service methods', Object.keys(cargoTypesService));
 
   const [name, setName] = useState('');
   const [defaultMinutes, setDefaultMinutes] = useState<string>('');
@@ -50,7 +50,7 @@ export default function CargoTypeModal({ orgId, cargoType, onClose, onSave }: Ca
 
       const minutes = defaultMinutes ? parseInt(defaultMinutes) : null;
 
-      console.log('[CargoTypeModal] Saving', { cargoType: !!cargoType, name, minutes, isDynamic, isActive });
+      //console.log('[CargoTypeModal] Saving', { cargoType: !!cargoType, name, minutes, isDynamic, isActive });
 
       if (cargoType) {
         await cargoTypesService.updateCargoType(cargoType.id, {
@@ -63,11 +63,10 @@ export default function CargoTypeModal({ orgId, cargoType, onClose, onSave }: Ca
         await cargoTypesService.createCargoType(orgId, name.trim(), minutes, isDynamic);
       }
 
-      console.log('[CargoTypeModal] Saved successfully');
+      //console.log('[CargoTypeModal] Saved successfully');
       onSave();
-    } catch (err) {
-      console.error('[CargoTypeModal] Error saving', err);
-      setError('Error al guardar tipo de carga');
+    } catch (err: any) {
+      setError(err?.message || 'Error al guardar');
     } finally {
       setSaving(false);
     }
