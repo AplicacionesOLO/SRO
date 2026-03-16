@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
+import * as XLSX from 'xlsx';
 import { usePermissions } from '../../hooks/usePermissions';
 import { calendarService, type Reservation } from '../../services/calendarService';
 import { providersService } from '../../services/providersService';
@@ -14,6 +15,7 @@ export default function ReservasPage() {
 
   const [searchTerm, setSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState<string>('all');
+  const [filterCancelled, setFilterCancelled] = useState<'all' | 'active' | 'cancelled'>('all');
   const [filterDateFrom, setFilterDateFrom] = useState('');
   const [filterDateTo, setFilterDateTo] = useState('');
   const [sortField, setSortField] = useState<'start_datetime' | 'created_at'>('start_datetime');
@@ -25,7 +27,6 @@ export default function ReservasPage() {
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 20;
 
-  // Modal de confirmación de eliminación
   const [deleteModal, setDeleteModal] = useState<{
     isOpen: boolean;
     reservationId: string | null;
@@ -47,14 +48,13 @@ export default function ReservasPage() {
     try {
       setLoading(true);
 
-      // Cargar últimos 3 meses de reservas
       const startDate = new Date();
       startDate.setMonth(startDate.getMonth() - 3);
       const endDate = new Date();
       endDate.setMonth(endDate.getMonth() + 3);
 
       const [reservationsData, docksData, statusesData, providersData] = await Promise.all([
-        calendarService.getReservations(orgId, startDate.toISOString(), endDate.toISOString()),
+        calendarService.getAllReservations(orgId, startDate.toISOString(), endDate.toISOString()),
         calendarService.getDocks(orgId),
         calendarService.getReservationStatuses(orgId),
         providersService.getActive(orgId),
@@ -83,7 +83,7 @@ export default function ReservasPage() {
     (value: string | null | undefined) => {
       if (!value) return '-';
       const p = providers.find((x: any) => x.id === value);
-      return p?.name || value; // si no coincide, lo deja tal cual (por si ya venía como nombre)
+      return p?.name || value;
     },
     [providers]
   );
@@ -91,7 +91,6 @@ export default function ReservasPage() {
   const filteredReservations = useMemo(() => {
     let filtered = [...reservations];
 
-    // Filtro de búsqueda
     if (searchTerm) {
       const term = searchTerm.toLowerCase();
       filtered = filtered.filter((r) =>
@@ -104,26 +103,28 @@ export default function ReservasPage() {
       );
     }
 
-    // Filtro de estado
     if (filterStatus !== 'all') {
       filtered = filtered.filter((r) => r.status_id === filterStatus);
     }
 
-    // Filtro de fecha desde
+    if (filterCancelled === 'active') {
+      filtered = filtered.filter((r) => !r.is_cancelled);
+    } else if (filterCancelled === 'cancelled') {
+      filtered = filtered.filter((r) => r.is_cancelled);
+    }
+
     if (filterDateFrom) {
       const fromDate = new Date(filterDateFrom);
       fromDate.setHours(0, 0, 0, 0);
       filtered = filtered.filter((r) => new Date(r.start_datetime) >= fromDate);
     }
 
-    // Filtro de fecha hasta
     if (filterDateTo) {
       const toDate = new Date(filterDateTo);
       toDate.setHours(23, 59, 59, 999);
       filtered = filtered.filter((r) => new Date(r.start_datetime) <= toDate);
     }
 
-    // Ordenamiento
     filtered.sort((a, b) => {
       const aValue = new Date(a[sortField]).getTime();
       const bValue = new Date(b[sortField]).getTime();
@@ -131,7 +132,7 @@ export default function ReservasPage() {
     });
 
     return filtered;
-  }, [reservations, searchTerm, filterStatus, filterDateFrom, filterDateTo, sortField, sortOrder]);
+  }, [reservations, searchTerm, filterStatus, filterCancelled, filterDateFrom, filterDateTo, sortField, sortOrder]);
 
   const paginatedReservations = useMemo(() => {
     const startIndex = (currentPage - 1) * itemsPerPage;
@@ -162,14 +163,9 @@ export default function ReservasPage() {
 
   const handleDelete = async (reservation: Reservation) => {
     if (!canDelete) {
-      setDeleteModal({
-        isOpen: true,
-        reservationId: null,
-        reservationName: 'Sin permisos'
-      });
+      setDeleteModal({ isOpen: true, reservationId: null, reservationName: 'Sin permisos' });
       return;
     }
-
     setDeleteModal({
       isOpen: true,
       reservationId: reservation.id,
@@ -179,7 +175,6 @@ export default function ReservasPage() {
 
   const confirmDelete = async () => {
     if (!deleteModal.reservationId) return;
-
     try {
       await calendarService.deleteReservation(deleteModal.reservationId);
       await loadData();
@@ -218,10 +213,43 @@ export default function ReservasPage() {
   const clearFilters = () => {
     setSearchTerm('');
     setFilterStatus('all');
+    setFilterCancelled('all');
     setFilterDateFrom('');
     setFilterDateTo('');
     setCurrentPage(1);
   };
+
+  const hasActiveFilters = searchTerm || filterStatus !== 'all' || filterCancelled !== 'all' || filterDateFrom || filterDateTo;
+
+  const handleExport = useCallback(() => {
+    const rows = filteredReservations.map((r) => {
+      const statusInfo = getStatusInfo(r.status_id);
+      return {
+        'ID': r.id,
+        'Fecha Inicio': formatDateTime(r.start_datetime),
+        'Fecha Fin': formatDateTime(r.end_datetime),
+        'Andén': getDockName(r.dock_id),
+        'Estado': statusInfo.name,
+        'Cancelada': r.is_cancelled ? 'Sí' : 'No',
+        'Razón Cancelación': r.cancel_reason || '',
+        'Orden de Compra': r.purchase_order || '',
+        'Proveedor': getProviderName(r.shipper_provider),
+        'Chofer': r.driver || '',
+        'DUA': r.dua || '',
+        'Factura': r.invoice || '',
+        'Placa': r.truck_plate || '',
+        'Tipo Transporte': r.transport_type || '',
+        'Tipo Carga': r.cargo_type || '',
+        'N° Solicitud Pedido': r.order_request_number || '',
+        'Notas': r.notes || '',
+      };
+    });
+
+    const worksheet = XLSX.utils.json_to_sheet(rows);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Reservas');
+    XLSX.writeFile(workbook, 'Reservas.xlsx');
+  }, [filteredReservations, getStatusInfo, getDockName, getProviderName, formatDateTime]);
 
   if (permLoading || loading) {
     return (
@@ -257,76 +285,86 @@ export default function ReservasPage() {
               Gestión completa de reservas de andenes
             </p>
           </div>
-          {canCreate && (
+          <div className="flex items-center gap-3">
             <button
-              onClick={handleCreate}
-              className="px-4 py-2 bg-teal-600 text-white rounded-lg hover:bg-teal-700 font-medium whitespace-nowrap"
+              onClick={handleExport}
+              disabled={filteredReservations.length === 0}
+              className="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 font-medium whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+              title="Descargar reservas filtradas en Excel"
             >
-              <i className="ri-add-line mr-2"></i>
-              Nueva Reserva
+              <i className="ri-file-excel-2-line"></i>
+              Exportar Excel
             </button>
-          )}
+            {canCreate && (
+              <button
+                onClick={handleCreate}
+                className="px-4 py-2 bg-teal-600 text-white rounded-lg hover:bg-teal-700 font-medium whitespace-nowrap"
+              >
+                <i className="ri-add-line mr-2"></i>
+                Nueva Reserva
+              </button>
+            )}
+          </div>
         </div>
 
         {/* Filtros */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 gap-3">
           <div className="lg:col-span-2">
             <input
               type="text"
               placeholder="Buscar por DUA, Factura, Chofer, OC, Proveedor, Placa..."
               value={searchTerm}
-              onChange={(e) => {
-                setSearchTerm(e.target.value);
-                setCurrentPage(1);
-              }}
+              onChange={(e) => { setSearchTerm(e.target.value); setCurrentPage(1); }}
               className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent text-sm"
             />
           </div>
 
           <select
             value={filterStatus}
-            onChange={(e) => {
-              setFilterStatus(e.target.value);
-              setCurrentPage(1);
-            }}
+            onChange={(e) => { setFilterStatus(e.target.value); setCurrentPage(1); }}
             className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 text-sm"
           >
             <option value="all">Todos los estados</option>
             {statuses.map((status) => (
-              <option key={status.id} value={status.id}>
-                {status.name}
-              </option>
+              <option key={status.id} value={status.id}>{status.name}</option>
             ))}
+          </select>
+
+          <select
+            value={filterCancelled}
+            onChange={(e) => { setFilterCancelled(e.target.value as 'all' | 'active' | 'cancelled'); setCurrentPage(1); }}
+            className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 text-sm"
+          >
+            <option value="all">Activas y canceladas</option>
+            <option value="active">Solo activas</option>
+            <option value="cancelled">Solo canceladas</option>
           </select>
 
           <input
             type="date"
             value={filterDateFrom}
-            onChange={(e) => {
-              setFilterDateFrom(e.target.value);
-              setCurrentPage(1);
-            }}
-            placeholder="Desde"
+            onChange={(e) => { setFilterDateFrom(e.target.value); setCurrentPage(1); }}
             className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 text-sm"
           />
 
           <input
             type="date"
             value={filterDateTo}
-            onChange={(e) => {
-              setFilterDateTo(e.target.value);
-              setCurrentPage(1);
-            }}
-            placeholder="Hasta"
+            onChange={(e) => { setFilterDateTo(e.target.value); setCurrentPage(1); }}
             className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 text-sm"
           />
         </div>
 
-        <div className="flex items-center justify-between mt-4">
+        <div className="flex items-center justify-between mt-3">
           <div className="text-sm text-gray-600">
             Mostrando {paginatedReservations.length} de {filteredReservations.length} reservas
+            {reservations.filter(r => r.is_cancelled).length > 0 && (
+              <span className="ml-2 text-red-500">
+                ({reservations.filter(r => r.is_cancelled).length} cancelada{reservations.filter(r => r.is_cancelled).length !== 1 ? 's' : ''})
+              </span>
+            )}
           </div>
-          {(searchTerm || filterStatus !== 'all' || filterDateFrom || filterDateTo) && (
+          {hasActiveFilters && (
             <button
               onClick={clearFilters}
               className="text-sm text-teal-600 hover:text-teal-700 font-medium"
@@ -345,9 +383,7 @@ export default function ReservasPage() {
             <table className="w-full">
               <thead className="bg-gray-50 border-b border-gray-200">
                 <tr>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">
-                    ID
-                  </th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">ID</th>
                   <th
                     className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider cursor-pointer hover:bg-gray-100"
                     onClick={() => handleSort('start_datetime')}
@@ -359,37 +395,23 @@ export default function ReservasPage() {
                       )}
                     </div>
                   </th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">
-                    Andén
-                  </th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">
-                    Estado
-                  </th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">
-                    Orden Compra
-                  </th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">
-                    Proveedor
-                  </th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">
-                    Chofer
-                  </th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">
-                    DUA
-                  </th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">
-                    Placa
-                  </th>
-                  <th className="px-4 py-3 text-right text-xs font-semibold text-gray-700 uppercase tracking-wider">
-                    Acciones
-                  </th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Andén</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Estado</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Orden Compra</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Proveedor</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Chofer</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">DUA</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Placa</th>
+                  <th className="px-4 py-3 text-right text-xs font-semibold text-gray-700 uppercase tracking-wider">Acciones</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-200">
                 {paginatedReservations.length === 0 ? (
                   <tr>
                     <td colSpan={10} className="px-4 py-12 text-center">
-                      <i className="ri-inbox-line text-4xl text-gray-300 mb-2 w-10 h-10 flex items-center justify-center mx-auto"></i>
+                      <div className="w-10 h-10 flex items-center justify-center mx-auto mb-2">
+                        <i className="ri-inbox-line text-4xl text-gray-300"></i>
+                      </div>
                       <p className="text-gray-500">No se encontraron reservas</p>
                       {canCreate && (
                         <button
@@ -404,38 +426,52 @@ export default function ReservasPage() {
                 ) : (
                   paginatedReservations.map((reservation) => {
                     const statusInfo = getStatusInfo(reservation.status_id);
+                    const isCancelled = reservation.is_cancelled;
                     return (
-                      <tr key={reservation.id} className="hover:bg-gray-50 transition-colors">
-                        <td className="px-4 py-3 text-sm text-gray-900 font-mono">
-                          #{reservation.id.slice(0, 8)}
+                      <tr
+                        key={reservation.id}
+                        className={`transition-colors ${isCancelled ? 'bg-red-50/40 hover:bg-red-50' : 'hover:bg-gray-50'}`}
+                      >
+                        <td className="px-4 py-3 text-sm font-mono">
+                          <span className={isCancelled ? 'text-gray-400 line-through' : 'text-gray-900'}>
+                            #{reservation.id.slice(0, 8)}
+                          </span>
                         </td>
-                        <td className="px-4 py-3 text-sm text-gray-900">
+                        <td className={`px-4 py-3 text-sm ${isCancelled ? 'text-gray-400' : 'text-gray-900'}`}>
                           {formatDateTime(reservation.start_datetime)}
                         </td>
-                        <td className="px-4 py-3 text-sm text-gray-900">
+                        <td className={`px-4 py-3 text-sm ${isCancelled ? 'text-gray-400' : 'text-gray-900'}`}>
                           {getDockName(reservation.dock_id)}
                         </td>
                         <td className="px-4 py-3">
-                          <span
-                            className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium text-white whitespace-nowrap"
-                            style={{ backgroundColor: statusInfo.color }}
-                          >
-                            {statusInfo.name}
-                          </span>
+                          <div className="flex flex-col gap-1">
+                            <span
+                              className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium text-white whitespace-nowrap w-fit"
+                              style={{ backgroundColor: statusInfo.color }}
+                            >
+                              {statusInfo.name}
+                            </span>
+                            {isCancelled && (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-700 w-fit whitespace-nowrap">
+                                <i className="ri-close-circle-line text-xs"></i>
+                                Cancelada
+                              </span>
+                            )}
+                          </div>
                         </td>
-                        <td className="px-4 py-3 text-sm text-gray-900">
+                        <td className={`px-4 py-3 text-sm ${isCancelled ? 'text-gray-400' : 'text-gray-900'}`}>
                           {reservation.purchase_order || '-'}
                         </td>
-                        <td className="px-4 py-3 text-sm text-gray-900">
+                        <td className={`px-4 py-3 text-sm ${isCancelled ? 'text-gray-400' : 'text-gray-900'}`}>
                           {getProviderName(reservation.shipper_provider)}
                         </td>
-                        <td className="px-4 py-3 text-sm text-gray-900">
+                        <td className={`px-4 py-3 text-sm ${isCancelled ? 'text-gray-400' : 'text-gray-900'}`}>
                           {reservation.driver || '-'}
                         </td>
-                        <td className="px-4 py-3 text-sm text-gray-900">
+                        <td className={`px-4 py-3 text-sm ${isCancelled ? 'text-gray-400' : 'text-gray-900'}`}>
                           {reservation.dua || '-'}
                         </td>
-                        <td className="px-4 py-3 text-sm text-gray-900">
+                        <td className={`px-4 py-3 text-sm ${isCancelled ? 'text-gray-400' : 'text-gray-900'}`}>
                           {reservation.truck_plate || '-'}
                         </td>
                         <td className="px-4 py-3 text-right">
@@ -444,9 +480,9 @@ export default function ReservasPage() {
                               <button
                                 onClick={() => handleEdit(reservation)}
                                 className="p-1.5 text-gray-600 hover:text-teal-600 hover:bg-teal-50 rounded transition-colors"
-                                title="Editar"
+                                title={isCancelled ? 'Ver detalle' : 'Editar'}
                               >
-                                <i className="ri-edit-line text-lg w-5 h-5 flex items-center justify-center"></i>
+                                <i className={`${isCancelled ? 'ri-eye-line' : 'ri-edit-line'} text-lg w-5 h-5 flex items-center justify-center`}></i>
                               </button>
                             )}
                             {canDelete && (
@@ -490,9 +526,7 @@ export default function ReservasPage() {
               >
                 <i className="ri-arrow-left-s-line"></i>
               </button>
-              <span className="px-4 py-1.5 text-sm text-gray-700">
-                {currentPage}
-              </span>
+              <span className="px-4 py-1.5 text-sm text-gray-700">{currentPage}</span>
               <button
                 onClick={() => setCurrentPage(currentPage + 1)}
                 disabled={currentPage === totalPages}
@@ -521,31 +555,22 @@ export default function ReservasPage() {
           docks={docks}
           statuses={statuses}
           orgId={orgId!}
-          onClose={() => {
-            setIsModalOpen(false);
-            setSelectedReservation(null);
-          }}
-          onSave={async () => {
-            setIsModalOpen(false);
-            setSelectedReservation(null);
-            await loadData();
-          }}
+          onClose={() => { setIsModalOpen(false); setSelectedReservation(null); }}
+          onSave={async () => { setIsModalOpen(false); setSelectedReservation(null); await loadData(); }}
         />
       )}
 
       {/* Modal de confirmación de eliminación */}
       {deleteModal.isOpen && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-lg shadow-xl max-w-md w-full">
             <div className="p-6">
               <div className="flex items-center justify-center w-12 h-12 mx-auto mb-4 bg-red-100 rounded-full">
                 <i className="ri-alert-line text-2xl text-red-600 w-6 h-6 flex items-center justify-center"></i>
               </div>
-
               <h3 className="text-lg font-semibold text-gray-900 text-center mb-2">
                 {deleteModal.reservationId ? 'Confirmar Eliminación' : 'Sin Permisos'}
               </h3>
-
               <p className="text-sm text-gray-600 text-center mb-6">
                 {deleteModal.reservationId ? (
                   <>
@@ -557,7 +582,6 @@ export default function ReservasPage() {
                   'No tienes permisos para eliminar reservas.'
                 )}
               </p>
-
               <div className="flex gap-3">
                 <button
                   onClick={cancelDelete}

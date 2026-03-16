@@ -281,19 +281,31 @@ export default function SchedulerView({
                       borderRight: dayIdx < days.length - 1 ? '1px solid #f3f4f6' : 'none'
                     }}
                   >
-                    {timeSlots.map(time => (
-                      <div
-                        key={time}
-                        className="h-[60px] border-b border-gray-100 hover:bg-teal-50/30 transition-colors cursor-pointer group relative"
-                        onClick={() => onCellClick(dock.id, day, time)}
-                        onDragOver={handleDragOver}
-                        onDrop={(e) => handleDrop(e, dock.id, day, time)}
-                      >
-                        <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
-                          <i className="ri-add-line text-teal-600 text-lg w-5 h-5 flex items-center justify-center"></i>
-                        </div>
-                      </div>
-                    ))}
+                    {/* Segmentos de tiempo */}
+                    {timeSlots.map((slot) => {
+                      return (
+                        <div
+                          key={`${dock.id}-${slot}`}
+                          className="relative border-b border-gray-100 min-h-[60px] cursor-pointer"
+                          style={{
+                            backgroundColor: 'rgba(13, 148, 136, 0.75)',
+                            border: '1px solid rgba(13, 148, 136, 0.4)',
+                            transition: 'all 0.2s ease-in-out',
+                          }}
+                          onMouseEnter={(e) => {
+                            e.currentTarget.style.backgroundColor = 'rgba(13, 148, 136, 0.92)';
+                            e.currentTarget.style.boxShadow = '0 2px 8px rgba(0, 0, 0, 0.1)';
+                          }}
+                          onMouseLeave={(e) => {
+                            e.currentTarget.style.backgroundColor = 'rgba(13, 148, 136, 0.75)';
+                            e.currentTarget.style.boxShadow = 'none';
+                          }}
+                          onDragOver={handleDragOver}
+                          onDrop={(e) => handleDrop(e, dock.id, day, slot)}
+                          onClick={() => onCellClick(dock.id, day, slot)}
+                        />
+                      );
+                    })}
 
                     {dayReservations.map(reservation => {
                       const position = calculateReservationPosition(reservation, day);

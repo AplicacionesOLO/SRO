@@ -180,12 +180,26 @@ export const calendarService = {
       .order('start_datetime', { ascending: true });
 
     if (error) {
-      // console.error('[Calendar] reservationsError', {
-      //   code: error.code,
-      //   message: error.message,
-      //   details: error.details,
-      //   hint: error.hint,
-      // });
+      return [];
+    }
+
+    return data || [];
+  },
+
+  // Igual que getReservations pero SIN filtrar is_cancelled — para el módulo de Reservas
+  async getAllReservations(orgId: string, startDate: string, endDate: string): Promise<Reservation[]> {
+    const { data, error } = await supabase
+      .from('reservations')
+      .select(`
+        *,
+        status:reservation_statuses(name, code, color)
+      `)
+      .eq('org_id', orgId)
+      .gte('start_datetime', startDate)
+      .lte('start_datetime', endDate)
+      .order('start_datetime', { ascending: false });
+
+    if (error) {
       return [];
     }
 

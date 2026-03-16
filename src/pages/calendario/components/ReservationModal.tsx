@@ -62,6 +62,10 @@ export default function ReservationModal({
   const [savedReservationId, setSavedReservationId] = useState<string | null>(null);
 
   const [activeTab, setActiveTab] = useState<'info' | 'documents' | 'activity'>('info');
+  
+  // ✅ Nuevo estado para la razón de cancelación
+  const [cancelReason, setCancelReason] = useState<string>('');
+
   const [formData, setFormData] = useState({
     dockId: '',
     startDate: '',
@@ -209,6 +213,9 @@ export default function ReservationModal({
           cargoType: reservation.cargo_type || ''
         });
 
+        // ✅ Cargar la razón de cancelación si existe
+        setCancelReason(reservation.cancel_reason || '');
+        
         setManualOverride(false);
         setSuggestedMinutes(null);
       } else {
@@ -236,6 +243,10 @@ export default function ReservationModal({
           cargoType: defaults?.cargo_type || ''
         });
         setFiles([]);
+        
+        // ✅ Limpiar razón de cancelación en nueva reserva
+        setCancelReason('');
+        
         setManualOverride(false);
         setSuggestedMinutes(null);
       }
@@ -387,6 +398,17 @@ export default function ReservationModal({
       return;
     }
 
+    // ✅ Validación: razón de cancelación obligatoria cuando el estado es "Cancelado"
+    if (isCancelledStatus && !cancelReason.trim()) {
+      setNotifyModal({
+        isOpen: true,
+        type: 'warning',
+        title: 'Razón de cancelación requerida',
+        message: 'Por favor, ingresá una razón para cancelar la reserva.'
+      });
+      return;
+    }
+
     const startDateTime = new Date(`${formData.startDate}T${formData.startTime}`);
     const endDateTime = new Date(`${formData.endDate}T${formData.endTime}`);
 
@@ -426,7 +448,9 @@ export default function ReservationModal({
       notes: formData.notes || null,
       transport_type: formData.transportType,
       cargo_type: formData.cargoType,
-      is_cancelled: false
+      // ✅ Usar isCancelledStatus en lugar de comparar con string literal
+      is_cancelled: isCancelledStatus,
+      cancel_reason: isCancelledStatus ? cancelReason : null
     };
 
     try {
@@ -571,6 +595,23 @@ export default function ReservationModal({
   const inputCls = isReadOnly ? inputReadOnly : inputBase;
   const selectCls = isReadOnly ? selectReadOnly : selectBase;
   const sensitiveInputCls = isReadOnly ? (canViewSensitive ? inputReadOnly : inputMasked) : inputBase;
+
+  // ✅ Helper: detecta si el estado seleccionado es "cancelado" por code o name (no por ID)
+  const isCancelledStatus = (() => {
+    if (!formData.statusId) return false;
+    const found = statuses.find(s => s.id === formData.statusId);
+    if (!found) return false;
+    const code = (found.code || '').toLowerCase().trim();
+    const name = (found.name || '').toLowerCase().trim();
+    return (
+      code === 'cancelado' ||
+      code === 'cancelled' ||
+      code === 'canceled' ||
+      name === 'cancelado' ||
+      name === 'cancelled' ||
+      name === 'canceled'
+    );
+  })();
 
   if (!isOpen) return null;
 
@@ -889,7 +930,7 @@ export default function ReservationModal({
                       </div>
                     </div>
 
-                    {/* ✅ Ubicación y estado: SIEMPRE visible */}
+                    {/* ✅ Ubicación y estado */}
                     <div className="bg-white border border-gray-200 rounded-xl p-4">
                       <h4 className="text-sm font-semibold text-gray-900 mb-4">Ubicación y estado</h4>
                       <div className="space-y-4">
@@ -928,6 +969,33 @@ export default function ReservationModal({
                             ))}
                           </select>
                         </div>
+
+                        {/* ✅ Campo para la razón de cancelación, solo se muestra cuando el estado es "Cancelado" */}
+                        {isCancelledStatus && (
+                          <div className="bg-amber-50 border border-amber-200 rounded-xl p-4">
+                            <label className="block text-sm font-medium text-gray-900 mb-2">
+                              Razón de la cancelación *
+                            </label>
+                            <textarea
+                              value={cancelReason}
+                              onChange={(e) => setCancelReason(e.target.value)}
+                              className={`w-full p-2.5 border ${
+                                isReadOnly 
+                                  ? 'border-gray-200 bg-gray-100 cursor-not-allowed text-gray-600' 
+                                  : 'border-amber-300 bg-white focus:ring-2 focus:ring-amber-500 focus:border-transparent'
+                              } rounded-lg outline-none resize-none`}
+                              placeholder={isReadOnly ? '' : 'Escriba el motivo de la cancelación...'}
+                              rows={3}
+                              required
+                              disabled={isReadOnly}
+                            />
+                            {!isReadOnly && (
+                              <p className="text-xs text-amber-700 mt-2">
+                                Este campo es obligatorio cuando el estado es "Cancelado"
+                              </p>
+                            )}
+                          </div>
+                        )}
                       </div>
                     </div>
 

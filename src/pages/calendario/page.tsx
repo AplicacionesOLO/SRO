@@ -1394,15 +1394,30 @@ export default function CalendarioPage() {
                                           return (
                                             <div
                                               key={slot.label}
-                                              className={`h-[60px] border-b border-gray-100 transition-colors ${
+                                              className={`h-[60px] border-b transition-colors ${
                                                 inSelectionMode
                                                   ? eligible
-                                                    ? 'hover:bg-teal-50 cursor-pointer border-teal-200'
+                                                    ? 'cursor-pointer border-teal-300'
                                                     : dockDisabledByRule || dockBlockedByError
-                                                    ? 'bg-red-50/40 cursor-not-allowed'
-                                                    : 'bg-gray-100/50 cursor-not-allowed'
-                                                  : 'hover:bg-gray-50 cursor-pointer'
+                                                    ? 'bg-red-50/40 cursor-not-allowed border-gray-100'
+                                                    : 'bg-gray-100/50 cursor-not-allowed border-gray-100'
+                                                  : 'hover:bg-gray-50 cursor-pointer border-gray-100'
                                               }`}
+                                              style={
+                                                inSelectionMode && eligible
+                                                  ? { backgroundColor: 'rgba(20, 184, 166, 0.35)' }
+                                                  : undefined
+                                              }
+                                              onMouseEnter={(e) => {
+                                                if (inSelectionMode && eligible) {
+                                                  (e.currentTarget as HTMLDivElement).style.backgroundColor = 'rgba(20, 184, 166, 0.60)';
+                                                }
+                                              }}
+                                              onMouseLeave={(e) => {
+                                                if (inSelectionMode && eligible) {
+                                                  (e.currentTarget as HTMLDivElement).style.backgroundColor = 'rgba(20, 184, 166, 0.35)';
+                                                }
+                                              }}
                                               onClick={(e) => handleCellClick(e, dock.id, day, slot)}
                                               onDragOver={handleDragOver}
                                               onDrop={(e) => handleDrop(e, dock.id, day, slot)}
