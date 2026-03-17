@@ -6,7 +6,8 @@ export interface CreateCasetillaIngresoInput {
   factura: string;
   orden_compra?: string;
   numero_pedido?: string;
-  reservation_id?: string; // ✅ NUEVO: ID de reserva explícito
+  reservation_id?: string;
+  fotos?: string[];
 }
 
 export interface CasetillaIngreso {
@@ -19,6 +20,7 @@ export interface CasetillaIngreso {
   orden_compra?: string | null;
   numero_pedido?: string | null;
   reservation_id?: string | null;
+  fotos?: string[] | null;
   created_by: string;
   created_at: string;
 }
@@ -31,6 +33,7 @@ export interface CasetillaSalida {
   chofer: string;
   matricula: string;
   dua?: string | null;
+  fotos?: string[] | null;
   created_by: string;
   exit_at: string;
   created_at: string;
@@ -58,4 +61,6 @@ export interface DurationReportRow {
   salida_at: string;
   duracion_minutos: number;
   duracion_formato: string; // formato "hh:mm"
+  fotos_ingreso?: string[] | null;
+  fotos_salida?: string[] | null;
 }

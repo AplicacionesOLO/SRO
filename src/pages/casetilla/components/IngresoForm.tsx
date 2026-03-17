@@ -1,14 +1,16 @@
 import { useState } from 'react';
 import type { CreateCasetillaIngresoInput } from '../../../types/casetilla';
+import PhotoUploader from '../../../components/base/PhotoUploader';
 
 interface IngresoFormProps {
   onSubmit: (data: CreateCasetillaIngresoInput) => Promise<void>;
   onCancel: () => void;
   initialData?: Partial<CreateCasetillaIngresoInput>;
   isSubmitting?: boolean;
+  orgId: string;
 }
 
-function IngresoForm({ onSubmit, onCancel, initialData, isSubmitting }: IngresoFormProps) {
+function IngresoForm({ onSubmit, onCancel, initialData, isSubmitting, orgId }: IngresoFormProps) {
   const [formData, setFormData] = useState<CreateCasetillaIngresoInput>({
     chofer: initialData?.chofer || '',
     matricula: initialData?.matricula || '',
@@ -16,12 +18,13 @@ function IngresoForm({ onSubmit, onCancel, initialData, isSubmitting }: IngresoF
     factura: initialData?.factura || '',
     orden_compra: initialData?.orden_compra || '',
     numero_pedido: initialData?.numero_pedido || '',
-    reservation_id: initialData?.reservation_id // ✅ NUEVO: Preservar reservation_id
+    reservation_id: initialData?.reservation_id
   });
+  const [fotos, setFotos] = useState<string[]>([]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    await onSubmit(formData);
+    await onSubmit({ ...formData, fotos });
   };
 
   const handleChange = (field: keyof CreateCasetillaIngresoInput, value: string) => {
@@ -176,6 +179,17 @@ function IngresoForm({ onSubmit, onCancel, initialData, isSubmitting }: IngresoF
             rows={4}
             className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent disabled:bg-gray-100 disabled:cursor-not-allowed resize-none"
             placeholder="Observaciones adicionales..."
+          />
+        </div>
+
+        {/* Fotos - sección antes de los botones */}
+        <div className="border-t border-gray-100 pt-6">
+          <PhotoUploader
+            orgId={orgId}
+            folder="ingreso"
+            onChange={setFotos}
+            maxPhotos={5}
+            disabled={isSubmitting}
           />
         </div>
 

@@ -33,6 +33,7 @@ export interface CorrespondenceRule {
   subject: string;
   body_template: string;
   is_active: boolean;
+  include_casetilla_photos: boolean;
   created_by: string;
   created_at: string;
   updated_by: string | null;
@@ -116,6 +117,7 @@ export interface CorrespondenceRuleFormData {
   subject: string;
   body_template: string;
   is_active: boolean;
+  include_casetilla_photos: boolean;
 }
 
 export const CORRESPONDENCE_EVENT_LABELS: Record<CorrespondenceEventType, string> = {
@@ -152,4 +154,5 @@ export const TEMPLATE_VARIABLES = [
   { key: '{{invoice}}', label: 'Factura' },
   { key: '{{created_by}}', label: 'Creado por' },
   { key: '{{actor}}', label: 'Usuario que ejecutó la acción' },
+  { key: '{{fotos}}', label: 'Fotos del punto de control (In/Out)' },
 ];

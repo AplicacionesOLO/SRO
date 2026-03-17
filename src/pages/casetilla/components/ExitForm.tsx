@@ -1,5 +1,5 @@
-
 import { useState } from 'react';
+import PhotoUploader from '../../../components/base/PhotoUploader';
 
 interface ExitFormProps {
   reservation: {
@@ -10,18 +10,21 @@ interface ExitFormProps {
     provider_name?: string | null;
     warehouse_name?: string | null;
   } | null;
-  onSubmit: () => Promise<void>;
+  onSubmit: (fotos: string[]) => Promise<void>;
   onCancel: () => void;
   isSubmitting: boolean;
+  orgId: string;
 }
 
 export default function ExitForm({
   reservation,
   onSubmit,
   onCancel,
-  isSubmitting
+  isSubmitting,
+  orgId
 }: ExitFormProps) {
   const [showConfirm, setShowConfirm] = useState(false);
+  const [fotos, setFotos] = useState<string[]>([]);
 
   const handleSubmitClick = () => {
     setShowConfirm(true);
@@ -29,7 +32,7 @@ export default function ExitForm({
 
   const handleConfirm = async () => {
     setShowConfirm(false);
-    await onSubmit();
+    await onSubmit(fotos);
   };
 
   if (!reservation) {
@@ -175,6 +178,17 @@ export default function ExitForm({
               Los datos mostrados provienen de la reserva seleccionada y no pueden ser modificados.
             </p>
           </div>
+        </div>
+
+        {/* Fotos - antes de los botones de acción */}
+        <div className="border-t border-gray-100 pt-5">
+          <PhotoUploader
+            orgId={orgId}
+            folder="salida"
+            onChange={setFotos}
+            maxPhotos={5}
+            disabled={isSubmitting}
+          />
         </div>
 
         {/* Botones de acción */}

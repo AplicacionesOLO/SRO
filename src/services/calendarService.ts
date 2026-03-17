@@ -49,6 +49,14 @@ export interface DockTimeBlock {
     name: string;
     email: string;
   };
+  dock?: {
+    id: string;
+    name: string;
+    category?: {
+      name: string;
+      color: string;
+    };
+  };
 }
 
 export interface Dock {
@@ -237,6 +245,40 @@ export const calendarService = {
       return data.map((block) => ({
         ...block,
         creator: profileMap.get(block.created_by) || undefined,
+      }));
+    }
+
+    return data || [];
+  },
+
+  async getAllDockTimeBlocksForManagement(orgId: string): Promise<DockTimeBlock[]> {
+    const { data, error } = await supabase
+      .from('dock_time_blocks')
+      .select('*')
+      .eq('org_id', orgId)
+      .order('start_datetime', { ascending: false });
+
+    if (error) return [];
+
+    if (data && data.length > 0) {
+      const creatorIds = [...new Set(data.map((b) => b.created_by))];
+      const dockIds = [...new Set(data.map((b) => b.dock_id))];
+
+      const [profilesResult, docksResult] = await Promise.all([
+        supabase.from('profiles').select('id, name, email').in('id', creatorIds),
+        supabase
+          .from('docks')
+          .select('id, name, category:dock_categories(name, color)')
+          .in('id', dockIds),
+      ]);
+
+      const profileMap = new Map((profilesResult.data || []).map((p) => [p.id, p]));
+      const dockMap = new Map((docksResult.data || []).map((d) => [d.id, d]));
+
+      return data.map((block) => ({
+        ...block,
+        creator: profileMap.get(block.created_by) || undefined,
+        dock: dockMap.get(block.dock_id) || undefined,
       }));
     }
 
@@ -536,6 +578,95 @@ export const calendarService = {
     };
   },
 
+  /**
+   * Crea bloques persistentes (recurrentes) para los días de semana seleccionados.
+   * Si una ocurrencia colisiona con un bloque CLIENT_PICKUP (P0001), se omite silenciosamente.
+   * Las reglas de cliente tienen prioridad absoluta.
+   */
+  async createPersistentDockTimeBlock(params: {
+    orgId: string;
+    dockId: string;
+    baseStart: string;
+    baseEnd: string;
+    reason: string;
+    weekdays: number[]; // 0=Dom, 1=Lun, 2=Mar, 3=Mié, 4=Jue, 5=Vie, 6=Sáb
+    weeksAhead: number;
+  }): Promise<{ created: number; skipped: number }> {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) throw new Error('Usuario no autenticado');
+
+    const { orgId, dockId, baseStart, baseEnd, reason, weekdays, weeksAhead } = params;
+
+    const startDate = new Date(baseStart);
+    const endDate = new Date(baseEnd);
+    const durationMs = endDate.getTime() - startDate.getTime();
+
+    // Construir lista de ocurrencias: desde la fecha base hasta weeksAhead semanas adelante
+    const occurrences: { start: Date; end: Date }[] = [];
+    const maxDate = new Date(startDate.getTime() + weeksAhead * 7 * 24 * 60 * 60 * 1000);
+    const now = new Date();
+
+    // Iterar día a día desde la fecha base
+    const cursor = new Date(startDate);
+    cursor.setHours(0, 0, 0, 0);
+
+    while (cursor <= maxDate) {
+      const dayOfWeek = cursor.getDay();
+      if (weekdays.includes(dayOfWeek)) {
+        const occStart = new Date(cursor);
+        occStart.setHours(startDate.getHours(), startDate.getMinutes(), 0, 0);
+        const occEnd = new Date(occStart.getTime() + durationMs);
+
+        // Solo ocurrencias futuras (con 1 min de tolerancia)
+        if (occStart >= new Date(now.getTime() - 60_000)) {
+          occurrences.push({ start: occStart, end: occEnd });
+        }
+      }
+      cursor.setDate(cursor.getDate() + 1);
+    }
+
+    let created = 0;
+    let skipped = 0;
+
+    for (const { start, end } of occurrences) {
+      const { error } = await supabase
+        .from('dock_time_blocks')
+        .insert({
+          org_id: orgId,
+          dock_id: dockId,
+          start_datetime: start.toISOString(),
+          end_datetime: end.toISOString(),
+          reason,
+          created_by: user.id,
+        });
+
+      if (!error) {
+        created++;
+        continue;
+      }
+
+      // P0001 = trigger de overlap → bloque CLIENT_PICKUP tiene prioridad → omitir silenciosamente
+      const errCode = (error as any).code as string | undefined;
+      const errMsg = (error.message || '').toLowerCase();
+
+      if (
+        errCode === 'P0001' ||
+        errMsg.includes('conflicto') ||
+        errMsg.includes('ya existe') ||
+        errMsg.includes('overlap') ||
+        errMsg.includes('conflict')
+      ) {
+        skipped++;
+        continue;
+      }
+
+      // Cualquier otro error es real → relanzar
+      throw error;
+    }
+
+    return { created, skipped };
+  },
+
   async deleteDockTimeBlock(id: string): Promise<void> {
     const { error } = await supabase
       .from('dock_time_blocks')
@@ -551,6 +682,26 @@ export const calendarService = {
       // });
       throw error;
     }
+  },
+
+  async updateDockTimeBlock(
+    id: string,
+    updates: { dock_id?: string; start_datetime?: string; end_datetime?: string; reason?: string }
+  ): Promise<DockTimeBlock> {
+    const { data, error } = await supabase
+      .from('dock_time_blocks')
+      .update({
+        ...(updates.dock_id && { dock_id: updates.dock_id }),
+        ...(updates.start_datetime && { start_datetime: updates.start_datetime }),
+        ...(updates.end_datetime && { end_datetime: updates.end_datetime }),
+        ...(updates.reason !== undefined && { reason: updates.reason }),
+      })
+      .eq('id', id)
+      .select('*')
+      .single();
+
+    if (error) throw error;
+    return data;
   },
 
   async getReservationStatuses(orgId: string) {

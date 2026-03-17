@@ -127,12 +127,12 @@ export default function CasetillaPage() {
     }
   };
 
-  const handleSubmitSalida = async () => {
+  const handleSubmitSalida = async (fotos: string[]) => {
     if (!orgId || !user?.id || !selectedExitReservation) return;
 
     setIsSubmitting(true);
     try {
-      await casetillaService.createSalida(orgId, user.id, selectedExitReservation.id);
+      await casetillaService.createSalida(orgId, user.id, selectedExitReservation.id, fotos);
       
       // Mostrar modal de éxito con función de cierre correcta
       setModal({
@@ -271,6 +271,7 @@ export default function CasetillaPage() {
         {viewMode === 'INGRESO' && (
           <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-4 sm:p-6 lg:p-8">
             <IngresoForm
+              orgId={orgId!}
               initialData={{
                 chofer: selectedReservation?.chofer || '',
                 matricula: selectedReservation?.placa || '',
@@ -345,6 +346,7 @@ export default function CasetillaPage() {
         {viewMode === 'SALIDA' && selectedExitReservation && (
           <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-4 sm:p-6 lg:p-8">
             <ExitForm
+              orgId={orgId!}
               reservation={selectedExitReservation}
               onSubmit={handleSubmitSalida}
               onCancel={() => {

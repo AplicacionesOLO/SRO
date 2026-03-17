@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import type {
   CorrespondenceRule,
   CorrespondenceRuleFormData,
@@ -65,6 +65,7 @@ export default function RuleModal({ isOpen, onClose, onSave, rule, orgId }: Rule
     subject: "",
     body_template: "",
     is_active: true,
+    include_casetilla_photos: false,
   });
 
   const [recipientEmailInput, setRecipientEmailInput] = useState("");
@@ -99,6 +100,7 @@ export default function RuleModal({ isOpen, onClose, onSave, rule, orgId }: Rule
           subject: rule.subject,
           body_template: rule.body_template,
           is_active: rule.is_active,
+          include_casetilla_photos: rule.include_casetilla_photos ?? false,
         });
         setRecipientEmailInput("");
       } else {
@@ -277,8 +279,31 @@ export default function RuleModal({ isOpen, onClose, onSave, rule, orgId }: Rule
       subject: "",
       body_template: "",
       is_active: true,
+      include_casetilla_photos: false,
     });
     setRecipientEmailInput("");
+  };
+
+  // Detectar si el estado destino seleccionado activa la opción de fotos
+  const selectedStatusToName = useMemo(() => {
+    if (!formData.status_to_id) return '';
+    return statuses.find(s => s.id === formData.status_to_id)?.name ?? '';
+  }, [formData.status_to_id, statuses]);
+
+  const showPhotoOption = useMemo(() => {
+    const lower = selectedStatusToName.toLowerCase();
+    return lower.includes('arrib') || lower.includes('despacha') || lower.includes('dispatch');
+  }, [selectedStatusToName]);
+
+  // Al cambiar estado destino, si ya no aplica la opción de fotos, resetear el toggle
+  const handleStatusToChange = (value: string) => {
+    const newStatusName = statuses.find(s => s.id === value)?.name?.toLowerCase() ?? '';
+    const willShowPhoto = newStatusName.includes('arrib') || newStatusName.includes('despacha') || newStatusName.includes('dispatch');
+    setFormData(prev => ({
+      ...prev,
+      status_to_id: value || null,
+      include_casetilla_photos: willShowPhoto ? prev.include_casetilla_photos : false,
+    }));
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -509,7 +534,7 @@ export default function RuleModal({ isOpen, onClose, onSave, rule, orgId }: Rule
                 <label className="block text-sm font-medium text-gray-700 mb-2">Estado Destino (opcional)</label>
                 <select
                   value={formData.status_to_id || ""}
-                  onChange={(e) => setFormData((prev) => ({ ...prev, status_to_id: e.target.value || null }))}
+                  onChange={(e) => handleStatusToChange(e.target.value)}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-teal-500 focus:border-transparent"
                 >
                   <option value="">Cualquier estado</option>
@@ -519,6 +544,34 @@ export default function RuleModal({ isOpen, onClose, onSave, rule, orgId }: Rule
                     </option>
                   ))}
                 </select>
+
+                {/* Toggle de fotos — aparece solo cuando aplica */}
+                {showPhotoOption && (
+                  <div className="mt-3 p-3 bg-teal-50 border border-teal-200 rounded-lg">
+                    <label className="flex items-start gap-3 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={formData.include_casetilla_photos}
+                        onChange={(e) =>
+                          setFormData((prev) => ({ ...prev, include_casetilla_photos: e.target.checked }))
+                        }
+                        className="w-4 h-4 text-teal-600 rounded focus:ring-teal-500 mt-0.5 shrink-0"
+                      />
+                      <div>
+                        <p className="text-sm font-medium text-teal-800">
+                          Incluir fotos del punto de control en el correo
+                        </p>
+                        <p className="text-xs text-teal-600 mt-0.5">
+                          Las imágenes capturadas en el punto In/Out al registrar el{' '}
+                          {selectedStatusToName.toLowerCase().includes('arrib') ? 'ingreso' : 'despacho'}{' '}
+                          se incrustarán en el cuerpo del correo. Usa la variable{' '}
+                          <code className="bg-teal-100 px-1 rounded font-mono">{'{{fotos}}'}</code>{' '}
+                          en el cuerpo para indicar dónde apareceran.
+                        </p>
+                      </div>
+                    </label>
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -728,18 +781,35 @@ export default function RuleModal({ isOpen, onClose, onSave, rule, orgId }: Rule
 
             <div className="mb-2 flex flex-wrap gap-2">
               <span className="text-xs text-gray-600">Variables disponibles:</span>
-              {TEMPLATE_VARIABLES.map((v) => (
+              {TEMPLATE_VARIABLES.filter(v => {
+                // Mostrar {{fotos}} solo cuando showPhotoOption y include_casetilla_photos están activos
+                if (v.key === '{{fotos}}') return showPhotoOption && formData.include_casetilla_photos;
+                return true;
+              }).map((v) => (
                 <button
                   key={v.key}
                   type="button"
                   onClick={() => insertVariable(v.key)}
-                  className="px-2 py-1 bg-teal-50 text-teal-700 rounded text-xs hover:bg-teal-100 transition-colors whitespace-nowrap"
+                  className={`px-2 py-1 rounded text-xs hover:opacity-80 transition-colors whitespace-nowrap ${
+                    v.key === '{{fotos}}'
+                      ? 'bg-teal-100 text-teal-800 border border-teal-300 font-medium'
+                      : 'bg-teal-50 text-teal-700 hover:bg-teal-100'
+                  }`}
                   title={v.label}
                 >
                   {v.key}
                 </button>
               ))}
             </div>
+
+            {formData.include_casetilla_photos && showPhotoOption && (
+              <div className="mb-2 flex items-center gap-2 px-3 py-2 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-700">
+                <i className="ri-image-2-line w-4 h-4 flex items-center justify-center shrink-0"></i>
+                <span>
+                  Haz clic en <code className="bg-amber-100 px-1 rounded font-mono">{'{{fotos}}'}</code> para insertarlo en el cuerpo y definir dónde aparecerán las imágenes del punto de control.
+                </span>
+              </div>
+            )}
 
             <textarea
               id="body_template"

@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import type { ClientPickupRule, ClientPickupRuleFormData } from '../../../../types/client';
 import type { Dock } from '../../../../types/dock';
 import * as clientPickupRulesService from '../../../../services/clientPickupRulesService';
+import { useClientPickupRulesContext } from '../../../../contexts/ClientPickupRulesContext';
 
 interface ClientPickupRulesTabProps {
   orgId: string;
@@ -35,11 +36,13 @@ export default function ClientPickupRulesTab({
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
 
+  const { notifyRuleChanged } = useClientPickupRulesContext();
+
   useEffect(() => {
-    loadRules();
+    loadData();
   }, [orgId, clientId]);
 
-  const loadRules = async () => {
+  const loadData = async () => {
     try {
       setLoading(true);
       setError(null);
@@ -105,7 +108,19 @@ export default function ClientPickupRulesTab({
         await clientPickupRulesService.update(orgId, modal.rule.id, formData);
       }
 
-      await loadRules();
+      // Intentar regenerar bloques — si falla no bloqueamos el flujo principal
+      try {
+        await clientPickupRulesService.regenerateBlocks(orgId, formData.dock_id);
+      } catch (blockErr) {
+        console.warn('[ClientPickupRulesTab] regenerateBlocks failed, calendar will still be notified', blockErr);
+      }
+
+      await loadData();
+
+      // Señalizar al calendario que los bloques de este andén cambiaron
+      // Se llama siempre, independientemente de si regenerateBlocks tuvo éxito
+      notifyRuleChanged([formData.dock_id]);
+
       closeModal();
     } catch (err: any) {
       setFormError(err?.message || 'Error al guardar regla');
@@ -118,10 +133,14 @@ export default function ClientPickupRulesTab({
     try {
       if (rule.is_active) {
         await clientPickupRulesService.deactivate(orgId, rule.id);
+        await clientPickupRulesService.deleteBlocksForRule(orgId, rule.id);
       } else {
         await clientPickupRulesService.activate(orgId, rule.id);
       }
-      await loadRules();
+      await loadData();
+
+      // Señalizar al calendario que los bloques de este andén cambiaron
+      notifyRuleChanged([rule.dock_id]);
     } catch (err: any) {
       setError(err?.message || 'Error al cambiar estado');
     }
@@ -133,8 +152,12 @@ export default function ClientPickupRulesTab({
     }
 
     try {
+      await clientPickupRulesService.deleteBlocksForRule(orgId, rule.id);
       await clientPickupRulesService.deleteRule(orgId, rule.id);
-      await loadRules();
+      await loadData();
+
+      // Señalizar al calendario que los bloques de este andén cambiaron
+      notifyRuleChanged([rule.dock_id]);
     } catch (err: any) {
       setError(err?.message || 'Error al eliminar regla');
     }

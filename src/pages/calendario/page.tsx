@@ -17,9 +17,11 @@ import { sortDocksByNameNumber } from '../../utils/sortDocks';
 import { ConfirmModal } from '../../components/base/ConfirmModal';
 import { dockAllocationService, type DockAllocationRule } from '../../services/dockAllocationService';
 import { providersService } from '../../services/providersService';
+import { useClientPickupRulesContext } from '../../contexts/ClientPickupRulesContext';
+import BlocksManagementTab from './components/BlocksManagementTab';
 
 type ViewMode = '1day' | '3days' | '7days';
-type TabMode = 'calendar' | 'statuses';
+type TabMode = 'calendar' | 'statuses' | 'blocks';
 
 interface TimeSlot {
   hour: number;
@@ -67,6 +69,7 @@ const isSameDayTz = (day: Date, nowTz: Date, timezone: string): boolean => {
 export default function CalendarioPage() {
   const { can, orgId, loading: permLoading } = usePermissions();
   const { user } = useAuth();
+  const { lastRuleChange } = useClientPickupRulesContext();
 
   // ✅ Estado de rango dinámico
   const [rangeDays, setRangeDays] = useState<number>(3); // 1, 3, o 7
@@ -130,6 +133,9 @@ export default function CalendarioPage() {
 
   // ✅ Caché para evitar refetch innecesario
   const cacheRef = useRef<Map<string, { reservations: Reservation[]; blocks: DockTimeBlock[] }>>(new Map());
+
+  // ✅ Flag para distinguir "primer mount con lastRuleChange ya seteado" vs "lastRuleChange cambió mientras estaba montado"
+  const ruleChangeInitialMountRef = useRef(false);
 
   // ✅ Constante de ancho de columna
   const COL_W = 200;
@@ -517,6 +523,24 @@ export default function CalendarioPage() {
     if (!ready) return;
     loadData();
   }, [ready, loadData]);
+
+  // ✅ Recargar bloques automáticamente cuando cambian reglas de Cliente Retira
+  // NOTA: colocado DESPUÉS de loadData para tener la referencia correcta.
+  // El flag ruleChangeInitialMountRef evita doble carga en el primer mount
+  // cuando lastRuleChange ya tiene un valor (el main effect ya lo maneja).
+  useEffect(() => {
+    if (lastRuleChange === 0 || !ready) return;
+
+    // En el primer render (mount), evitar doble carga — el main effect ya lo maneja
+    if (!ruleChangeInitialMountRef.current) {
+      ruleChangeInitialMountRef.current = true;
+      return;
+    }
+
+    // lastRuleChange cambió mientras el componente estaba montado → refrescar
+    cacheRef.current.clear();
+    loadData();
+  }, [lastRuleChange, ready, loadData]);
 
   // Handler para seleccionar almacén
   const handleWarehouseSelect = (selectedId: string | null) => {
@@ -1014,6 +1038,17 @@ export default function CalendarioPage() {
                 Estatus Op
               </button>
             )}
+            <button
+              onClick={() => setTabMode('blocks')}
+              className={`px-6 py-3 font-medium text-sm border-b-2 transition-colors whitespace-nowrap ${
+                tabMode === 'blocks'
+                  ? 'border-teal-600 text-teal-600'
+                  : 'border-transparent text-gray-600 hover:text-gray-900'
+              }`}
+            >
+              <i className="ri-lock-line mr-2 w-4 h-4 inline-flex items-center justify-center"></i>
+              Bloqueos
+            </button>
           </div>
         </div>
       </div>
@@ -1022,6 +1057,10 @@ export default function CalendarioPage() {
       {tabMode === 'statuses' ? (
         <div className="flex-1 overflow-auto p-6">
           <OperationalStatusesTab orgId={orgId!} />
+        </div>
+      ) : tabMode === 'blocks' ? (
+        <div className="flex-1 overflow-auto">
+          <BlocksManagementTab />
         </div>
       ) : (
         <>

@@ -151,6 +151,11 @@ function normalizeRulePayloadForDb(
       ? (ruleData as any).is_active
       : true;
 
+  const includeCasetillaPhotos =
+    typeof (ruleData as any).include_casetilla_photos === "boolean"
+      ? (ruleData as any).include_casetilla_photos
+      : false;
+
   // Base payload
   const base = {
     org_id: orgId,
@@ -182,6 +187,7 @@ function normalizeRulePayloadForDb(
     body_template: (ruleData as any).body_template,
 
     is_active: isActive,
+    include_casetilla_photos: includeCasetillaPhotos,
   };
 
   if (mode === "create") {

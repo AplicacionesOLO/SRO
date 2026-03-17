@@ -1,9 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const VERSION = "v673-direct-smtp";
-
-//console.log(`[correspondence-process-event] VERSION ${VERSION}`);
+const VERSION = "v743-casetilla-photos";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -23,10 +21,6 @@ function safePrefix(v: string | null | undefined, n = 18) {
   return v.slice(0, n);
 }
 
-/**
- * Helper: Convierte null/undefined a "null" string para queries Postgres.
- * Mantiene valores falsy válidos (0, "", false) sin pisar.
- */
 function asNull(value: string | null | undefined): string {
   return value === null || value === undefined ? "null" : value;
 }
@@ -43,7 +37,6 @@ type Body = {
 function processTemplate(template: string, ctx: Record<string, any>): string {
   if (!template) return "";
   let result = template;
-
   for (const [k, v] of Object.entries(ctx)) {
     const re = new RegExp(`\\{\\{\\s*${k}\\s*\\}\\}`, "g");
     result = result.replace(re, String(v ?? ""));
@@ -70,29 +63,81 @@ function formatDateEs(value: any): string {
 
 function normalizeEmailBody(input: string): string {
   const raw = String(input ?? "");
-
   let s = raw.replace(/<\/br\s*>/gi, "<br/>");
   s = s.replace(/\r\n/g, "\n");
-
   const looksHtml = /<\/?[a-z][\s\S]*>/i.test(s) || /<br\s*\/?>/i.test(s);
-
   if (looksHtml) {
     s = s.replace(/\n/g, "<br/>");
     return s;
   }
-
   const escaped = s
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;");
-
   const withBreaks = escaped.replace(/\n/g, "<br/>");
-
   return `
   <div style="font-family: Arial, sans-serif; font-size: 14px; color: #111827; line-height: 1.45; white-space: normal;">
     ${withBreaks}
   </div>
   `.trim();
+}
+
+/**
+ * Resuelve las fotos del punto de control (casetilla) para una reserva.
+ * - "Arrib..." → casetilla_ingresos
+ * - "Despacha..." / "DISPATCHED" → casetilla_salidas
+ * Retorna HTML con las imágenes incrustadas.
+ */
+async function resolveCasetillaPhotos(
+  supabase: any,
+  reservationId: string,
+  statusToName: string
+): Promise<string> {
+  const lower = statusToName.toLowerCase();
+  let fotos: string[] = [];
+
+  try {
+    if (lower.includes("arrib")) {
+      const { data } = await supabase
+        .from("casetilla_ingresos")
+        .select("fotos")
+        .eq("reservation_id", reservationId)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      fotos = data?.fotos ?? [];
+    } else if (lower.includes("despacha") || lower.includes("dispatch")) {
+      const { data } = await supabase
+        .from("casetilla_salidas")
+        .select("fotos")
+        .eq("reservation_id", reservationId)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      fotos = data?.fotos ?? [];
+    }
+  } catch (e) {
+    console.warn("[resolveCasetillaPhotos] error fetching photos", e);
+  }
+
+  if (!fotos || fotos.length === 0) {
+    return '<p style="color:#6b7280;font-style:italic;font-size:13px;">Sin fotos disponibles para este registro.</p>';
+  }
+
+  const imgs = fotos
+    .map(
+      (url) =>
+        `<img src="${url}" alt="Foto punto de control" style="max-width:480px;width:100%;margin:6px 0;border-radius:8px;border:1px solid #e5e7eb;" loading="lazy" />`
+    )
+    .join("\n");
+
+  return `
+<div style="margin:12px 0;">
+  <p style="font-size:13px;font-weight:600;color:#374151;margin-bottom:8px;">
+    Fotos del punto de control (${fotos.length} imagen${fotos.length !== 1 ? "es" : ""}):
+  </p>
+  ${imgs}
+</div>`.trim();
 }
 
 serve(async (req) => {
@@ -101,7 +146,6 @@ serve(async (req) => {
 
   try {
     if (req.method === "OPTIONS") {
-      //console.log("[correspondence-process-event][OPTIONS]", { reqId });
       return new Response("ok", { headers: corsHeaders });
     }
 
@@ -112,27 +156,12 @@ serve(async (req) => {
     const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
     const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
 
-    /**console.log("[correspondence-process-event][INIT]", {
-      reqId,
-      hasSupabaseUrl: !!supabaseUrl,
-      hasServiceRoleKey: !!serviceRoleKey,
-      serviceRoleKeyPrefix: safePrefix(serviceRoleKey, 14),
-    });*/
-
     if (!supabaseUrl || !serviceRoleKey) {
       return json(500, { error: "Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY", reqId });
     }
 
     const authHeader = req.headers.get("authorization") || req.headers.get("Authorization") || "";
     const jwt = authHeader.replace(/^Bearer\s+/i, "").trim();
-
-    /**console.log("[correspondence-process-event][HEADERS]", {
-      reqId,
-      hasAuthHeader: !!authHeader,
-      authHeaderPrefix: safePrefix(authHeader, 16),
-      hasJwt: !!jwt,
-      jwtPrefix: safePrefix(jwt, 12),
-    });*/
 
     if (!jwt) {
       return json(401, { error: "Unauthorized", details: "Missing Authorization Bearer token", reqId });
@@ -141,13 +170,6 @@ serve(async (req) => {
     const supabase = createClient(supabaseUrl, serviceRoleKey);
 
     const { data: userData, error: userErr } = await supabase.auth.getUser(jwt);
-
-    /**console.log("[correspondence-process-event][AUTH]", {
-      reqId,
-      ok: !userErr && !!userData?.user?.id,
-      authedUserId: userData?.user?.id ?? null,
-      userErr: userErr?.message ?? null,
-    });*/
 
     if (userErr || !userData?.user) {
       return json(401, { error: "Unauthorized", details: userErr?.message ?? "Invalid JWT", reqId });
@@ -161,16 +183,6 @@ serve(async (req) => {
     }
 
     const { orgId, reservationId, actorUserId, eventType, statusFromId, statusToId } = body ?? ({} as any);
-
-    /**console.log("[correspondence-process-event][REQ]", {
-      reqId,
-      orgId,
-      reservationId,
-      actorUserId,
-      eventType,
-      statusFromId,
-      statusToId,
-    });*/
 
     if (!orgId || !reservationId || !actorUserId || !eventType) {
       return json(400, {
@@ -213,12 +225,6 @@ serve(async (req) => {
       console.error("[correspondence-process-event][RULES_ERROR]", { reqId, message: rulesErr.message });
       return json(500, { error: "Failed to fetch rules", details: rulesErr.message, reqId });
     }
-
-    /**console.log("[correspondence-process-event][RULES_MATCHED]", {
-      reqId,
-      rulesCount: rules?.length ?? 0,
-      ruleIds: rules?.map((r: any) => r.id) ?? [],
-    });*/
 
     if (!rules || rules.length === 0) {
       return json(200, {
@@ -265,40 +271,34 @@ serve(async (req) => {
 
     let createdByName = "";
     if (createdById) {
-      const { data: creator, error: creatorErr } = await supabase
+      const { data: creator } = await supabase
         .from("profiles")
         .select("name, email")
         .eq("id", createdById)
         .maybeSingle();
-
-      if (creatorErr) {
-        console.warn("[correspondence-process-event][CREATOR_PROFILE_WARN]", {
-          reqId,
-          createdById,
-          message: creatorErr.message,
-        });
-      } else {
-        createdByName = creator?.name || creator?.email || "";
-      }
+      createdByName = creator?.name || creator?.email || "";
     }
 
-    const { data: actorProfile, error: actorErr } = await supabase
+    const { data: actorProfile } = await supabase
       .from("profiles")
       .select("name, email")
       .eq("id", actorUserId)
       .maybeSingle();
 
-    if (actorErr) {
-      console.warn("[correspondence-process-event][ACTOR_PROFILE_WARN]", {
-        reqId,
-        actorUserId,
-        message: actorErr.message,
-      });
-    }
-
     const actorName = actorProfile?.name || actorProfile?.email || "Usuario";
 
-    const templateCtx = {
+    // Obtener el nombre del estado destino (para resolver fotos si aplica)
+    let statusToName = "";
+    if (statusToId) {
+      const { data: statusData } = await supabase
+        .from("reservation_statuses")
+        .select("name")
+        .eq("id", statusToId)
+        .maybeSingle();
+      statusToName = statusData?.name ?? "";
+    }
+
+    const templateCtx: Record<string, any> = {
       reservation_id: (reservation as any)?.id ?? "",
       dock: (reservation as any)?.docks?.name ?? "",
       start_datetime: formatDateEs((reservation as any)?.start_datetime),
@@ -310,6 +310,8 @@ serve(async (req) => {
       invoice: (reservation as any)?.invoice ?? "",
       created_by: createdByName,
       actor: actorName,
+      // fotos se resolverá por regla si include_casetilla_photos === true
+      fotos: "",
     };
 
     const smtpFrom = Deno.env.get("SMTP_FROM") ?? "no-reply-sro@ologistics.com";
@@ -320,14 +322,15 @@ serve(async (req) => {
     const results: any[] = [];
 
     for (const rule of rules as any[]) {
-      /**console.log("[correspondence-process-event][PROCESS_RULE]", {
-        reqId,
-        ruleId: rule.id,
-        name: rule.name,
-        sender_mode: rule.sender_mode,
-        recipients_mode: rule.recipients_mode,
-      });*/
+      // --- Resolver fotos si la regla lo solicita ---
+      let ruleCtx = { ...templateCtx };
 
+      if (rule.include_casetilla_photos === true && statusToName) {
+        const fotosHtml = await resolveCasetillaPhotos(supabase, reservationId, statusToName);
+        ruleCtx = { ...ruleCtx, fotos: fotosHtml };
+      }
+
+      // --- Resolver remitente ---
       let senderUserId: string | null = null;
       if (rule.sender_mode === "actor") senderUserId = actorUserId;
       if (rule.sender_mode === "fixed" && rule.sender_user_id) senderUserId = rule.sender_user_id;
@@ -412,8 +415,8 @@ serve(async (req) => {
         continue;
       }
 
-      const subject = processTemplate(rule.subject || "", templateCtx);
-      const bodyRaw = processTemplate(rule.body_template || "", templateCtx);
+      const subject = processTemplate(rule.subject || "", ruleCtx);
+      const bodyRaw = processTemplate(rule.body_template || "", ruleCtx);
       const bodyHtml = normalizeEmailBody(bodyRaw);
 
       const { data: outbox, error: outboxErr } = await supabase
@@ -480,7 +483,7 @@ serve(async (req) => {
         }
 
         if (smtpResp.ok && smtpData?.success) {
-          const { error: sentUpdateErr } = await supabase
+          await supabase
             .from("correspondence_outbox")
             .update({
               status: "sent",
@@ -488,15 +491,6 @@ serve(async (req) => {
               error: null,
             })
             .eq("id", outbox.id);
-
-          if (sentUpdateErr) {
-            console.error("[correspondence-process-event][OUTBOX_SENT_UPDATE_ERROR]", {
-              reqId,
-              ruleId: rule.id,
-              outboxId: outbox.id,
-              message: sentUpdateErr.message,
-            });
-          }
 
           sent++;
           results.push({
@@ -510,22 +504,13 @@ serve(async (req) => {
             smtpData?.details ??
             `smtp-send returned HTTP ${smtpResp.status}`;
 
-          const { error: failedUpdateErr } = await supabase
+          await supabase
             .from("correspondence_outbox")
             .update({
               status: "failed",
               error: smtpError,
             })
             .eq("id", outbox.id);
-
-          if (failedUpdateErr) {
-            console.error("[correspondence-process-event][OUTBOX_FAILED_UPDATE_ERROR]", {
-              reqId,
-              ruleId: rule.id,
-              outboxId: outbox.id,
-              message: failedUpdateErr.message,
-            });
-          }
 
           failed++;
           results.push({
@@ -538,22 +523,13 @@ serve(async (req) => {
       } catch (smtpInvokeErr: any) {
         const smtpError = smtpInvokeErr?.message ?? "smtp exception";
 
-        const { error: failedUpdateErr } = await supabase
+        await supabase
           .from("correspondence_outbox")
           .update({
             status: "failed",
             error: smtpError,
           })
           .eq("id", outbox.id);
-
-        if (failedUpdateErr) {
-          console.error("[correspondence-process-event][OUTBOX_FAILED_UPDATE_ERROR]", {
-            reqId,
-            ruleId: rule.id,
-            outboxId: outbox.id,
-            message: failedUpdateErr.message,
-          });
-        }
 
         failed++;
         results.push({
@@ -564,14 +540,6 @@ serve(async (req) => {
         });
       }
     }
-
-    /**console.log("[correspondence-process-event][SUMMARY]", {
-      reqId,
-      queued,
-      sent,
-      failed,
-      durationMs: Date.now() - startedAt,
-    });*/
 
     return json(200, {
       success: true,

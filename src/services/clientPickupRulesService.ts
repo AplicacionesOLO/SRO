@@ -300,3 +300,75 @@ export async function deleteRule(
     throw error;
   }
 }
+
+/**
+ * Elimina todos los bloques asociados a una regla específica.
+ * Los bloques se almacenan en dock_time_blocks con reason = 'CLIENT_PICKUP:{ruleId}'.
+ */
+export async function deleteBlocksForRule(
+  orgId: string,
+  ruleId: string
+): Promise<void> {
+  if (!orgId) {
+    throw new Error('orgId es requerido');
+  }
+
+  if (!ruleId) {
+    throw new Error('ruleId es requerido');
+  }
+
+  const reasonPattern = `CLIENT_PICKUP:${ruleId}`;
+
+  console.log('[ClientPickupRules] deleteBlocksForRule:start', { orgId, ruleId, reasonPattern });
+
+  const { error, count } = await supabase
+    .from('dock_time_blocks')
+    .delete({ count: 'exact' })
+    .eq('org_id', orgId)
+    .eq('reason', reasonPattern);
+
+  if (error) {
+    console.error('[ClientPickupRules] deleteBlocksForRule:error', { error, orgId, ruleId, reasonPattern });
+    throw error;
+  }
+
+  console.log('[ClientPickupRules] deleteBlocksForRule:success', { orgId, ruleId, reasonPattern, deleted: count ?? 0 });
+}
+
+/**
+ * Fuerza la regeneración de bloques para un andén específico.
+ * Se invoca tras crear o editar una regla.
+ */
+export async function regenerateBlocks(
+  orgId: string,
+  dockId: string
+): Promise<void> {
+  if (!orgId) {
+    throw new Error('orgId es requerido');
+  }
+
+  if (!dockId) {
+    throw new Error('dockId es requerido');
+  }
+
+  console.log('[ClientPickupRules] regenerateBlocks:start', { orgId, dockId });
+
+  try {
+    const { data, error } = await supabase.functions.invoke('generate-client-pickup-blocks', {
+      body: {
+        org_id: orgId,
+        dock_id: dockId,
+        force_regenerate: true,
+      },
+    });
+
+    if (error) {
+      console.error('[ClientPickupRules] regenerateBlocks:invoke_error', { error, orgId, dockId });
+    } else {
+      console.log('[ClientPickupRules] regenerateBlocks:success', { response: data, orgId, dockId });
+    }
+  } catch (err: any) {
+    console.error('[ClientPickupRules] regenerateBlocks:catch', { err, orgId, dockId });
+    throw new Error('Error al regenerar los bloques: ' + (err?.message || String(err)));
+  }
+}
