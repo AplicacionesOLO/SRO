@@ -1242,15 +1242,26 @@ export default function UsuariosPage() {
                         <span className="text-gray-600">
                           Seleccionados: <span className="font-semibold text-teal-600">{selectedProviderIds.length}</span>
                         </span>
-                        {selectedProviderIds.length > 0 && (
-                          <button
-                            type="button"
-                            onClick={() => setSelectedProviderIds([])}
-                            className="text-red-600 hover:text-red-700 font-medium"
-                          >
-                            Limpiar selección
-                          </button>
-                        )}
+                        <div className="flex items-center gap-3">
+                          {selectedProviderIds.length < filteredProviders.length && (
+                            <button
+                              type="button"
+                              onClick={() => setSelectedProviderIds(filteredProviders.map(p => p.id))}
+                              className="text-teal-600 hover:text-teal-700 font-medium"
+                            >
+                              Seleccionar todo
+                            </button>
+                          )}
+                          {selectedProviderIds.length > 0 && (
+                            <button
+                              type="button"
+                              onClick={() => setSelectedProviderIds([])}
+                              className="text-red-600 hover:text-red-700 font-medium"
+                            >
+                              Limpiar selección
+                            </button>
+                          )}
+                        </div>
                       </div>
 
                       {/* Lista de proveedores */}

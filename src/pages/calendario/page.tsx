@@ -16,6 +16,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { sortDocksByNameNumber } from '../../utils/sortDocks';
 import { ConfirmModal } from '../../components/base/ConfirmModal';
 import { dockAllocationService, type DockAllocationRule } from '../../services/dockAllocationService';
+import { providersService } from '../../services/providersService';
 
 type ViewMode = '1day' | '3days' | '7days';
 type TabMode = 'calendar' | 'statuses';
@@ -101,6 +102,8 @@ export default function CalendarioPage() {
 
   const [filterCategory, setFilterCategory] = useState<string>('all');
   const [filterStatus, setFilterStatus] = useState<string>('all');
+
+  const [providers, setProviders] = useState<{ id: string; name: string }[]>([]);
 
   const [draggedEvent, setDraggedEvent] = useState<CalendarEvent | null>(null);
 
@@ -946,6 +949,11 @@ export default function CalendarioPage() {
     setEnabledDockIds(new Set());
   }, []);
 
+  useEffect(() => {
+    if (!orgId) return;
+    providersService.getActive(orgId).then(setProviders).catch(() => {});
+  }, [orgId]);
+
   // ✅ Render
   if (permLoading || loading) {
     return (
@@ -1069,7 +1077,7 @@ export default function CalendarioPage() {
               <div className="flex items-center gap-4 flex-wrap">
                 <button
                   onClick={goToToday}
-                  className="px-4 py-2 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 font-medium text-sm whitespace-nowrap"
+                  className="px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 font-medium whitespace-nowrap"
                 >
                   Hoy
                 </button>
@@ -1492,26 +1500,37 @@ export default function CalendarioPage() {
                                                   minHeight: '40px',
                                                 }}
                                               >
-                                                <div className="p-2 h-full flex flex-col justify-between text-xs">
-                                                  <div>
+                                                <div className="p-2 h-full flex flex-col justify-between text-xs overflow-hidden">
+                                                  <div className="flex flex-col gap-0.5 overflow-hidden">
                                                     <div className="font-semibold text-gray-900 truncate">
                                                       #{reservation.id.slice(0, 8)}
                                                     </div>
-                                                    <div className="text-gray-600 truncate">{reservation.driver}</div>
-                                                    <div className="text-gray-500 truncate text-[10px]">
-                                                      DUA: {reservation.dua}
-                                                    </div>
+                                                    {reservation.dua && (
+                                                      <div className="text-gray-500 truncate text-[10px]">
+                                                        DUA: {reservation.dua}
+                                                      </div>
+                                                    )}
+                                                    {reservation.order_request_number && (
+                                                      <div className="text-gray-500 truncate text-[10px]">
+                                                        Pedido: {reservation.order_request_number}
+                                                      </div>
+                                                    )}
+                                                    {reservation.shipper_provider && (
+                                                      <div className="text-gray-500 truncate text-[10px]">
+                                                        Prov: {providers.find(p => p.id === reservation.shipper_provider)?.name || reservation.shipper_provider}
+                                                      </div>
+                                                    )}
                                                   </div>
-                                                  <div className="flex items-center justify-between mt-1">
+                                                  <div className="flex items-center justify-between mt-1 gap-1">
                                                     <span
-                                                      className="px-2 py-0.5 rounded text-[10px] font-medium text-white"
+                                                      className="px-2 py-0.5 rounded text-[10px] font-medium text-white shrink-0"
                                                       style={{ backgroundColor: reservation.status?.color || '#6B7280' }}
                                                     >
                                                       {reservation.status?.name || 'Sin estado'}
                                                     </span>
-                                                    <span className="text-[10px] text-gray-500">
-                                                      {start.getHours().toString().padStart(2, '0')}:
-                                                      {start.getMinutes().toString().padStart(2, '0')}
+                                                    <span className="text-[10px] text-gray-500 flex items-center gap-0.5 shrink-0">
+                                                      <i className="ri-time-line w-3 h-3 flex items-center justify-center"></i>
+                                                      {start.getHours().toString().padStart(2, '0')}:{start.getMinutes().toString().padStart(2, '0')} - {end.getHours().toString().padStart(2, '0')}:{end.getMinutes().toString().padStart(2, '0')}
                                                     </span>
                                                   </div>
                                                 </div>

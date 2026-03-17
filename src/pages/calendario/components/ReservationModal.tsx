@@ -85,6 +85,8 @@ export default function ReservationModal({
     cargoType: ''
   });
 
+  const [isImported, setIsImported] = useState(false);
+
   const [openingFileId, setOpeningFileId] = useState<string | null>(null);
   const [openFileError, setOpenFileError] = useState<string>('');
   const [files, setFiles] = useState<FileItem[]>([]);
@@ -213,6 +215,8 @@ export default function ReservationModal({
           cargoType: reservation.cargo_type || ''
         });
 
+        setIsImported(!!(reservation.dua));
+
         // ✅ Cargar la razón de cancelación si existe
         setCancelReason(reservation.cancel_reason || '');
         
@@ -243,6 +247,7 @@ export default function ReservationModal({
           cargoType: defaults?.cargo_type || ''
         });
         setFiles([]);
+        setIsImported(false);
         
         // ✅ Limpiar razón de cancelación en nueva reserva
         setCancelReason('');
@@ -1134,17 +1139,62 @@ export default function ReservationModal({
 
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                           <div>
-                            <label className={labelBase}>DUA *</label>
+                            {/* Toggle Nacional / Importado + campo DUA condicional */}
+                            <div className="flex items-center justify-between mb-2">
+                              <label className="text-sm font-medium text-gray-800">
+                                Origen de la carga
+                              </label>
+                            </div>
                             {canViewSensitive ? (
-                              <input
-                                type="text"
-                                value={formData.dua}
-                                onChange={(e) => setFormData({ ...formData, dua: e.target.value })}
-                                className={sensitiveInputCls}
-                                placeholder="DUA-2024-001"
-                                required={!isReadOnly}
-                                disabled={isReadOnly}
-                              />
+                              <>
+                                <div className="flex rounded-lg border border-gray-300 overflow-hidden mb-3">
+                                  <button
+                                    type="button"
+                                    disabled={isReadOnly}
+                                    onClick={() => {
+                                      setIsImported(false);
+                                      setFormData(prev => ({ ...prev, dua: '' }));
+                                    }}
+                                    className={`flex-1 px-3 py-2 text-sm font-medium transition-colors whitespace-nowrap ${
+                                      !isImported
+                                        ? 'bg-teal-600 text-white'
+                                        : 'bg-white text-gray-600 hover:bg-gray-50'
+                                    } ${isReadOnly ? 'cursor-not-allowed opacity-70' : 'cursor-pointer'}`}
+                                  >
+                                    <i className="ri-home-line mr-1.5 w-4 h-4 inline-flex items-center justify-center"></i>
+                                    Nacional
+                                  </button>
+                                  <button
+                                    type="button"
+                                    disabled={isReadOnly}
+                                    onClick={() => setIsImported(true)}
+                                    className={`flex-1 px-3 py-2 text-sm font-medium transition-colors whitespace-nowrap ${
+                                      isImported
+                                        ? 'bg-teal-600 text-white'
+                                        : 'bg-white text-gray-600 hover:bg-gray-50'
+                                    } ${isReadOnly ? 'cursor-not-allowed opacity-70' : 'cursor-pointer'}`}
+                                  >
+                                    <i className="ri-ship-line mr-1.5 w-4 h-4 inline-flex items-center justify-center"></i>
+                                    Importado
+                                  </button>
+                                </div>
+                                {isImported && (
+                                  <div>
+                                    <label className="block text-sm font-medium text-gray-800 mb-2">
+                                      DUA *
+                                    </label>
+                                    <input
+                                      type="text"
+                                      value={formData.dua}
+                                      onChange={(e) => setFormData({ ...formData, dua: e.target.value })}
+                                      className={sensitiveInputCls}
+                                      placeholder="DUA-2024-001"
+                                      required={!isReadOnly}
+                                      disabled={isReadOnly}
+                                    />
+                                  </div>
+                                )}
+                              </>
                             ) : (
                               <div className={inputMasked}>
                                 <span className="select-none">Reservado</span>

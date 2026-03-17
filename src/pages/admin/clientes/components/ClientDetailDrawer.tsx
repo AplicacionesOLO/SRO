@@ -478,6 +478,40 @@ export default function ClientDetailDrawer({
                 />
               </div>
 
+              {canAssignDocks && !rules?.allow_all_docks && filteredDocks.length > 0 && (
+                <div className="flex items-center gap-2 justify-end">
+                  {filteredDocks.some(d => !selectedDockIds.includes(d.id)) && (
+                    <button
+                      onClick={() => {
+                        const newIds = [...selectedDockIds];
+                        filteredDocks.forEach(d => {
+                          if (!newIds.includes(d.id)) newIds.push(d.id);
+                        });
+                        setSelectedDockIds(newIds);
+                      }}
+                      disabled={saving}
+                      className="px-3 py-1 text-xs font-medium text-teal-700 bg-teal-50 border border-teal-300 rounded-md hover:bg-teal-100 transition-colors whitespace-nowrap disabled:opacity-50"
+                    >
+                      <i className="ri-checkbox-multiple-line mr-1"></i>
+                      Seleccionar todo
+                    </button>
+                  )}
+                  {filteredDocks.some(d => selectedDockIds.includes(d.id)) && (
+                    <button
+                      onClick={() => {
+                        const filteredIds = filteredDocks.map(d => d.id);
+                        setSelectedDockIds(selectedDockIds.filter(id => !filteredIds.includes(id)));
+                      }}
+                      disabled={saving}
+                      className="px-3 py-1 text-xs font-medium text-gray-600 bg-gray-50 border border-gray-300 rounded-md hover:bg-gray-100 transition-colors whitespace-nowrap disabled:opacity-50"
+                    >
+                      <i className="ri-checkbox-blank-line mr-1"></i>
+                      Limpiar selección
+                    </button>
+                  )}
+                </div>
+              )}
+
               <div className="space-y-2 max-h-96 overflow-y-auto">
                 {filteredDocks.length === 0 ? (
                   <div className="text-center py-8 text-gray-500">
@@ -687,6 +721,41 @@ export default function ClientDetailDrawer({
                   className="w-full pl-10 pr-4 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent"
                 />
               </div>
+
+              {canManageProviders && filteredProviders.length > 0 && (
+                <div className="flex items-center gap-2 justify-end">
+                  {filteredProviders.some(p => !selectedProviders.has(p.id)) && (
+                    <button
+                      onClick={() => {
+                        const newMap = new Map(selectedProviders);
+                        filteredProviders.forEach(p => {
+                          if (!newMap.has(p.id)) newMap.set(p.id, false);
+                        });
+                        setSelectedProviders(newMap);
+                      }}
+                      disabled={saving}
+                      className="px-3 py-1 text-xs font-medium text-teal-700 bg-teal-50 border border-teal-300 rounded-md hover:bg-teal-100 transition-colors whitespace-nowrap disabled:opacity-50"
+                    >
+                      <i className="ri-checkbox-multiple-line mr-1"></i>
+                      Seleccionar todo
+                    </button>
+                  )}
+                  {filteredProviders.some(p => selectedProviders.has(p.id)) && (
+                    <button
+                      onClick={() => {
+                        const newMap = new Map(selectedProviders);
+                        filteredProviders.forEach(p => newMap.delete(p.id));
+                        setSelectedProviders(newMap);
+                      }}
+                      disabled={saving}
+                      className="px-3 py-1 text-xs font-medium text-gray-600 bg-gray-50 border border-gray-300 rounded-md hover:bg-gray-100 transition-colors whitespace-nowrap disabled:opacity-50"
+                    >
+                      <i className="ri-checkbox-blank-line mr-1"></i>
+                      Limpiar selección
+                    </button>
+                  )}
+                </div>
+              )}
 
               <div className="space-y-2 max-h-96 overflow-y-auto">
                 {filteredProviders.length === 0 ? (
