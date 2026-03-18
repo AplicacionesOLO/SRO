@@ -156,6 +156,7 @@ export default function CalendarioPage() {
   const canBlockCreate = useMemo(() => can('dock_blocks.create'), [can]);
   const canBlockUpdate = useMemo(() => can('dock_blocks.update'), [can]);
   const canBlockDelete = useMemo(() => can('dock_blocks.delete'), [can]);
+  const canViewBlocks = useMemo(() => can('dock_blocks.view'), [can]);
   const canManageStatuses = useMemo(() => can('operational_statuses.view'), [can]);
 
   // Computed: almacén seleccionado
@@ -925,7 +926,6 @@ export default function CalendarioPage() {
       // console.warn('[DockAllocation] missing clientId - no client linked to provider');
       setAllocationError('No se encontró un cliente vinculado al proveedor. Las reglas de andenes no se aplicarán.');
       setAllocationRule(null);
-      setAllocationLoading(false);
       setSelectionMode(true);
       return;
     }
@@ -1008,6 +1008,16 @@ export default function CalendarioPage() {
     return '#F9FAFB';
   };
 
+  /** Devuelve color de texto con contraste adecuado para un fondo hex */
+  const getContrastColor = (hex: string): string => {
+    if (!hex || hex.length < 7) return '#111827';
+    const r = parseInt(hex.slice(1, 3), 16);
+    const g = parseInt(hex.slice(3, 5), 16);
+    const b = parseInt(hex.slice(5, 7), 16);
+    const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+    return luminance > 0.5 ? '#111827' : '#FFFFFF';
+  };
+
   return (
     <div className="h-screen flex flex-col bg-gray-50">
       {/* Pestañas de navegación */}
@@ -1038,17 +1048,19 @@ export default function CalendarioPage() {
                 Estatus Op
               </button>
             )}
-            <button
-              onClick={() => setTabMode('blocks')}
-              className={`px-6 py-3 font-medium text-sm border-b-2 transition-colors whitespace-nowrap ${
-                tabMode === 'blocks'
-                  ? 'border-teal-600 text-teal-600'
-                  : 'border-transparent text-gray-600 hover:text-gray-900'
-              }`}
-            >
-              <i className="ri-lock-line mr-2 w-4 h-4 inline-flex items-center justify-center"></i>
-              Bloqueos
-            </button>
+            {canViewBlocks && (
+              <button
+                onClick={() => setTabMode('blocks')}
+                className={`px-6 py-3 font-medium text-sm border-b-2 transition-colors whitespace-nowrap ${
+                  tabMode === 'blocks'
+                    ? 'border-teal-600 text-teal-600'
+                    : 'border-transparent text-gray-600 hover:text-gray-900'
+                }`}
+              >
+                <i className="ri-lock-line mr-2 w-4 h-4 inline-flex items-center justify-center"></i>
+                Bloqueos
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -1058,7 +1070,7 @@ export default function CalendarioPage() {
         <div className="flex-1 overflow-auto p-6">
           <OperationalStatusesTab orgId={orgId!} />
         </div>
-      ) : tabMode === 'blocks' ? (
+      ) : tabMode === 'blocks' && canViewBlocks ? (
         <div className="flex-1 overflow-auto">
           <BlocksManagementTab />
         </div>
@@ -1334,19 +1346,45 @@ export default function CalendarioPage() {
                             </div>
 
                             <div className="flex h-12">
-                              {filteredDocks.map((dock) => (
-                                <div
-                                  key={dock.id}
-                                  className="flex-shrink-0 border-r border-gray-200 flex items-center justify-center px-2"
-                                  style={{
-                                    width: `${COL_W}px`,
-                                    minWidth: `${COL_W}px`,
-                                    backgroundColor: getCategoryColor(dock.category),
-                                  }}
-                                >
-                                  <span className="font-medium text-sm text-gray-900 truncate">{dock.name}</span>
-                                </div>
-                              ))}
+                              {filteredDocks.map((dock) => {
+                                const hasCustomColor = !!(dock as any).header_color;
+                                const bgColor = hasCustomColor
+                                  ? (dock as any).header_color
+                                  : getCategoryColor(dock.category);
+                                const nameColor = hasCustomColor
+                                  ? getContrastColor((dock as any).header_color)
+                                  : '#111827';
+                                const refColor = hasCustomColor
+                                  ? getContrastColor((dock as any).header_color)
+                                  : '#6B7280';
+
+                                return (
+                                  <div
+                                    key={dock.id}
+                                    className="flex-shrink-0 border-r border-gray-200 flex flex-col items-center justify-center px-2"
+                                    style={{
+                                      width: `${COL_W}px`,
+                                      minWidth: `${COL_W}px`,
+                                      backgroundColor: bgColor,
+                                    }}
+                                  >
+                                    <span
+                                      className="font-semibold text-sm truncate w-full text-center leading-tight"
+                                      style={{ color: nameColor }}
+                                    >
+                                      {dock.name}
+                                    </span>
+                                    {dock.reference && (
+                                      <span
+                                        className="text-[10px] truncate w-full text-center leading-tight mt-0.5"
+                                        style={{ color: refColor, opacity: hasCustomColor ? 0.85 : 1 }}
+                                      >
+                                        {dock.reference}
+                                      </span>
+                                    )}
+                                  </div>
+                                );
+                              })}
                             </div>
                           </div>
                         ))}

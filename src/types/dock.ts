@@ -1,6 +1,8 @@
 export interface Dock {
   id: string;
   name: string;
+  reference?: string | null;
+  header_color?: string | null;
   category: 'recepcion' | 'despacho' | 'zona_franca';
   status: 'disponible' | 'ocupado' | 'bloqueado' | 'danado';
   order: number;

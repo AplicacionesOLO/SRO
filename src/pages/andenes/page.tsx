@@ -29,6 +29,8 @@ interface Warehouse {
 interface Dock {
   id: string;
   name: string;
+  reference?: string | null;
+  header_color?: string | null;
   category_id: string;
   status_id: string;
   warehouse_id: string | null;
@@ -88,6 +90,8 @@ export default function AndenesPage() {
         .select(`
           id,
           name,
+          reference,
+          header_color,
           category_id,
           status_id,
           warehouse_id,
@@ -208,7 +212,12 @@ export default function AndenesPage() {
   // Filtrar andenes
   const filteredDocks = docks.filter(dock => {
     if (showOnlyActive && !dock.is_active) return false;
-    if (searchTerm && !dock.name.toLowerCase().includes(searchTerm.toLowerCase())) return false;
+    if (searchTerm) {
+      const term = searchTerm.toLowerCase();
+      const matchesName = dock.name.toLowerCase().includes(term);
+      const matchesReference = dock.reference?.toLowerCase().includes(term) ?? false;
+      if (!matchesName && !matchesReference) return false;
+    }
     if (selectedCategory !== 'all' && dock.category_id !== selectedCategory) return false;
     if (selectedStatus !== 'all' && dock.status_id !== selectedStatus) return false;
     if (selectedWarehouse !== 'all') {
@@ -414,6 +423,12 @@ export default function AndenesPage() {
                       Nombre
                     </th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Referencia
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Color
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                       Almacén
                     </th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
@@ -435,6 +450,26 @@ export default function AndenesPage() {
                     <tr key={dock.id} className="hover:bg-gray-50 transition-colors">
                       <td className="px-6 py-4 whitespace-nowrap">
                         <div className="text-sm font-medium text-gray-900">{dock.name}</div>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        {dock.reference ? (
+                          <div className="text-sm text-gray-600">{dock.reference}</div>
+                        ) : (
+                          <span className="text-xs text-gray-400">—</span>
+                        )}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        {dock.header_color ? (
+                          <div className="flex items-center gap-2">
+                            <div
+                              className="w-6 h-6 rounded border border-gray-200 flex-shrink-0"
+                              style={{ backgroundColor: dock.header_color }}
+                            />
+                            <span className="text-xs font-mono text-gray-600">{dock.header_color}</span>
+                          </div>
+                        ) : (
+                          <span className="text-xs text-gray-400 italic">Default</span>
+                        )}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
                         {dock.warehouse ? (

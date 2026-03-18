@@ -63,6 +63,8 @@ export interface Dock {
   id: string;
   org_id: string;
   name: string;
+  reference?: string | null;
+  header_color?: string | null;
   category_id: string | null;
   status_id: string | null;
   is_active: boolean;
@@ -268,7 +270,7 @@ export const calendarService = {
         supabase.from('profiles').select('id, name, email').in('id', creatorIds),
         supabase
           .from('docks')
-          .select('id, name, category:dock_categories(name, color)')
+          .select('id, name, reference, category:dock_categories(name, color)')
           .in('id', dockIds),
       ]);
 
@@ -290,6 +292,7 @@ export const calendarService = {
       .from('docks')
       .select(`
         *,
+        reference,
         category:dock_categories(name, code, color),
         status:dock_statuses(name, code, color, is_blocking)
       `)
