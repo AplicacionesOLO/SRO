@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import PhotoUploader from '../../../components/base/PhotoUploader';
 
 interface ExitFormProps {
@@ -10,10 +10,14 @@ interface ExitFormProps {
     provider_name?: string | null;
     warehouse_name?: string | null;
   } | null;
-  onSubmit: (fotos: string[]) => Promise<void>;
+  onSubmit: () => Promise<void>;
   onCancel: () => void;
   isSubmitting: boolean;
   orgId: string;
+  initialFotos?: string[];
+  onFotosChange?: (urls: string[]) => void;
+  /** Clave de sessionStorage para persistencia directa del PhotoUploader */
+  photoSessionKey?: string;
 }
 
 export default function ExitForm({
@@ -21,18 +25,38 @@ export default function ExitForm({
   onSubmit,
   onCancel,
   isSubmitting,
-  orgId
+  orgId,
+  initialFotos = [],
+  onFotosChange,
+  photoSessionKey
 }: ExitFormProps) {
   const [showConfirm, setShowConfirm] = useState(false);
-  const [fotos, setFotos] = useState<string[]>([]);
+  const [fotos, setFotosLocal] = useState<string[]>(initialFotos);
+  const [photoError, setPhotoError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setFotosLocal(initialFotos);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const handleFotosChange = (urls: string[]) => {
+    setFotosLocal(urls);
+    onFotosChange?.(urls);
+    if (urls.length >= 3) setPhotoError(null);
+  };
 
   const handleSubmitClick = () => {
+    if (fotos.length < 3) {
+      setPhotoError(`Se requieren al menos 3 fotos. Faltan ${3 - fotos.length} foto${3 - fotos.length !== 1 ? 's' : ''}.`);
+      return;
+    }
+    setPhotoError(null);
     setShowConfirm(true);
   };
 
   const handleConfirm = async () => {
     setShowConfirm(false);
-    await onSubmit(fotos);
+    await onSubmit();
   };
 
   if (!reservation) {
@@ -185,10 +209,18 @@ export default function ExitForm({
           <PhotoUploader
             orgId={orgId}
             folder="salida"
-            onChange={setFotos}
+            onChange={handleFotosChange}
             maxPhotos={5}
             disabled={isSubmitting}
+            initialUrls={fotos}
+            sessionKey={photoSessionKey}
           />
+          {photoError && (
+            <div className="mt-3 flex items-center gap-2 px-4 py-3 bg-red-50 border border-red-200 rounded-lg">
+              <i className="ri-camera-line text-red-500 flex-shrink-0"></i>
+              <p className="text-sm text-red-700 font-medium">{photoError}</p>
+            </div>
+          )}
         </div>
 
         {/* Botones de acción */}

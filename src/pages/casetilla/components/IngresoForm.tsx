@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import type { CreateCasetillaIngresoInput } from '../../../types/casetilla';
 import PhotoUploader from '../../../components/base/PhotoUploader';
 
@@ -8,9 +8,13 @@ interface IngresoFormProps {
   initialData?: Partial<CreateCasetillaIngresoInput>;
   isSubmitting?: boolean;
   orgId: string;
+  initialFotos?: string[];
+  onFotosChange?: (urls: string[]) => void;
+  /** Clave de sessionStorage para persistencia directa del PhotoUploader */
+  photoSessionKey?: string;
 }
 
-function IngresoForm({ onSubmit, onCancel, initialData, isSubmitting, orgId }: IngresoFormProps) {
+function IngresoForm({ onSubmit, onCancel, initialData, isSubmitting, orgId, initialFotos = [], onFotosChange, photoSessionKey }: IngresoFormProps) {
   const [formData, setFormData] = useState<CreateCasetillaIngresoInput>({
     chofer: initialData?.chofer || '',
     matricula: initialData?.matricula || '',
@@ -20,10 +24,30 @@ function IngresoForm({ onSubmit, onCancel, initialData, isSubmitting, orgId }: I
     numero_pedido: initialData?.numero_pedido || '',
     reservation_id: initialData?.reservation_id
   });
-  const [fotos, setFotos] = useState<string[]>([]);
+  // fotos inicializado desde el padre; si el padre tiene URLs ya subidas, se restauran
+  const [fotos, setFotosLocal] = useState<string[]>(initialFotos);
+  const [photoError, setPhotoError] = useState<string | null>(null);
+
+  // Si initialFotos cambia desde el padre (ej: remount con fotos ya subidas), sincroniza
+  useEffect(() => {
+    setFotosLocal(initialFotos);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const handleFotosChange = (urls: string[]) => {
+    setFotosLocal(urls);
+    onFotosChange?.(urls);
+    // Limpiar error cuando ya hay suficientes fotos
+    if (urls.length >= 3) setPhotoError(null);
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (fotos.length < 3) {
+      setPhotoError(`Se requieren al menos 3 fotos. Faltan ${3 - fotos.length} foto${3 - fotos.length !== 1 ? 's' : ''}.`);
+      return;
+    }
+    setPhotoError(null);
     await onSubmit({ ...formData, fotos });
   };
 
@@ -187,10 +211,18 @@ function IngresoForm({ onSubmit, onCancel, initialData, isSubmitting, orgId }: I
           <PhotoUploader
             orgId={orgId}
             folder="ingreso"
-            onChange={setFotos}
+            onChange={handleFotosChange}
             maxPhotos={5}
             disabled={isSubmitting}
+            initialUrls={fotos}
+            sessionKey={photoSessionKey}
           />
+          {photoError && (
+            <div className="mt-3 flex items-center gap-2 px-4 py-3 bg-red-50 border border-red-200 rounded-lg">
+              <i className="ri-camera-line text-red-500 flex-shrink-0"></i>
+              <p className="text-sm text-red-700 font-medium">{photoError}</p>
+            </div>
+          )}
         </div>
 
         {/* Botones - Responsive */}

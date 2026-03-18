@@ -3,6 +3,17 @@ import { supabase } from '../../lib/supabase';
 
 const BUCKET = 'casetilla-fotos';
 
+// ─── Custom event para bridgear gap de re-montajes tardíos ────────────────
+// Cuando Android hace UNMOUNT antes de que termine el upload, el nuevo
+// instance montado escucha este evento y se rehidrata con las URLs.
+const PHOTO_UPLOADED_EVENT = 'casetilla:photo-uploaded';
+
+interface PhotoUploadedEventDetail {
+  sessionKey: string;
+  urls: string[];
+}
+// ─────────────────────────────────────────────────────────────────────────
+
 interface PhotoItem {
   id: string;
   file: File;
@@ -18,6 +29,14 @@ interface PhotoUploaderProps {
   onChange: (urls: string[]) => void;
   maxPhotos?: number;
   disabled?: boolean;
+  /** URLs de fotos ya subidas — permite restaurar el estado visual tras un remount */
+  initialUrls?: string[];
+  /**
+   * Clave de sessionStorage donde el uploader persiste las URLs subidas de forma
+   * INMEDIATA (sin depender del ciclo React). Soluciona la race condition de Android
+   * donde el unmount ocurre antes de que el useEffect del padre pueda escribir.
+   */
+  sessionKey?: string;
 }
 
 function genId(): string {
@@ -76,18 +95,85 @@ export default function PhotoUploader({
   onChange,
   maxPhotos = 5,
   disabled = false,
+  initialUrls = [],
+  sessionKey,
 }: PhotoUploaderProps) {
-  const [photos, setPhotos] = useState<PhotoItem[]>([]);
+  // Inicializar desde initialUrls > sessionStorage[sessionKey] > []
+  const [photos, setPhotos] = useState<PhotoItem[]>(() => {
+    if (initialUrls.length) {
+      return initialUrls.map((url) => ({
+        id: genId(),
+        file: new File([], 'restored.jpg', { type: 'image/jpeg' }),
+        previewUrl: url,
+        uploadedUrl: url,
+        status: 'done' as const,
+      }));
+    }
+    // Fallback: leer desde sessionStorage[sessionKey] si el padre no tenía datos
+    if (sessionKey) {
+      try {
+        const raw = sessionStorage.getItem(sessionKey);
+        if (raw) {
+          const urls = JSON.parse(raw) as string[];
+          if (urls.length) {
+            return urls.map((url) => ({
+              id: genId(),
+              file: new File([], 'restored.jpg', { type: 'image/jpeg' }),
+              previewUrl: url,
+              uploadedUrl: url,
+              status: 'done' as const,
+            }));
+          }
+        }
+      } catch { /* ignore */ }
+    }
+    return [];
+  });
+
   const [bucketReady, setBucketReady] = useState(false);
 
-  // Dos refs separados: uno para cámara, otro para galería
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const galleryInputRef = useRef<HTMLInputElement>(null);
+  /** Indica si este instance todavía está montado en el DOM */
+  const mountedRef = useRef(true);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
+
+  // ── Listener: rehidratación tardía vía custom event ──────────────────────
+  // Si Android hace UNMOUNT mientras el upload estaba en curso, cuando la
+  // Promise resuelve despacha este evento y el nuevo instance (ya montado)
+  // actualiza su estado visual sin depender del padre.
+  useEffect(() => {
+    if (!sessionKey) return;
+
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent<PhotoUploadedEventDetail>).detail;
+      if (detail.sessionKey !== sessionKey) return;
+
+      setPhotos(detail.urls.map((url) => ({
+        id: genId(),
+        file: new File([], 'restored.jpg', { type: 'image/jpeg' }),
+        previewUrl: url,
+        uploadedUrl: url,
+        status: 'done' as const,
+      })));
+
+      onChange(detail.urls);
+    };
+
+    window.addEventListener(PHOTO_UPLOADED_EVENT, handler);
+    return () => window.removeEventListener(PHOTO_UPLOADED_EVENT, handler);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionKey]);
 
   useEffect(() => {
     supabase.functions.invoke('fix-casetilla-storage-rls')
       .then(() => setBucketReady(true))
       .catch(() => setBucketReady(true));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const syncUrls = (updated: PhotoItem[]) => {
@@ -101,7 +187,7 @@ export default function PhotoUploader({
     const files = Array.from(e.target.files ?? []);
     if (!files.length) return;
 
-    // Resetear el input que disparó el evento para permitir re-selección del mismo archivo
+    // Resetear el input para permitir re-selección del mismo archivo
     e.target.value = '';
 
     const remaining = maxPhotos - photos.length;
@@ -120,6 +206,27 @@ export default function PhotoUploader({
       newItems.map((item) =>
         uploadPhotoToStorage(item.file, orgId, folder)
           .then((url) => {
+            if (sessionKey) {
+              try {
+                const existing = sessionStorage.getItem(sessionKey);
+                const prevUrls: string[] = existing ? JSON.parse(existing) as string[] : [];
+                const merged = [...prevUrls.filter((u) => u !== url), url];
+                sessionStorage.setItem(sessionKey, JSON.stringify(merged));
+
+                // Despachar el evento SOLO si el componente ya no está montado
+                // (escenario de remount de Android). En flujo normal el setPhotos
+                // funcional de abajo es suficiente y evita reemplazar ítems en curso.
+                if (!mountedRef.current) {
+                  window.dispatchEvent(new CustomEvent<PhotoUploadedEventDetail>(PHOTO_UPLOADED_EVENT, {
+                    detail: { sessionKey, urls: merged }
+                  }));
+                }
+              } catch { /* noop */ }
+            }
+
+            // Solo actualizar state si el componente sigue montado
+            if (!mountedRef.current) return;
+
             setPhotos((prev) => {
               const updated = prev.map((p) =>
                 p.id === item.id ? { ...p, status: 'done' as const, uploadedUrl: url } : p
@@ -129,6 +236,7 @@ export default function PhotoUploader({
             });
           })
           .catch((err) => {
+            if (!mountedRef.current) return;
             setPhotos((prev) => {
               const updated = prev.map((p) =>
                 p.id === item.id
@@ -187,7 +295,7 @@ export default function PhotoUploader({
 
   return (
     <div className="space-y-3">
-      {/* Input cámara: capture="environment" abre la cámara trasera directamente en móvil */}
+      {/* Input cámara */}
       <input
         ref={cameraInputRef}
         type="file"
@@ -198,7 +306,7 @@ export default function PhotoUploader({
         disabled={disabled || !bucketReady}
       />
 
-      {/* Input galería: sin capture, abre selector de archivos / galería */}
+      {/* Input galería */}
       <input
         ref={galleryInputRef}
         type="file"
@@ -208,7 +316,7 @@ export default function PhotoUploader({
         disabled={disabled || !bucketReady}
       />
 
-      {/* Encabezado: label + botones Cámara / Galería */}
+      {/* Encabezado */}
       <div className="flex items-center justify-between gap-2">
         <label className="block text-sm font-medium text-gray-700 shrink-0">
           Fotos{' '}
@@ -245,7 +353,7 @@ export default function PhotoUploader({
         )}
       </div>
 
-      {/* Zona vacía: dos acciones explícitas */}
+      {/* Zona vacía */}
       {photos.length === 0 ? (
         <div className="w-full border-2 border-dashed border-gray-200 rounded-lg overflow-hidden">
           <div className="grid grid-cols-2 divide-x divide-gray-200">
@@ -332,7 +440,6 @@ export default function PhotoUploader({
             </div>
           ))}
 
-          {/* Celdas "agregar más" dentro de la grilla: cámara y galería */}
           {canAdd && (
             <>
               <button
