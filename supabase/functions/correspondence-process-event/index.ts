@@ -1,7 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const VERSION = "v743-casetilla-photos";
+const VERSION = "v766-fix-driver-column";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -14,11 +14,6 @@ function json(status: number, data: unknown) {
     status,
     headers: { ...corsHeaders, "Content-Type": "application/json" },
   });
-}
-
-function safePrefix(v: string | null | undefined, n = 18) {
-  if (!v) return null;
-  return v.slice(0, n);
 }
 
 function asNull(value: string | null | undefined): string {
@@ -82,12 +77,6 @@ function normalizeEmailBody(input: string): string {
   `.trim();
 }
 
-/**
- * Resuelve las fotos del punto de control (casetilla) para una reserva.
- * - "Arrib..." → casetilla_ingresos
- * - "Despacha..." / "DISPATCHED" → casetilla_salidas
- * Retorna HTML con las imágenes incrustadas.
- */
 async function resolveCasetillaPhotos(
   supabase: any,
   reservationId: string,
@@ -142,7 +131,6 @@ async function resolveCasetillaPhotos(
 
 serve(async (req) => {
   const reqId = crypto.randomUUID();
-  const startedAt = Date.now();
 
   try {
     if (req.method === "OPTIONS") {
@@ -287,7 +275,6 @@ serve(async (req) => {
 
     const actorName = actorProfile?.name || actorProfile?.email || "Usuario";
 
-    // Obtener el nombre del estado destino (para resolver fotos si aplica)
     let statusToName = "";
     if (statusToId) {
       const { data: statusData } = await supabase
@@ -304,13 +291,13 @@ serve(async (req) => {
       start_datetime: formatDateEs((reservation as any)?.start_datetime),
       end_datetime: formatDateEs((reservation as any)?.end_datetime),
       status: (reservation as any)?.reservation_statuses?.name ?? "",
-      driver: (reservation as any)?.driver_name ?? "",
+      // FIX v766: columna real es "driver", no "driver_name"
+      driver: (reservation as any)?.driver ?? "",
       truck_plate: (reservation as any)?.truck_plate ?? "",
       dua: (reservation as any)?.dua ?? "",
       invoice: (reservation as any)?.invoice ?? "",
       created_by: createdByName,
       actor: actorName,
-      // fotos se resolverá por regla si include_casetilla_photos === true
       fotos: "",
     };
 
@@ -322,7 +309,6 @@ serve(async (req) => {
     const results: any[] = [];
 
     for (const rule of rules as any[]) {
-      // --- Resolver fotos si la regla lo solicita ---
       let ruleCtx = { ...templateCtx };
 
       if (rule.include_casetilla_photos === true && statusToName) {
@@ -330,7 +316,6 @@ serve(async (req) => {
         ruleCtx = { ...ruleCtx, fotos: fotosHtml };
       }
 
-      // --- Resolver remitente ---
       let senderUserId: string | null = null;
       if (rule.sender_mode === "actor") senderUserId = actorUserId;
       if (rule.sender_mode === "fixed" && rule.sender_user_id) senderUserId = rule.sender_user_id;

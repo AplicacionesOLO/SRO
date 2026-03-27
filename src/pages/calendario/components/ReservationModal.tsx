@@ -10,6 +10,12 @@ import { timeProfilesService } from '../../../services/timeProfilesService';
 import { userProvidersService, type UserProvider } from '../../../services/userProvidersService';
 import type { Provider, CargoType } from '../../../types/catalog';
 import { ConfirmModal } from '../../../components/base/ConfirmModal';
+import { RecurrenceForm } from './RecurrenceForm';
+import {
+  RecurrenceConfig,
+  DEFAULT_RECURRENCE_CONFIG,
+  generateRecurringDates,
+} from '../../../utils/recurrenceUtils';
 
 interface ReservationModalProps {
   isOpen: boolean;
@@ -109,6 +115,15 @@ export default function ReservationModal({
     message: '',
   });
 
+  const [recurrenceConfig, setRecurrenceConfig] = useState<RecurrenceConfig>(DEFAULT_RECURRENCE_CONFIG);
+
+  interface RecurringResult {
+    created_count: number;
+    skipped_count: number;
+    skipped_reservations: Array<{ startDatetime: string; reason: string }>;
+  }
+  const [recurringResult, setRecurringResult] = useState<RecurringResult | null>(null);
+
   useEffect(() => {
     if (isOpen && orgId) {
       loadCatalogs();
@@ -191,6 +206,8 @@ export default function ReservationModal({
   useEffect(() => {
     if (isOpen) {
       setSavedReservationId(reservation?.id ?? null);
+      setRecurringResult(null);
+      setRecurrenceConfig(DEFAULT_RECURRENCE_CONFIG);
 
       if (reservation) {
         const start = new Date(reservation.start_datetime);
@@ -509,6 +526,35 @@ export default function ReservationModal({
         );
       }
 
+      // ── RECURRENCIA ────────────────────────────────────────────────
+      if (!reservation && recurrenceConfig.enabled) {
+        const startDatetimeISO = `${formData.startDate}T${formData.startTime}:00`;
+        const endDatetimeISO = `${formData.endDate}T${formData.endTime}:00`;
+
+        const additionalDates = generateRecurringDates(startDatetimeISO, endDatetimeISO, recurrenceConfig);
+
+        if (additionalDates.length > 0) {
+          const recurringPayload: Partial<Reservation> = {
+            ...payload,
+            // recurrence field no se copia a las ocurrencias hijas
+            recurrence: null,
+          };
+
+          const result = await calendarService.createRecurringReservations(recurringPayload, additionalDates);
+
+          onSave(); // refrescar calendario
+
+          setRecurringResult({
+            created_count: result.created_count,
+            skipped_count: result.skipped_count,
+            skipped_reservations: result.skipped_reservations,
+          });
+
+          return; // mantener modal abierto para mostrar resultado
+        }
+      }
+      // ──────────────────────────────────────────────────────────────
+
       onSave();
     } catch (error: any) {
       setNotifyModal({
@@ -660,7 +706,7 @@ export default function ReservationModal({
       }}
     >
       <div
-        className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col"
+        className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col relative"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="px-6 py-4 border-b border-gray-200 bg-white">
@@ -1074,14 +1120,26 @@ export default function ReservationModal({
 
                           <div>
                             <label className={labelBase}>Recurrencia</label>
-                            <button
-                              type="button"
-                              disabled
-                              className="w-full px-4 py-2.5 text-sm font-medium text-gray-400 bg-gray-100 rounded-lg cursor-not-allowed whitespace-nowrap border border-gray-200"
-                            >
-                              <i className="ri-add-line mr-2 w-4 h-4 inline-flex items-center justify-center"></i>
-                              Agregar (Próximamente)
-                            </button>
+                            <RecurrenceForm
+                              value={recurrenceConfig}
+                              onChange={setRecurrenceConfig}
+                              startDatetime={
+                                formData.startDate && formData.startTime
+                                  ? `${formData.startDate}T${formData.startTime}:00`
+                                  : ''
+                              }
+                              endDatetime={
+                                formData.endDate && formData.endTime
+                                  ? `${formData.endDate}T${formData.endTime}:00`
+                                  : ''
+                              }
+                              disabled={isReadOnly || !!reservation}
+                            />
+                            {!!reservation && (
+                              <p className="mt-1.5 text-xs text-gray-500">
+                                La recurrencia solo se puede configurar al crear una reserva nueva.
+                              </p>
+                            )}
                           </div>
                         </div>
                       </div>
@@ -1453,6 +1511,94 @@ export default function ReservationModal({
           onConfirm={() => setNotifyModal({ ...notifyModal, isOpen: false })}
           onCancel={() => setNotifyModal({ ...notifyModal, isOpen: false })}
         />
+
+        {/* ── Panel de resultado de recurrencia ───────────────────────── */}
+        {recurringResult !== null && (
+          <div className="absolute inset-0 bg-white/95 flex flex-col items-center justify-center z-20 rounded-2xl p-8">
+            {/* Icono */}
+            <div
+              className={`w-16 h-16 rounded-full flex items-center justify-center mb-5 ${
+                recurringResult.skipped_count === 0
+                  ? 'bg-teal-100'
+                  : recurringResult.created_count === 0
+                  ? 'bg-red-100'
+                  : 'bg-amber-100'
+              }`}
+            >
+              <i
+                className={`text-3xl w-8 h-8 flex items-center justify-center ${
+                  recurringResult.skipped_count === 0
+                    ? 'ri-checkbox-circle-line text-teal-700'
+                    : recurringResult.created_count === 0
+                    ? 'ri-close-circle-line text-red-600'
+                    : 'ri-error-warning-line text-amber-600'
+                }`}
+              ></i>
+            </div>
+
+            <h3 className="text-xl font-bold text-gray-900 mb-1 text-center">
+              {recurringResult.skipped_count === 0
+                ? 'Reservas creadas exitosamente'
+                : recurringResult.created_count === 0
+                ? 'No se pudieron crear las reservas'
+                : 'Reservas creadas con advertencias'}
+            </h3>
+
+            {/* Resumen de números */}
+            <div className="flex items-center gap-6 mt-4 mb-5">
+              <div className="text-center">
+                <p className="text-2xl font-bold text-teal-700">
+                  {/* +1 por la reserva original */}
+                  {recurringResult.created_count + 1}
+                </p>
+                <p className="text-xs text-gray-600 mt-0.5">Creadas</p>
+              </div>
+              {recurringResult.skipped_count > 0 && (
+                <div className="text-center">
+                  <p className="text-2xl font-bold text-amber-600">{recurringResult.skipped_count}</p>
+                  <p className="text-xs text-gray-600 mt-0.5">No creadas</p>
+                </div>
+              )}
+            </div>
+
+            {/* Detalle de omitidas */}
+            {recurringResult.skipped_reservations.length > 0 && (
+              <div className="w-full max-w-md bg-amber-50 border border-amber-200 rounded-xl p-4 mb-5 max-h-48 overflow-y-auto">
+                <p className="text-xs font-semibold text-amber-900 mb-2">Reservas no creadas:</p>
+                <div className="space-y-2">
+                  {recurringResult.skipped_reservations.map((s, i) => (
+                    <div key={i} className="flex items-start gap-2">
+                      <i className="ri-close-circle-line text-amber-600 text-sm w-4 h-4 flex items-center justify-center flex-shrink-0 mt-0.5"></i>
+                      <div className="min-w-0">
+                        <p className="text-xs text-amber-800 font-medium">
+                          {new Date(s.startDatetime).toLocaleString('es-CR', {
+                            timeZone: 'America/Costa_Rica',
+                            weekday: 'short',
+                            day: '2-digit',
+                            month: 'short',
+                            year: 'numeric',
+                            hour: '2-digit',
+                            minute: '2-digit',
+                            hour12: false,
+                          })}
+                        </p>
+                        <p className="text-xs text-amber-700">{s.reason}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-6 py-2.5 bg-teal-600 text-white text-sm font-semibold rounded-lg hover:bg-teal-700 transition-colors whitespace-nowrap"
+            >
+              Entendido
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );

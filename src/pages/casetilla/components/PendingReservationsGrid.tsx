@@ -73,7 +73,7 @@ export default function PendingReservationsGrid({ reservations, onOpenIngreso, i
 
       <div className="text-sm text-gray-600">
         {filteredReservations.length === reservations.length ? (
-          <span>{reservations.length} reservas pendientes</span>
+          <span>{reservations.length} reservas pendientes / confirmadas</span>
         ) : (
           <span>
             {filteredReservations.length} de {reservations.length} reservas
@@ -85,7 +85,7 @@ export default function PendingReservationsGrid({ reservations, onOpenIngreso, i
         <div className="text-center py-12 bg-gray-50 rounded-lg border-2 border-dashed border-gray-300">
           <i className="ri-inbox-line text-5xl text-gray-400"></i>
           <p className="mt-2 text-gray-600 font-medium">
-            {searchTerm ? 'No se encontraron reservas' : 'No hay reservas pendientes'}
+            {searchTerm ? 'No se encontraron reservas' : 'No hay reservas pendientes ni confirmadas'}
           </p>
           {searchTerm && <p className="text-sm text-gray-500 mt-1">Intenta con otro término de búsqueda</p>}
         </div>

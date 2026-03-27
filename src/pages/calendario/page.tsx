@@ -42,17 +42,35 @@ const TIMEZONE = 'America/Costa_Rica';
 const BUFFER_DAYS = 2;
 
 // ✅ Función para obtener inicio de día en timezone específico
+// FIX: evita doble conversión browser-local. Usa UTC noon como referencia estable
+// para calcular el offset del timezone y construir la medianoche exacta en UTC.
 const getStartOfDay = (date: Date, timezone: string): Date => {
-  const dateStr = date.toLocaleDateString('en-CA', { timeZone: timezone }); // YYYY-MM-DD
-  const startStr = `${dateStr}T00:00:00`;
-  return new Date(new Date(startStr).toLocaleString('en-US', { timeZone: timezone }));
+  const dateStr = date.toLocaleDateString('en-CA', { timeZone: timezone }); // 'YYYY-MM-DD'
+  // Referencia: noon UTC del mismo día (seguro ante cualquier transición horaria)
+  const noonUTC = new Date(`${dateStr}T12:00:00.000Z`);
+  // ¿Qué hora local muestra noon UTC en `timezone`? Para UTC-6 → 6; UTC+2 → 14
+  const localHour = parseInt(
+    new Intl.DateTimeFormat('en-US', { timeZone: timezone, hour: '2-digit', hour12: false }).format(noonUTC),
+    10
+  );
+  // offset = localHour - 12  → p.e. 6 - 12 = -6 para CR
+  // Medianoche TZ = UTC midnight - (offset * 1h)  → 0h - (-6h) = 06:00 UTC para CR
+  const utcOffsetMs = (localHour - 12) * 3_600_000;
+  return new Date(new Date(`${dateStr}T00:00:00.000Z`).getTime() - utcOffsetMs);
 };
 
 // ✅ Función para obtener fin de día en timezone específico
 const getEndOfDay = (date: Date, timezone: string): Date => {
-  const dateStr = date.toLocaleDateString('en-CA', { timeZone: timezone }); // YYYY-MM-DD
-  const endStr = `${dateStr}T23:59:59.999`;
-  return new Date(new Date(endStr).toLocaleString('en-US', { timeZone: timezone }));
+  const dateStr = date.toLocaleDateString('en-CA', { timeZone: timezone }); // 'YYYY-MM-DD'
+  const noonUTC = new Date(`${dateStr}T12:00:00.000Z`);
+  const localHour = parseInt(
+    new Intl.DateTimeFormat('en-US', { timeZone: timezone, hour: '2-digit', hour12: false }).format(noonUTC),
+    10
+  );
+  const utcOffsetMs = (localHour - 12) * 3_600_000;
+  // 23:59:59.999 en TZ = siguiente UTC midnight - 1ms
+  const nextDay = new Date(new Date(`${dateStr}T00:00:00.000Z`).getTime() - utcOffsetMs + 86_400_000);
+  return new Date(nextDay.getTime() - 1);
 };
 
 const getNowInTimezone = (timezone: string): Date => {
@@ -65,6 +83,12 @@ const isSameDayTz = (day: Date, nowTz: Date, timezone: string): boolean => {
   const nowStart = getStartOfDay(nowTz, timezone);
   return dayStart.getTime() === nowStart.getTime();
 };
+
+// ✅ FIX: Helper de comparación de día independiente del browser timezone.
+// Usa el Intl API directamente, sin intermediarios, para comparar fechas en CR.
+const isSameDayInCR = (a: Date, b: Date): boolean =>
+  a.toLocaleDateString('en-CA', { timeZone: TIMEZONE }) ===
+  b.toLocaleDateString('en-CA', { timeZone: TIMEZONE });
 
 export default function CalendarioPage() {
   const { can, orgId, loading: permLoading } = usePermissions();
@@ -289,24 +313,23 @@ export default function CalendarioPage() {
   // ✅ Cada fila (slot) mide 60px, entonces px/minuto depende del intervalo
   const PX_PER_MINUTE_DYNAMIC = useMemo(() => 60 / slotInterval, [slotInterval]);
 
-  // ✅ Construye un Date con el mismo día (timezone de referencia del calendario) a X minutos desde medianoche
+  // ✅ FIX: Construye un Date sumando ms directamente desde la medianoche CR en UTC.
+  // NO usa setHours() que aplica la timezone LOCAL del browser y desplaza 6 h en browsers UTC.
   const buildDateFromMinutes = useCallback(
     (day: Date, minutesFromMidnight: number) => {
-      const dayStartTz = getStartOfDay(day, TIMEZONE);
-      const dt = new Date(dayStartTz);
-      const h = Math.floor(minutesFromMidnight / 60);
-      const m = minutesFromMidnight % 60;
-      dt.setHours(h, m, 0, 0);
-      return dt;
+      const dayStartTz = getStartOfDay(day, TIMEZONE); // medianoche CR expresada en UTC
+      return new Date(dayStartTz.getTime() + minutesFromMidnight * 60_000);
     },
     []
   );
 
-  // ✅ TOP calculado desde la hora de inicio hábil (NO desde 00:00)
+  // ✅ FIX: Calcula top desde la medianoche CR real, NO desde browser getHours() que varía con la TZ del browser.
   const getTopFromBusinessStart = useCallback(
     (date: Date): number => {
-      const minutesFromMidnight = date.getHours() * 60 + date.getMinutes();
-      const minutesFromStart = minutesFromMidnight - businessStartMinutes;
+      // offset real desde la medianoche CR (en ms) → no depende de la TZ del browser
+      const dayStart = getStartOfDay(date, TIMEZONE);
+      const minutesFromCRMidnight = (date.getTime() - dayStart.getTime()) / 60_000;
+      const minutesFromStart = minutesFromCRMidnight - businessStartMinutes;
       return minutesFromStart * PX_PER_MINUTE_DYNAMIC;
     },
     [businessStartMinutes, PX_PER_MINUTE_DYNAMIC]
@@ -497,6 +520,22 @@ export default function CalendarioPage() {
       setBlocks(filteredBlocks);
       setStatuses(statusesData);
       setCategories(categoriesData);
+
+      // 🔍 LOG DE DIAGNÓSTICO — filtrar por '[CALENDAR-BLOCK]' en DevTools Console
+      const cpBlocks = filteredBlocks.filter(b => b.reason?.startsWith('CLIENT_PICKUP'));
+      console.log('[CALENDAR-BLOCK] loadData:done', {
+        total_blocks_loaded: filteredBlocks.length,
+        client_pickup_count: cpBlocks.length,
+        client_pickup_blocks: cpBlocks.map(b => ({
+          id: b.id,
+          dock_id: b.dock_id,
+          start_utc: b.start_datetime,
+          end_utc: b.end_datetime,
+          reason: b.reason,
+        })),
+        buffer_range: { from: bufferStart.toISOString(), to: bufferEnd.toISOString() },
+        docks_in_view: docksData.map(d => ({ id: d.id, name: d.name })),
+      });
 
       // Guardar en caché
       cacheRef.current.set(cacheKey, {
@@ -1518,7 +1557,8 @@ export default function CalendarioPage() {
                                           .filter((r) => {
                                             if (r.dock_id !== dock.id) return false;
                                             const rStart = new Date(r.start_datetime);
-                                            return rStart.toDateString() === day.toDateString();
+                                            // ✅ FIX: comparar en CR timezone, no en browser local
+                                            return isSameDayInCR(rStart, day);
                                           })
                                           .map((reservation) => {
                                             const start = new Date(reservation.start_datetime);
@@ -1620,13 +1660,38 @@ export default function CalendarioPage() {
                                           .filter((b) => {
                                             if (b.dock_id !== dock.id) return false;
                                             const bStart = new Date(b.start_datetime);
-                                            return bStart.toDateString() === day.toDateString();
+                                            const passes = isSameDayInCR(bStart, day);
+                                            // 🔍 LOG: traza por bloque
+                                            if (b.reason?.startsWith('CLIENT_PICKUP')) {
+                                              console.log('[CALENDAR-BLOCK] filter:day', {
+                                                block_id: b.id,
+                                                dock_id: b.dock_id,
+                                                dock_name: dock.name,
+                                                start_utc: b.start_datetime,
+                                                bStart_cr: bStart.toLocaleDateString('en-CA', { timeZone: TIMEZONE }),
+                                                day_cr: day.toLocaleDateString('en-CA', { timeZone: TIMEZONE }),
+                                                passes_day_filter: passes,
+                                              });
+                                            }
+                                            return passes;
                                           })
                                           .map((block) => {
                                             const start = new Date(block.start_datetime);
                                             const end = new Date(block.end_datetime);
 
                                             const clamped = clampEventToBusinessHours(day, start, end);
+                                            // 🔍 LOG: resultado del clamp
+                                            if (block.reason?.startsWith('CLIENT_PICKUP')) {
+                                              console.log('[CALENDAR-BLOCK] clamp:result', {
+                                                block_id: block.id,
+                                                start_utc: block.start_datetime,
+                                                end_utc: block.end_datetime,
+                                                businessStartMinutes,
+                                                businessEndMinutes,
+                                                clamped: clamped ? { top: clamped.top, height: clamped.height } : null,
+                                                visible: !!clamped,
+                                              });
+                                            }
                                             if (!clamped) return null;
 
                                             const { top, height } = clamped;

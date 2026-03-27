@@ -217,12 +217,15 @@ export const calendarService = {
   },
 
   async getDockTimeBlocks(orgId: string, startDate: string, endDate: string): Promise<DockTimeBlock[]> {
+    // ✅ FIX: usa overlap real (no solo start_datetime) y excluye cancelados
+    // Un bloque pertenece al rango si: start < rangoFin AND end > rangoInicio
     const { data, error } = await supabase
       .from('dock_time_blocks')
       .select('*')
       .eq('org_id', orgId)
-      .gte('start_datetime', startDate)
-      .lte('start_datetime', endDate)
+      .eq('is_cancelled', false)
+      .lt('start_datetime', endDate)
+      .gt('end_datetime', startDate)
       .order('start_datetime', { ascending: true });
 
     if (error) {
@@ -440,6 +443,71 @@ export const calendarService = {
     }
 
     return full;
+  },
+
+  /**
+   * Crea múltiples reservas recurrentes a partir de la reserva base ya creada.
+   * Cada ocurrencia mantiene los datos del formulario original pero con sus propias fechas.
+   *
+   * @param baseReservation  Payload base (sin start/end — esos vienen de additionalDates)
+   * @param additionalDates  Fechas de las ocurrencias ADICIONALES (no incluye la original)
+   * @returns Resultado detallado por ocurrencia
+   */
+  async createRecurringReservations(
+    baseReservation: Partial<Reservation>,
+    additionalDates: Array<{ startDatetime: string; endDatetime: string }>
+  ): Promise<{
+    created_count: number;
+    skipped_count: number;
+    created_reservations: Reservation[];
+    skipped_reservations: Array<{ startDatetime: string; reason: string }>;
+  }> {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) throw new Error('Usuario no autenticado');
+
+    const created_reservations: Reservation[] = [];
+    const skipped_reservations: Array<{ startDatetime: string; reason: string }> = [];
+
+    for (const { startDatetime, endDatetime } of additionalDates) {
+      const payload: Partial<Reservation> = {
+        ...baseReservation,
+        start_datetime: startDatetime,
+        end_datetime: endDatetime,
+        // recurrence no se copia en las ocurrencias hijas
+        recurrence: null,
+      };
+
+      try {
+        const created = await this.createReservation(payload);
+        created_reservations.push(created);
+      } catch (err: any) {
+        const code = err?.code as string | undefined;
+        const msg = (err?.message || '').toLowerCase();
+
+        let reason = 'Error desconocido';
+        if (
+          code === 'OVERLAP_CONFLICT' ||
+          msg.includes('overlap') ||
+          msg.includes('ya está reservado') ||
+          msg.includes('exclusion constraint')
+        ) {
+          reason = 'Conflicto: ese andén ya tiene una reserva en ese horario';
+        } else if (msg.includes('horario') || msg.includes('business')) {
+          reason = 'Fuera del horario hábil';
+        } else if (err?.message) {
+          reason = err.message;
+        }
+
+        skipped_reservations.push({ startDatetime, reason });
+      }
+    }
+
+    return {
+      created_count: created_reservations.length,
+      skipped_count: skipped_reservations.length,
+      created_reservations,
+      skipped_reservations,
+    };
   },
 
   async updateReservation(id: string, updates: Partial<Reservation>): Promise<Reservation> {
