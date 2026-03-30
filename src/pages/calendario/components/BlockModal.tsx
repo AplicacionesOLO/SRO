@@ -1,7 +1,8 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { usePermissions } from '../../../hooks/usePermissions';
 import { calendarService, type DockTimeBlock, type Dock } from '../../../services/calendarService';
 import { ConfirmModal } from '../../../components/base/ConfirmModal';
+import { useFormDraft, getDraftAge } from '../../../hooks/useReservationDraft';
 
 interface BlockModalProps {
   block: DockTimeBlock | null;
@@ -52,6 +53,16 @@ export default function BlockModal({ block, docks, onClose, onSave, allowEdit = 
 
   const [confirmDeleteModal, setConfirmDeleteModal] = useState(false);
 
+  // ── Draft persistence ─────────────────────────────────────────────────────
+  const isNewRecord = !block;
+  const DRAFT_KEY = `draft_block_${orgId || 'local'}_new`;
+  const [showDraftBanner, setShowDraftBanner] = useState(false);
+  const [showDiscardConfirm, setShowDiscardConfirm] = useState(false);
+  const [draftAgeLabel, setDraftAgeLabel] = useState('');
+
+  interface BlockDraft { formData: typeof formData; isPersistent: boolean; persistentWeekdays: number[]; weeksAhead: number }
+  const { saveDraft, clearDraft, readDraft } = useFormDraft<BlockDraft>({ storageKey: DRAFT_KEY, isNewRecord });
+
   // Determinar si los campos son editables
   const isEditable = !block || allowEdit;
 
@@ -63,17 +74,35 @@ export default function BlockModal({ block, docks, onClose, onSave, allowEdit = 
         end_datetime: new Date(block.end_datetime).toISOString().slice(0, 16),
         reason: block.reason,
       });
+      setShowDraftBanner(false);
     } else {
-      const now = new Date();
-      const oneHourLater = new Date(now.getTime() + 60 * 60 * 1000);
-      setFormData({
-        dock_id: docks[0]?.id || '',
-        start_datetime: now.toISOString().slice(0, 16),
-        end_datetime: oneHourLater.toISOString().slice(0, 16),
-        reason: '',
-      });
+      const draft = readDraft();
+      if (draft) {
+        setFormData(draft.formData.formData);
+        setIsPersistent(draft.formData.isPersistent);
+        setPersistentWeekdays(draft.formData.persistentWeekdays);
+        setWeeksAhead(draft.formData.weeksAhead);
+        setDraftAgeLabel(getDraftAge(draft.savedAt));
+        setShowDraftBanner(true);
+      } else {
+        const now = new Date();
+        const oneHourLater = new Date(now.getTime() + 60 * 60 * 1000);
+        setFormData({
+          dock_id: docks[0]?.id || '',
+          start_datetime: now.toISOString().slice(0, 16),
+          end_datetime: oneHourLater.toISOString().slice(0, 16),
+          reason: '',
+        });
+        setShowDraftBanner(false);
+      }
     }
   }, [block, docks]);
+
+  // Auto-save borrador
+  useEffect(() => {
+    if (!isNewRecord) return;
+    saveDraft({ formData, isPersistent, persistentWeekdays, weeksAhead });
+  }, [formData, isPersistent, persistentWeekdays, weeksAhead, isNewRecord]);
 
   const handlePersistentToggle = (checked: boolean) => {
     setIsPersistent(checked);
@@ -98,6 +127,26 @@ export default function BlockModal({ block, docks, onClose, onSave, allowEdit = 
       onSave();
     }
   };
+
+  const handleClose = useCallback(() => {
+    if (isNewRecord && formData.reason.trim()) {
+      setShowDiscardConfirm(true);
+      return;
+    }
+    clearDraft();
+    onClose();
+  }, [isNewRecord, formData.reason, clearDraft, onClose]);
+
+  const handleDiscardAndClose = useCallback(() => {
+    setShowDiscardConfirm(false);
+    clearDraft();
+    onClose();
+  }, [clearDraft, onClose]);
+
+  const handleKeepAndClose = useCallback(() => {
+    setShowDiscardConfirm(false);
+    onClose();
+  }, [onClose]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -136,6 +185,7 @@ export default function BlockModal({ block, docks, onClose, onSave, allowEdit = 
           end_datetime: end.toISOString(),
           reason: formData.reason,
         });
+        clearDraft();
         onSave();
         return;
       }
@@ -168,6 +218,7 @@ export default function BlockModal({ block, docks, onClose, onSave, allowEdit = 
             message: `Se crearon ${result.created} bloqueo${result.created !== 1 ? 's' : ''}. ${result.skipped} ${result.skipped !== 1 ? 'fueron omitidos' : 'fue omitido'} por colisión con reglas de Cliente Retira activas.`,
           });
         } else {
+          clearDraft();
           onSave();
         }
       } else {
@@ -178,6 +229,7 @@ export default function BlockModal({ block, docks, onClose, onSave, allowEdit = 
           end_datetime: end.toISOString(),
           reason: formData.reason,
         });
+        clearDraft();
         onSave();
       }
     } catch (error: any) {
@@ -230,7 +282,7 @@ export default function BlockModal({ block, docks, onClose, onSave, allowEdit = 
             )}
           </div>
           <button
-            onClick={onClose}
+            onClick={handleClose}
             className="p-2 hover:bg-gray-100 rounded-lg transition-colors cursor-pointer"
           >
             <i className="ri-close-line text-2xl text-gray-500"></i>
@@ -239,6 +291,29 @@ export default function BlockModal({ block, docks, onClose, onSave, allowEdit = 
 
         {/* Body */}
         <form onSubmit={handleSubmit} className="p-6">
+          {/* Banner de borrador */}
+          {showDraftBanner && (
+            <div className="mb-4 bg-teal-50 border border-teal-200 rounded-xl p-4">
+              <div className="flex items-start gap-3">
+                <i className="ri-save-line text-teal-600 text-lg w-5 h-5 flex items-center justify-center flex-shrink-0 mt-0.5"></i>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-semibold text-teal-900">Borrador guardado {draftAgeLabel}</p>
+                  <p className="text-xs text-teal-700 mt-0.5">Se restauraron los datos del bloqueo que ingresaste anteriormente.</p>
+                  <div className="flex gap-2 mt-2">
+                    <button type="button" onClick={() => setShowDraftBanner(false)}
+                      className="px-3 py-1 text-xs font-semibold bg-teal-600 text-white rounded-lg hover:bg-teal-700 whitespace-nowrap">
+                      Continuar con el borrador
+                    </button>
+                    <button type="button" onClick={() => { clearDraft(); const now = new Date(); const oneHourLater = new Date(now.getTime() + 60 * 60 * 1000); setFormData({ dock_id: docks[0]?.id || '', start_datetime: now.toISOString().slice(0, 16), end_datetime: oneHourLater.toISOString().slice(0, 16), reason: '' }); setIsPersistent(false); setPersistentWeekdays([]); setShowDraftBanner(false); }}
+                      className="px-3 py-1 text-xs border border-gray-300 bg-white text-gray-700 rounded-lg hover:bg-gray-50 whitespace-nowrap">
+                      Descartar y empezar nuevo
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
           <div className="space-y-4">
             {/* Andén */}
             <div>
@@ -425,7 +500,7 @@ export default function BlockModal({ block, docks, onClose, onSave, allowEdit = 
             <div className="flex items-center gap-3">
               <button
                 type="button"
-                onClick={onClose}
+                onClick={handleClose}
                 disabled={loading}
                 className="px-6 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 font-medium disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap cursor-pointer"
               >
@@ -480,6 +555,18 @@ export default function BlockModal({ block, docks, onClose, onSave, allowEdit = 
         cancelText="Cancelar"
         onConfirm={handleDeleteConfirm}
         onCancel={() => setConfirmDeleteModal(false)}
+      />
+
+      <ConfirmModal
+        isOpen={showDiscardConfirm}
+        type="warning"
+        title="Tenés un borrador sin guardar"
+        message="¿Qué hacemos con los datos del bloqueo que ingresaste?"
+        confirmText="Descartar y cerrar"
+        cancelText="Conservar borrador"
+        showCancel
+        onConfirm={handleDiscardAndClose}
+        onCancel={handleKeepAndClose}
       />
     </div>
   );

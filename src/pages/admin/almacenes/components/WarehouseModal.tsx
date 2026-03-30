@@ -1,7 +1,9 @@
-import { useState, FormEvent, useEffect } from 'react';
+import { useState, FormEvent, useEffect, useCallback } from 'react';
 import { Warehouse, WarehouseFormData } from '../../../../types/warehouse';
 import type { Country } from '../../../../types/catalog';
 import type { Client } from '../../../../types/client';
+import { useFormDraft, getDraftAge } from '../../../../hooks/useReservationDraft';
+import { ConfirmModal } from '../../../../components/base/ConfirmModal';
 
 interface WarehouseModalProps {
   orgId: string;
@@ -34,9 +36,18 @@ export default function WarehouseModal({
 
   const [selectedClientIds, setSelectedClientIds] = useState<string[]>([]);
   const [clientSearch, setClientSearch] = useState('');
-
   const [saving, setSaving] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
+
+  // ── Draft persistence ─────────────────────────────────────────────────────
+  const isNewRecord = !warehouse;
+  const DRAFT_KEY = `draft_warehouse_new`;
+  const [showDraftBanner, setShowDraftBanner] = useState(false);
+  const [showDiscardConfirm, setShowDiscardConfirm] = useState(false);
+  const [draftAgeLabel, setDraftAgeLabel] = useState('');
+
+  interface WarehouseDraft { formData: WarehouseFormData; selectedClientIds: string[] }
+  const { saveDraft, clearDraft, readDraft } = useFormDraft<WarehouseDraft>({ storageKey: DRAFT_KEY, isNewRecord });
 
   useEffect(() => {
     if (warehouse) {
@@ -49,19 +60,48 @@ export default function WarehouseModal({
         slot_interval_minutes: (warehouse as any).slot_interval_minutes || 60,
       });
       setSelectedClientIds(assignedClientIds || []);
+      setShowDraftBanner(false);
     } else {
-      setFormData({
-        name: '',
-        location: '',
-        country_id: '',
-        business_start_time: '06:00',
-        business_end_time: '17:00',
-        slot_interval_minutes: 60,
-      });
-      setSelectedClientIds([]);
+      const draft = readDraft();
+      if (draft) {
+        setFormData(draft.formData.formData);
+        setSelectedClientIds(draft.formData.selectedClientIds || []);
+        setDraftAgeLabel(getDraftAge(draft.savedAt));
+        setShowDraftBanner(true);
+      } else {
+        setFormData({ name: '', location: '', country_id: '', business_start_time: '06:00', business_end_time: '17:00', slot_interval_minutes: 60 });
+        setSelectedClientIds([]);
+        setShowDraftBanner(false);
+      }
     }
     setErrors({});
   }, [warehouse, assignedClientIds]);
+
+  // Auto-save borrador
+  useEffect(() => {
+    if (!isNewRecord) return;
+    saveDraft({ formData, selectedClientIds });
+  }, [formData, selectedClientIds, isNewRecord]);
+
+  const handleClose = useCallback(() => {
+    if (isNewRecord && formData.name.trim()) {
+      setShowDiscardConfirm(true);
+      return;
+    }
+    clearDraft();
+    onClose();
+  }, [isNewRecord, formData.name, clearDraft, onClose]);
+
+  const handleDiscardAndClose = useCallback(() => {
+    setShowDiscardConfirm(false);
+    clearDraft();
+    onClose();
+  }, [clearDraft, onClose]);
+
+  const handleKeepAndClose = useCallback(() => {
+    setShowDiscardConfirm(false);
+    onClose();
+  }, [onClose]);
 
   const validate = (): boolean => {
     const newErrors: Record<string, string> = {};
@@ -91,13 +131,10 @@ export default function WarehouseModal({
     setErrors({});
     try {
       await onSave(
-        {
-          ...formData,
-          name: formData.name.trim(),
-          location: formData.location?.trim() || '',
-        },
+        { ...formData, name: formData.name.trim(), location: formData.location?.trim() || '' },
         selectedClientIds
       );
+      clearDraft();
     } catch (error: any) {
       setErrors((prev) => ({ ...prev, submit: error?.message || 'Error al guardar el almacén' }));
     } finally {
@@ -129,16 +166,36 @@ export default function WarehouseModal({
           <h2 className="text-xl font-bold text-gray-900">
             {warehouse ? 'Editar Almacén' : 'Nuevo Almacén'}
           </h2>
-          <button
-            onClick={onClose}
-            disabled={saving}
-            className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-          >
+          <button onClick={handleClose} disabled={saving}
+            className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
             <i className="ri-close-line text-xl w-5 h-5 flex items-center justify-center"></i>
           </button>
         </div>
 
         <form onSubmit={handleSubmit} className="p-6 space-y-4">
+          {/* Banner de borrador */}
+          {showDraftBanner && (
+            <div className="bg-teal-50 border border-teal-200 rounded-xl p-4">
+              <div className="flex items-start gap-3">
+                <i className="ri-save-line text-teal-600 text-lg w-5 h-5 flex items-center justify-center flex-shrink-0 mt-0.5"></i>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-semibold text-teal-900">Borrador guardado {draftAgeLabel}</p>
+                  <p className="text-xs text-teal-700 mt-0.5">Se restauraron los datos del almacén que ingresaste anteriormente.</p>
+                  <div className="flex gap-2 mt-3">
+                    <button type="button" onClick={() => setShowDraftBanner(false)}
+                      className="px-3 py-1.5 text-xs font-semibold bg-teal-600 text-white rounded-lg hover:bg-teal-700 transition-colors whitespace-nowrap">
+                      Continuar con el borrador
+                    </button>
+                    <button type="button" onClick={() => { clearDraft(); setFormData({ name: '', location: '', country_id: '', business_start_time: '06:00', business_end_time: '17:00', slot_interval_minutes: 60 }); setSelectedClientIds([]); setShowDraftBanner(false); }}
+                      className="px-3 py-1.5 text-xs font-medium border border-gray-300 bg-white text-gray-700 rounded-lg hover:bg-gray-50 transition-colors whitespace-nowrap">
+                      Descartar y empezar nuevo
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
           {errors.submit && (
             <div className="p-3 bg-red-50 border border-red-200 rounded-lg">
               <p className="text-sm text-red-800">{errors.submit}</p>
@@ -344,19 +401,12 @@ export default function WarehouseModal({
           )}
 
           <div className="flex items-center justify-end gap-3 pt-4 border-t border-gray-200">
-            <button
-              type="button"
-              onClick={onClose}
-              disabled={saving}
-              className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
-            >
+            <button type="button" onClick={handleClose} disabled={saving}
+              className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap">
               Cancelar
             </button>
-            <button
-              type="submit"
-              disabled={saving}
-              className="px-4 py-2 text-sm font-medium text-white bg-teal-600 rounded-lg hover:bg-teal-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 whitespace-nowrap"
-            >
+            <button type="submit" disabled={saving}
+              className="px-4 py-2 text-sm font-medium text-white bg-teal-600 rounded-lg hover:bg-teal-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 whitespace-nowrap">
               {saving ? (
                 <>
                   <i className="ri-loader-4-line animate-spin text-lg w-5 h-5 flex items-center justify-center"></i>
@@ -372,6 +422,18 @@ export default function WarehouseModal({
           </div>
         </form>
       </div>
+
+      <ConfirmModal
+        isOpen={showDiscardConfirm}
+        type="warning"
+        title="Tenés un borrador sin guardar"
+        message="¿Qué hacemos con los datos del almacén que ingresaste?"
+        confirmText="Descartar y cerrar"
+        cancelText="Conservar borrador"
+        showCancel
+        onConfirm={handleDiscardAndClose}
+        onCancel={handleKeepAndClose}
+      />
     </div>
   );
 }

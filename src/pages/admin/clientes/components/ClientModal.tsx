@@ -1,5 +1,8 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import type { Client, ClientFormData } from '../../../../types/client';
+import { useFormDraft, getDraftAge } from '../../../../hooks/useReservationDraft';
+import { ConfirmModal } from '../../../../components/base/ConfirmModal';
+import { usePermissions } from '../../../../hooks/usePermissions';
 
 interface ClientModalProps {
   isOpen: boolean;
@@ -9,6 +12,8 @@ interface ClientModalProps {
 }
 
 export default function ClientModal({ isOpen, client, onClose, onSave }: ClientModalProps) {
+  const { orgId } = usePermissions();
+
   const [formData, setFormData] = useState<ClientFormData>({
     name: '',
     legal_id: '',
@@ -22,6 +27,14 @@ export default function ClientModal({ isOpen, client, onClose, onSave }: ClientM
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // ── Draft persistence ─────────────────────────────────────────────────────
+  const isNewRecord = !client;
+  const DRAFT_KEY = `draft_client_${orgId || 'local'}_new`;
+  const [showDraftBanner, setShowDraftBanner] = useState(false);
+  const [showDiscardConfirm, setShowDiscardConfirm] = useState(false);
+  const [draftAgeLabel, setDraftAgeLabel] = useState('');
+  const { saveDraft, clearDraft, readDraft } = useFormDraft<ClientFormData>({ storageKey: DRAFT_KEY, isNewRecord });
+
   useEffect(() => {
     if (client) {
       setFormData({
@@ -33,19 +46,48 @@ export default function ClientModal({ isOpen, client, onClose, onSave }: ClientM
         notes: client.notes || '',
         is_active: client.is_active
       });
+      setShowDraftBanner(false);
     } else {
-      setFormData({
-        name: '',
-        legal_id: '',
-        email: '',
-        phone: '',
-        address: '',
-        notes: '',
-        is_active: true
-      });
+      if (isOpen) {
+        const draft = readDraft();
+        if (draft) {
+          setFormData(draft.formData);
+          setDraftAgeLabel(getDraftAge(draft.savedAt));
+          setShowDraftBanner(true);
+        } else {
+          setFormData({ name: '', legal_id: '', email: '', phone: '', address: '', notes: '', is_active: true });
+          setShowDraftBanner(false);
+        }
+      }
     }
     setError(null);
   }, [client, isOpen]);
+
+  // Auto-save borrador
+  useEffect(() => {
+    if (!isOpen || !isNewRecord) return;
+    saveDraft(formData);
+  }, [formData, isOpen, isNewRecord]);
+
+  const handleClose = useCallback(() => {
+    if (isNewRecord && formData.name.trim()) {
+      setShowDiscardConfirm(true);
+      return;
+    }
+    clearDraft();
+    onClose();
+  }, [isNewRecord, formData.name, clearDraft, onClose]);
+
+  const handleDiscardAndClose = useCallback(() => {
+    setShowDiscardConfirm(false);
+    clearDraft();
+    onClose();
+  }, [clearDraft, onClose]);
+
+  const handleKeepAndClose = useCallback(() => {
+    setShowDiscardConfirm(false);
+    onClose();
+  }, [onClose]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -59,6 +101,7 @@ export default function ClientModal({ isOpen, client, onClose, onSave }: ClientM
     try {
       setSaving(true);
       await onSave(formData);
+      clearDraft();
       onClose();
     } catch (err: any) {
       setError(err?.message || 'Error al guardar cliente');
@@ -77,7 +120,7 @@ export default function ClientModal({ isOpen, client, onClose, onSave }: ClientM
             {client ? 'Editar Cliente' : 'Nuevo Cliente'}
           </h2>
           <button
-            onClick={onClose}
+            onClick={handleClose}
             disabled={saving}
             className="p-2 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100 transition-colors disabled:opacity-50"
           >
@@ -86,6 +129,29 @@ export default function ClientModal({ isOpen, client, onClose, onSave }: ClientM
         </div>
 
         <form onSubmit={handleSubmit} className="p-6">
+          {/* Banner de borrador */}
+          {showDraftBanner && (
+            <div className="mb-4 bg-teal-50 border border-teal-200 rounded-xl p-4">
+              <div className="flex items-start gap-3">
+                <i className="ri-save-line text-teal-600 text-lg w-5 h-5 flex items-center justify-center flex-shrink-0 mt-0.5"></i>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-semibold text-teal-900">Borrador guardado {draftAgeLabel}</p>
+                  <p className="text-xs text-teal-700 mt-0.5">Se restauraron los datos que ingresaste anteriormente.</p>
+                  <div className="flex gap-2 mt-3">
+                    <button type="button" onClick={() => setShowDraftBanner(false)}
+                      className="px-3 py-1.5 text-xs font-semibold bg-teal-600 text-white rounded-lg hover:bg-teal-700 transition-colors whitespace-nowrap">
+                      Continuar con el borrador
+                    </button>
+                    <button type="button" onClick={() => { clearDraft(); setFormData({ name: '', legal_id: '', email: '', phone: '', address: '', notes: '', is_active: true }); setShowDraftBanner(false); }}
+                      className="px-3 py-1.5 text-xs font-medium border border-gray-300 bg-white text-gray-700 rounded-lg hover:bg-gray-50 transition-colors whitespace-nowrap">
+                      Descartar y empezar nuevo
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
           {error && (
             <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg">
               <div className="flex items-start gap-2">
@@ -127,9 +193,7 @@ export default function ClientModal({ isOpen, client, onClose, onSave }: ClientM
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Email
-                </label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
                 <input
                   type="email"
                   value={formData.email}
@@ -139,11 +203,8 @@ export default function ClientModal({ isOpen, client, onClose, onSave }: ClientM
                   disabled={saving}
                 />
               </div>
-
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Teléfono
-                </label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Teléfono</label>
                 <input
                   type="tel"
                   value={formData.phone}
@@ -156,9 +217,7 @@ export default function ClientModal({ isOpen, client, onClose, onSave }: ClientM
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Dirección
-              </label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Dirección</label>
               <input
                 type="text"
                 value={formData.address}
@@ -170,9 +229,7 @@ export default function ClientModal({ isOpen, client, onClose, onSave }: ClientM
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Notas
-              </label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Notas</label>
               <textarea
                 value={formData.notes}
                 onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
@@ -201,7 +258,7 @@ export default function ClientModal({ isOpen, client, onClose, onSave }: ClientM
           <div className="flex items-center justify-end gap-3 mt-6 pt-4 border-t border-gray-200">
             <button
               type="button"
-              onClick={onClose}
+              onClick={handleClose}
               disabled={saving}
               className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50 whitespace-nowrap"
             >
@@ -218,6 +275,18 @@ export default function ClientModal({ isOpen, client, onClose, onSave }: ClientM
           </div>
         </form>
       </div>
+
+      <ConfirmModal
+        isOpen={showDiscardConfirm}
+        type="warning"
+        title="Tenés un borrador sin guardar"
+        message="¿Qué hacemos con los datos del cliente que ingresaste?"
+        confirmText="Descartar y cerrar"
+        cancelText="Conservar borrador"
+        showCancel
+        onConfirm={handleDiscardAndClose}
+        onCancel={handleKeepAndClose}
+      />
     </div>
   );
 }

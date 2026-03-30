@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import React from 'react';
 import { Dock } from '../../../types/dock';
 import { useAuth } from '../../../contexts/AuthContext';
@@ -16,6 +16,12 @@ import {
   DEFAULT_RECURRENCE_CONFIG,
   generateRecurringDates,
 } from '../../../utils/recurrenceUtils';
+import {
+  useReservationDraft,
+  checkDraftContext,
+  hasMeaningfulDraftData,
+  getDraftAge,
+} from '../../../hooks/useReservationDraft';
 
 interface ReservationModalProps {
   isOpen: boolean;
@@ -124,11 +130,66 @@ export default function ReservationModal({
   }
   const [recurringResult, setRecurringResult] = useState<RecurringResult | null>(null);
 
+  // ── Draft persistence states ──────────────────────────────────────────────
+  /** Muestra el banner de borrador dentro del modal */
+  const [showDraftBanner, setShowDraftBanner] = useState(false);
+  /** Muestra el confirm modal al intentar cerrar con datos sin guardar */
+  const [showDiscardConfirm, setShowDiscardConfirm] = useState(false);
+  /** Advertencias de inconsistencia de contexto */
+  const [draftWarnings, setDraftWarnings] = useState<string[]>([]);
+  /** Timestamp legible del borrador ("hace 5 min") */
+  const [draftAgeLabel, setDraftAgeLabel] = useState<string>('');
+
+  const isNewReservation = !reservation;
+
+  const { saveDraft, clearDraft, readDraft } = useReservationDraft({
+    orgId,
+    isOpen,
+    isNewReservation,
+  });
+
   useEffect(() => {
     if (isOpen && orgId) {
       loadCatalogs();
     }
   }, [isOpen, orgId]);
+
+  // ── Helper: inicializa el formulario limpio para nueva reserva ───────────
+  const initNewForm = useCallback(() => {
+    const now = defaults?.start_datetime ? new Date(defaults.start_datetime) : new Date();
+    const endTime = defaults?.end_datetime
+      ? new Date(defaults.end_datetime)
+      : new Date(now.getTime() + 2 * 60 * 60 * 1000);
+
+    setRecurrenceConfig(DEFAULT_RECURRENCE_CONFIG);
+    setFormData({
+      dockId: defaults?.dock_id || '',
+      startDate: now.toISOString().split('T')[0],
+      startTime: now.toTimeString().slice(0, 5),
+      endDate: endTime.toISOString().split('T')[0],
+      endTime: endTime.toTimeString().slice(0, 5),
+      purchaseOrder: '',
+      truckPlate: '',
+      orderRequestNumber: '',
+      shipperProvider: defaults?.shipper_provider || '',
+      driver: '',
+      dua: '',
+      invoice: '',
+      statusId: statuses[0]?.id || '',
+      notes: '',
+      transportType: 'inbound',
+      cargoType: defaults?.cargo_type || ''
+    });
+    setFiles([]);
+    setIsImported(false);
+    setCancelReason('');
+    setManualOverride(false);
+    setSuggestedMinutes(null);
+    setShowDraftBanner(false);
+    setDraftWarnings([]);
+    setDraftAgeLabel('');
+    setActiveTab('info');
+  }, [defaults, statuses]);
 
   const loadCatalogs = async () => {
     try {
@@ -204,76 +265,71 @@ export default function ReservationModal({
   }, [isOpen, orgId, reservation?.id, canViewSensitive]);
 
   useEffect(() => {
-    if (isOpen) {
-      setSavedReservationId(reservation?.id ?? null);
-      setRecurringResult(null);
+    if (!isOpen) return;
+
+    setSavedReservationId(reservation?.id ?? null);
+    setRecurringResult(null);
+
+    if (reservation) {
+      // ── MODO EDICIÓN: siempre carga desde BD, ignora localStorage ──────────
       setRecurrenceConfig(DEFAULT_RECURRENCE_CONFIG);
+      const start = new Date(reservation.start_datetime);
+      const end = new Date(reservation.end_datetime);
 
-      if (reservation) {
-        const start = new Date(reservation.start_datetime);
-        const end = new Date(reservation.end_datetime);
-
-        setFormData({
-          dockId: reservation.dock_id,
-          startDate: start.toISOString().split('T')[0],
-          startTime: start.toTimeString().slice(0, 5),
-          endDate: end.toISOString().split('T')[0],
-          endTime: end.toTimeString().slice(0, 5),
-          purchaseOrder: reservation.purchase_order || '',
-          truckPlate: reservation.truck_plate || '',
-          orderRequestNumber: reservation.order_request_number || '',
-          shipperProvider: reservation.shipper_provider || '',
-          driver: reservation.driver || '',
-          dua: reservation.dua || '',
-          invoice: reservation.invoice || '',
-          statusId: reservation.status_id || '',
-          notes: reservation.notes || '',
-          transportType: reservation.transport_type || 'inbound',
-          cargoType: reservation.cargo_type || ''
-        });
-
-        setIsImported(!!(reservation.dua));
-
-        // ✅ Cargar la razón de cancelación si existe
-        setCancelReason(reservation.cancel_reason || '');
-        
-        setManualOverride(false);
-        setSuggestedMinutes(null);
-      } else {
-        const now = defaults?.start_datetime ? new Date(defaults.start_datetime) : new Date();
-        const endTime = defaults?.end_datetime
-          ? new Date(defaults.end_datetime)
-          : new Date(now.getTime() + 2 * 60 * 60 * 1000);
-
-        setFormData({
-          dockId: defaults?.dock_id || '',
-          startDate: now.toISOString().split('T')[0],
-          startTime: now.toTimeString().slice(0, 5),
-          endDate: endTime.toISOString().split('T')[0],
-          endTime: endTime.toTimeString().slice(0, 5),
-          purchaseOrder: '',
-          truckPlate: '',
-          orderRequestNumber: '',
-          shipperProvider: defaults?.shipper_provider || '',
-          driver: '',
-          dua: '',
-          invoice: '',
-          statusId: statuses[0]?.id || '',
-          notes: '',
-          transportType: 'inbound',
-          cargoType: defaults?.cargo_type || ''
-        });
-        setFiles([]);
-        setIsImported(false);
-        
-        // ✅ Limpiar razón de cancelación en nueva reserva
-        setCancelReason('');
-        
-        setManualOverride(false);
-        setSuggestedMinutes(null);
-      }
-
+      setFormData({
+        dockId: reservation.dock_id,
+        startDate: start.toISOString().split('T')[0],
+        startTime: start.toTimeString().slice(0, 5),
+        endDate: end.toISOString().split('T')[0],
+        endTime: end.toTimeString().slice(0, 5),
+        purchaseOrder: reservation.purchase_order || '',
+        truckPlate: reservation.truck_plate || '',
+        orderRequestNumber: reservation.order_request_number || '',
+        shipperProvider: reservation.shipper_provider || '',
+        driver: reservation.driver || '',
+        dua: reservation.dua || '',
+        invoice: reservation.invoice || '',
+        statusId: reservation.status_id || '',
+        notes: reservation.notes || '',
+        transportType: reservation.transport_type || 'inbound',
+        cargoType: reservation.cargo_type || ''
+      });
+      setIsImported(!!(reservation.dua));
+      setCancelReason(reservation.cancel_reason || '');
+      setManualOverride(false);
+      setSuggestedMinutes(null);
+      setShowDraftBanner(false);
+      setDraftWarnings([]);
+      setDraftAgeLabel('');
       setActiveTab('info');
+
+    } else {
+      // ── MODO NUEVA RESERVA: intentar restaurar borrador ──────────────────
+      const draft = readDraft();
+
+      if (draft) {
+        // Draft encontrado: verificar consistencia de contexto
+        const currentDockIds = docks.map((d) => d.id);
+        const { isConsistent, warnings } = checkDraftContext(draft, currentDockIds, defaults);
+
+        // Restaurar datos del borrador en el formulario
+        setRecurrenceConfig(draft.recurrenceConfig ?? DEFAULT_RECURRENCE_CONFIG);
+        setFormData(draft.formData);
+        setIsImported(draft.isImported);
+        setCancelReason(draft.cancelReason ?? '');
+        setManualOverride(false);
+        setSuggestedMinutes(null);
+        setFiles([]);
+        setActiveTab('info');
+
+        // Mostrar banner (con advertencias de contexto si las hay)
+        setDraftWarnings(isConsistent ? [] : warnings);
+        setDraftAgeLabel(getDraftAge(draft.savedAt));
+        setShowDraftBanner(true);
+      } else {
+        // Sin borrador: inicialización normal
+        initNewForm();
+      }
     }
   }, [isOpen, reservation, defaults, statuses]);
 
@@ -286,6 +342,12 @@ export default function ReservationModal({
       }));
     }
   }, [isOpen, reservation, allowedProviders, formData.shipperProvider]);
+
+  // ── Auto-save del borrador (500 ms debounce, solo nueva reserva) ──────────
+  useEffect(() => {
+    if (!isOpen || !isNewReservation) return;
+    saveDraft({ formData, isImported, cancelReason, recurrenceConfig, defaults });
+  }, [formData, isImported, cancelReason, recurrenceConfig, isOpen, isNewReservation]);
 
   const isProviderFieldDisabled = allowedProviders.length === 1;
   const hasNoProviders = allowedProviders.length === 0;
@@ -406,6 +468,30 @@ export default function ReservationModal({
   const getFilesByCategory = (category: FileCategory) => {
     return files.filter(f => f.category === category);
   };
+
+  // ── Cierre con verificación de borrador ──────────────────────────────────
+  const handleClose = useCallback(() => {
+    // Solo preguntar en modo nueva reserva y si hay datos significativos
+    if (isNewReservation && hasMeaningfulDraftData(formData, defaults)) {
+      setShowDiscardConfirm(true);
+      return;
+    }
+    // Sin datos relevantes: cerrar directamente y limpiar
+    clearDraft();
+    onClose();
+  }, [isNewReservation, formData, defaults, clearDraft, onClose]);
+
+  const handleDiscardAndClose = useCallback(() => {
+    setShowDiscardConfirm(false);
+    clearDraft();
+    onClose();
+  }, [clearDraft, onClose]);
+
+  const handleKeepAndClose = useCallback(() => {
+    setShowDiscardConfirm(false);
+    // El borrador ya está en localStorage — solo cerrar el modal
+    onClose();
+  }, [onClose]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -542,6 +628,8 @@ export default function ReservationModal({
 
           const result = await calendarService.createRecurringReservations(recurringPayload, additionalDates);
 
+          // ✅ Borrador limpiado al guardar con éxito
+          clearDraft();
           onSave(); // refrescar calendario
 
           setRecurringResult({
@@ -555,6 +643,8 @@ export default function ReservationModal({
       }
       // ──────────────────────────────────────────────────────────────
 
+      // ✅ Borrador limpiado al guardar con éxito
+      clearDraft();
       onSave();
     } catch (error: any) {
       setNotifyModal({
@@ -702,7 +792,7 @@ export default function ReservationModal({
     <div
       className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50"
       onClick={(e) => {
-        if (e.target === e.currentTarget) onClose();
+        if (e.target === e.currentTarget) handleClose();
       }}
     >
       <div
@@ -767,7 +857,7 @@ export default function ReservationModal({
               </div>
             </div>
 
-            <button onClick={onClose} className="text-gray-400 hover:text-gray-700 transition-colors flex-shrink-0">
+            <button onClick={handleClose} className="text-gray-400 hover:text-gray-700 transition-colors flex-shrink-0">
               <i className="ri-close-line text-2xl w-6 h-6 flex items-center justify-center"></i>
             </button>
           </div>
@@ -822,6 +912,49 @@ export default function ReservationModal({
             {activeTab === 'info' && (
               <div className="p-6">
                 <div className="max-w-2xl">
+                  {/* ── Banner de borrador ─────────────────────────────────────── */}
+                  {showDraftBanner && (
+                    <div className={`mb-5 rounded-xl border p-4 ${draftWarnings.length > 0 ? 'bg-amber-50 border-amber-200' : 'bg-teal-50 border-teal-200'}`}>
+                      <div className="flex items-start gap-3">
+                        <div className={`w-5 h-5 flex items-center justify-center flex-shrink-0 mt-0.5 ${draftWarnings.length > 0 ? 'text-amber-600' : 'text-teal-600'}`}>
+                          <i className={draftWarnings.length > 0 ? 'ri-alert-line text-lg' : 'ri-save-line text-lg'}></i>
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className={`text-sm font-semibold ${draftWarnings.length > 0 ? 'text-amber-900' : 'text-teal-900'}`}>
+                            Borrador guardado {draftAgeLabel}
+                          </p>
+                          {draftWarnings.length > 0 ? (
+                            <ul className="mt-1 space-y-0.5">
+                              {draftWarnings.map((w, i) => (
+                                <li key={i} className="text-xs text-amber-800">• {w}</li>
+                              ))}
+                            </ul>
+                          ) : (
+                            <p className="text-xs text-teal-700 mt-0.5">
+                              Se restauraron los datos que ingresaste anteriormente.
+                            </p>
+                          )}
+                          <div className="flex items-center gap-2 mt-3">
+                            <button
+                              type="button"
+                              onClick={() => setShowDraftBanner(false)}
+                              className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors whitespace-nowrap ${draftWarnings.length > 0 ? 'bg-amber-600 hover:bg-amber-700 text-white' : 'bg-teal-600 hover:bg-teal-700 text-white'}`}
+                            >
+                              Continuar con el borrador
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => { clearDraft(); initNewForm(); }}
+                              className="px-3 py-1.5 text-xs font-medium rounded-lg border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 transition-colors whitespace-nowrap"
+                            >
+                              Descartar y empezar nuevo
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
                   {/* ✅ Banner según nivel de acceso */}
                   {isReadOnly && !canViewSensitive && <RestrictedBanner />}
                   {isReadOnly && canViewSensitive && (
@@ -1483,7 +1616,7 @@ export default function ReservationModal({
             <div className="flex items-center gap-3">
               <button
                 type="button"
-                onClick={onClose}
+                onClick={handleClose}
                 disabled={saving}
                 className="px-4 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-100 rounded-lg transition-colors whitespace-nowrap disabled:opacity-50 border border-gray-200"
               >
@@ -1510,6 +1643,18 @@ export default function ReservationModal({
           message={notifyModal.message}
           onConfirm={() => setNotifyModal({ ...notifyModal, isOpen: false })}
           onCancel={() => setNotifyModal({ ...notifyModal, isOpen: false })}
+        />
+
+        {/* ── Confirm: conservar o descartar borrador al cerrar ──────────── */}
+        <ConfirmModal
+          isOpen={showDiscardConfirm}
+          type="warning"
+          title="Tenés un borrador sin guardar"
+          message="¿Qué hacemos con los datos que ingresaste? Podés conservarlos para continuar después, o descartarlos definitivamente."
+          confirmText="Descartar y cerrar"
+          cancelText="Conservar borrador"
+          onConfirm={handleDiscardAndClose}
+          onCancel={handleKeepAndClose}
         />
 
         {/* ── Panel de resultado de recurrencia ───────────────────────── */}

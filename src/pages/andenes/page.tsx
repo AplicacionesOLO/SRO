@@ -72,10 +72,27 @@ export default function AndenesPage() {
     message: ''
   });
 
+  // ── Banner borrador pendiente ─────────────────────────────────────────────
+  const [showResumeBanner, setShowResumeBanner] = useState(false);
+  const [resumeDraftAge, setResumeDraftAge] = useState('');
+
   // ✅ TODOS LOS HOOKS PRIMERO (antes de cualquier return)
   useEffect(() => {
     if (orgId) {
       loadData();
+      // Verificar si hay borrador de andén pendiente
+      try {
+        const raw = localStorage.getItem(`draft_dock_${orgId}_new`);
+        if (raw) {
+          const d = JSON.parse(raw);
+          if (d?.formData && d?.savedAt) {
+            const ms = Date.now() - new Date(d.savedAt).getTime();
+            const m = Math.floor(ms / 60000);
+            setResumeDraftAge(m < 1 ? 'hace un momento' : m < 60 ? `hace ${m} min` : `hace ${Math.floor(m / 60)} h`);
+            setShowResumeBanner(true);
+          }
+        }
+      } catch { /* corrupt */ }
     }
   }, [orgId]);
 
@@ -292,6 +309,22 @@ export default function AndenesPage() {
     <div className="min-h-screen bg-gray-50">
       
       <div className="px-6 py-6">
+        {/* Banner de borrador pendiente */}
+        {showResumeBanner && (
+          <div className="mb-4 bg-teal-50 border border-teal-200 rounded-xl px-5 py-3 flex items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <i className="ri-save-line text-teal-600 text-lg w-5 h-5 flex items-center justify-center"></i>
+              <p className="text-sm text-teal-900"><span className="font-semibold">Tenés un borrador de andén sin finalizar</span><span className="text-teal-700 ml-1">({resumeDraftAge})</span></p>
+            </div>
+            <div className="flex items-center gap-2 flex-shrink-0">
+              <button onClick={() => { setShowResumeBanner(false); handleCreate(); }}
+                className="px-3 py-1.5 bg-teal-600 text-white text-xs font-semibold rounded-lg hover:bg-teal-700 transition-colors whitespace-nowrap">Continuar</button>
+              <button onClick={() => { localStorage.removeItem(`draft_dock_${orgId}_new`); setShowResumeBanner(false); }}
+                className="px-3 py-1.5 border border-gray-300 bg-white text-gray-700 text-xs font-medium rounded-lg hover:bg-gray-50 transition-colors whitespace-nowrap">Descartar</button>
+            </div>
+          </div>
+        )}
+
         {/* Header */}
         <div className="flex items-center justify-between mb-6">
           <div>

@@ -36,6 +36,27 @@ export default function ManpowerPage() {
   // Modal Control
   const [isControlModalOpen, setIsControlModalOpen] = useState(false);
 
+  // ── Banner borrador pendiente ─────────────────────────────────────────────
+  const [showResumeBanner, setShowResumeBanner] = useState(false);
+  const [resumeDraftAge, setResumeDraftAge] = useState('');
+
+  useEffect(() => {
+    if (!permsLoading && orgId) {
+      try {
+        const raw = localStorage.getItem(`draft_collaborator_${orgId}_new`);
+        if (raw) {
+          const d = JSON.parse(raw);
+          if (d?.formData && d?.savedAt) {
+            const ms = Date.now() - new Date(d.savedAt).getTime();
+            const m = Math.floor(ms / 60000);
+            setResumeDraftAge(m < 1 ? 'hace un momento' : m < 60 ? `hace ${m} min` : `hace ${Math.floor(m / 60)} h`);
+            setShowResumeBanner(true);
+          }
+        }
+      } catch { /* corrupt */ }
+    }
+  }, [permsLoading, orgId]);
+
   // Paginación
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 10;
@@ -293,32 +314,40 @@ const handleDelete = async (collaborator: Collaborator) => {
           <div className="flex items-center justify-between mb-2">
             <div>
               <h1 className="text-3xl font-bold text-gray-900">Manpower</h1>
-              <p className="text-gray-600 mt-1">
-                Gestión de colaboradores y asignación de almacenes
-              </p>
+              <p className="text-gray-600 mt-1">Gestión de colaboradores y asignación de almacenes</p>
             </div>
             <div className="flex items-center space-x-3">
               {(canView || canManage) && (
-                <button
-                  onClick={() => setIsControlModalOpen(true)}
-                  className="px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors flex items-center space-x-2 whitespace-nowrap"
-                >
-                  <i className="ri-bar-chart-box-line text-lg"></i>
-                  <span>Control</span>
+                <button onClick={() => setIsControlModalOpen(true)}
+                  className="px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors flex items-center space-x-2 whitespace-nowrap">
+                  <i className="ri-bar-chart-box-line text-lg"></i><span>Control</span>
                 </button>
               )}
               {canManage && (
-                <button
-                  onClick={openCreateModal}
-                  className="px-4 py-2 bg-teal-600 text-white rounded-lg hover:bg-teal-700 transition-colors flex items-center space-x-2 whitespace-nowrap"
-                >
-                  <i className="ri-add-line text-lg"></i>
-                  <span>Nuevo Colaborador</span>
+                <button onClick={openCreateModal}
+                  className="px-4 py-2 bg-teal-600 text-white rounded-lg hover:bg-teal-700 transition-colors flex items-center space-x-2 whitespace-nowrap">
+                  <i className="ri-add-line text-lg"></i><span>Nuevo Colaborador</span>
                 </button>
               )}
             </div>
           </div>
         </div>
+
+        {/* Banner de borrador pendiente */}
+        {showResumeBanner && (
+          <div className="mb-4 bg-teal-50 border border-teal-200 rounded-xl px-5 py-3 flex items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <i className="ri-save-line text-teal-600 text-lg w-5 h-5 flex items-center justify-center"></i>
+              <p className="text-sm text-teal-900"><span className="font-semibold">Tenés un borrador de colaborador sin finalizar</span><span className="text-teal-700 ml-1">({resumeDraftAge})</span></p>
+            </div>
+            <div className="flex items-center gap-2 flex-shrink-0">
+              <button onClick={() => { setShowResumeBanner(false); openCreateModal(); }}
+                className="px-3 py-1.5 bg-teal-600 text-white text-xs font-semibold rounded-lg hover:bg-teal-700 transition-colors whitespace-nowrap">Continuar</button>
+              <button onClick={() => { localStorage.removeItem(`draft_collaborator_${orgId}_new`); setShowResumeBanner(false); }}
+                className="px-3 py-1.5 border border-gray-300 bg-white text-gray-700 text-xs font-medium rounded-lg hover:bg-gray-50 transition-colors whitespace-nowrap">Descartar</button>
+            </div>
+          </div>
+        )}
 
         {/* Filtros */}
         <div className="bg-white rounded-lg shadow-sm p-6 mb-6">

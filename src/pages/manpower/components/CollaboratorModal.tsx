@@ -1,7 +1,10 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import type { Collaborator, CollaboratorFormData, WorkType } from '../../../types/collaborator';
 import type { Country } from '../../../types/warehouse';
 import type { Warehouse } from '../../../types/warehouse';
+import { useFormDraft, getDraftAge } from '../../../hooks/useReservationDraft';
+import { ConfirmModal } from '../../../components/base/ConfirmModal';
+import { usePermissions } from '../../../hooks/usePermissions';
 
 interface CollaboratorModalProps {
   isOpen: boolean;
@@ -24,6 +27,8 @@ export function CollaboratorModal({
   warehouses,
   canManage
 }: CollaboratorModalProps) {
+  const { orgId } = usePermissions();
+
   const [formData, setFormData] = useState<CollaboratorFormData>({
     full_name: '',
     ficha: '',
@@ -36,7 +41,14 @@ export function CollaboratorModal({
   const [loading, setLoading] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
 
-  // Cargar datos del colaborador al editar
+  // ── Draft persistence ─────────────────────────────────────────────────────
+  const isNewRecord = !collaborator;
+  const DRAFT_KEY = `draft_collaborator_${orgId || 'local'}_new`;
+  const [showDraftBanner, setShowDraftBanner] = useState(false);
+  const [showDiscardConfirm, setShowDiscardConfirm] = useState(false);
+  const [draftAgeLabel, setDraftAgeLabel] = useState('');
+  const { saveDraft, clearDraft, readDraft } = useFormDraft<CollaboratorFormData>({ storageKey: DRAFT_KEY, isNewRecord });
+
   useEffect(() => {
     if (collaborator) {
       setFormData({
@@ -48,19 +60,28 @@ export function CollaboratorModal({
         is_active: collaborator.is_active,
         warehouse_ids: collaborator.warehouses?.map(w => w.id) || []
       });
+      setShowDraftBanner(false);
     } else {
-      setFormData({
-        full_name: '',
-        ficha: '',
-        cedula: '',
-        country_id: '',
-        work_type_id: '',
-        is_active: true,
-        warehouse_ids: []
-      });
+      if (isOpen) {
+        const draft = readDraft();
+        if (draft) {
+          setFormData(draft.formData);
+          setDraftAgeLabel(getDraftAge(draft.savedAt));
+          setShowDraftBanner(true);
+        } else {
+          setFormData({ full_name: '', ficha: '', cedula: '', country_id: '', work_type_id: '', is_active: true, warehouse_ids: [] });
+          setShowDraftBanner(false);
+        }
+      }
     }
     setErrors({});
   }, [collaborator, isOpen]);
+
+  // Auto-save borrador
+  useEffect(() => {
+    if (!isOpen || !isNewRecord) return;
+    saveDraft(formData);
+  }, [formData, isOpen, isNewRecord]);
 
   // Filtrar almacenes por país seleccionado
   const filteredWarehouses = warehouses.filter(
@@ -110,6 +131,26 @@ export function CollaboratorModal({
     }));
   };
 
+  const handleClose = useCallback(() => {
+    if (isNewRecord && formData.full_name.trim()) {
+      setShowDiscardConfirm(true);
+      return;
+    }
+    clearDraft();
+    onClose();
+  }, [isNewRecord, formData.full_name, clearDraft, onClose]);
+
+  const handleDiscardAndClose = useCallback(() => {
+    setShowDiscardConfirm(false);
+    clearDraft();
+    onClose();
+  }, [clearDraft, onClose]);
+
+  const handleKeepAndClose = useCallback(() => {
+    setShowDiscardConfirm(false);
+    onClose();
+  }, [onClose]);
+
   // Guardar
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -119,6 +160,7 @@ export function CollaboratorModal({
     setLoading(true);
     try {
       await onSave(formData);
+      clearDraft();
       onClose();
     } catch (error) {
       // silenced
@@ -137,7 +179,7 @@ export function CollaboratorModal({
             {collaborator ? 'Editar Colaborador' : 'Nuevo Colaborador'}
           </h2>
           <button
-            onClick={onClose}
+            onClick={handleClose}
             className="text-gray-400 hover:text-gray-600 transition-colors"
             disabled={loading}
           >
@@ -146,6 +188,29 @@ export function CollaboratorModal({
         </div>
 
         <form onSubmit={handleSubmit} className="p-6 space-y-6">
+          {/* Banner de borrador */}
+          {showDraftBanner && (
+            <div className="bg-teal-50 border border-teal-200 rounded-xl p-4">
+              <div className="flex items-start gap-3">
+                <i className="ri-save-line text-teal-600 text-lg w-5 h-5 flex items-center justify-center flex-shrink-0 mt-0.5"></i>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-semibold text-teal-900">Borrador guardado {draftAgeLabel}</p>
+                  <p className="text-xs text-teal-700 mt-0.5">Se restauraron los datos que ingresaste anteriormente.</p>
+                  <div className="flex gap-2 mt-3">
+                    <button type="button" onClick={() => setShowDraftBanner(false)}
+                      className="px-3 py-1.5 text-xs font-semibold bg-teal-600 text-white rounded-lg hover:bg-teal-700 transition-colors whitespace-nowrap">
+                      Continuar con el borrador
+                    </button>
+                    <button type="button" onClick={() => { clearDraft(); setFormData({ full_name: '', ficha: '', cedula: '', country_id: '', work_type_id: '', is_active: true, warehouse_ids: [] }); setShowDraftBanner(false); }}
+                      className="px-3 py-1.5 text-xs font-medium border border-gray-300 bg-white text-gray-700 rounded-lg hover:bg-gray-50 transition-colors whitespace-nowrap">
+                      Descartar y empezar nuevo
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Nombre Completo */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -298,7 +363,7 @@ export function CollaboratorModal({
           <div className="flex justify-end space-x-3 pt-4 border-t">
             <button
               type="button"
-              onClick={onClose}
+              onClick={handleClose}
               className="px-4 py-2 text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors whitespace-nowrap"
               disabled={loading}
             >
@@ -316,6 +381,18 @@ export function CollaboratorModal({
           </div>
         </form>
       </div>
+
+      <ConfirmModal
+        isOpen={showDiscardConfirm}
+        type="warning"
+        title="Tenés un borrador sin guardar"
+        message="¿Qué hacemos con los datos del colaborador que ingresaste?"
+        confirmText="Descartar y cerrar"
+        cancelText="Conservar borrador"
+        showCancel
+        onConfirm={handleDiscardAndClose}
+        onCancel={handleKeepAndClose}
+      />
     </div>
   );
 }

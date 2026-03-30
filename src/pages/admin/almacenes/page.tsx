@@ -56,6 +56,30 @@ export default function AlmacenesPage() {
   // Estado para eliminación pendiente
   const [pendingDeleteWarehouse, setPendingDeleteWarehouse] = useState<Warehouse | null>(null);
 
+  // ── Banner borrador pendiente ─────────────────────────────────────────────
+  const [showResumeBanner, setShowResumeBanner] = useState(false);
+  const [resumeDraftAge, setResumeDraftAge] = useState('');
+
+  useEffect(() => {
+    if (!permissionsLoading && orgId) {
+      loadCountries();
+      loadClients();
+      loadWarehouses();
+      try {
+        const raw = localStorage.getItem('draft_warehouse_new');
+        if (raw) {
+          const d = JSON.parse(raw);
+          if (d?.formData && d?.savedAt) {
+            const ms = Date.now() - new Date(d.savedAt).getTime();
+            const m = Math.floor(ms / 60000);
+            setResumeDraftAge(m < 1 ? 'hace un momento' : m < 60 ? `hace ${m} min` : `hace ${Math.floor(m / 60)} h`);
+            setShowResumeBanner(true);
+          }
+        }
+      } catch { /* corrupt */ }
+    }
+  }, [permissionsLoading, orgId]);
+
   // console.log('[AlmacenesPage] snapshot', {
   //   orgId,
   //   userId,
@@ -116,16 +140,9 @@ export default function AlmacenesPage() {
 
   useEffect(() => {
     if (!permissionsLoading && orgId) {
-      // console.log('[AlmacenesPage] 🚀 Initializing - loading data...', {
-      //   orgId,
-      //   userId,
-      //   permissionsLoaded: !permissionsLoading
-      // });
-      loadCountries();
-      loadClients();
-      loadWarehouses();
+      // already handled in the draft-check useEffect above
     }
-  }, [permissionsLoading, orgId]);
+  }, []);
 
   // Filtrar por búsqueda + país
   useEffect(() => {
@@ -359,24 +376,33 @@ export default function AlmacenesPage() {
   return (
     <div className="p-6">
       <div className="flex items-center gap-2">
-        <button
-          onClick={() => setShowCountriesModal(true)}
-          className="flex items-center gap-2 px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors whitespace-nowrap"
-        >
-          <i className="ri-flag-line"></i>
-          Países
+        <button onClick={() => setShowCountriesModal(true)}
+          className="flex items-center gap-2 px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors whitespace-nowrap">
+          <i className="ri-flag-line"></i>Países
         </button>
-
         {can('warehouses.create') && (
-          <button
-            onClick={handleCreate}
-            className="flex items-center gap-2 px-4 py-2 bg-teal-600 text-white rounded-lg hover:bg-teal-700 transition-colors whitespace-nowrap"
-          >
-            <i className="ri-add-line"></i>
-            Nuevo Almacén
+          <button onClick={handleCreate}
+            className="flex items-center gap-2 px-4 py-2 bg-teal-600 text-white rounded-lg hover:bg-teal-700 transition-colors whitespace-nowrap">
+            <i className="ri-add-line"></i>Nuevo Almacén
           </button>
         )}
       </div>
+
+      {/* Banner de borrador pendiente */}
+      {showResumeBanner && (
+        <div className="mt-4 bg-teal-50 border border-teal-200 rounded-xl px-5 py-3 flex items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <i className="ri-save-line text-teal-600 text-lg w-5 h-5 flex items-center justify-center"></i>
+            <p className="text-sm text-teal-900"><span className="font-semibold">Tenés un borrador de almacén sin finalizar</span><span className="text-teal-700 ml-1">({resumeDraftAge})</span></p>
+          </div>
+          <div className="flex items-center gap-2 flex-shrink-0">
+            <button onClick={() => { setShowResumeBanner(false); handleCreate(); }}
+              className="px-3 py-1.5 bg-teal-600 text-white text-xs font-semibold rounded-lg hover:bg-teal-700 transition-colors whitespace-nowrap">Continuar</button>
+            <button onClick={() => { localStorage.removeItem('draft_warehouse_new'); setShowResumeBanner(false); }}
+              className="px-3 py-1.5 border border-gray-300 bg-white text-gray-700 text-xs font-medium rounded-lg hover:bg-gray-50 transition-colors whitespace-nowrap">Descartar</button>
+          </div>
+        </div>
+      )}
 
 
       {successMessage && (

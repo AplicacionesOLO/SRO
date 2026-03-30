@@ -1,5 +1,7 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../../../lib/supabase';
+import { useFormDraft, getDraftAge } from '../../../hooks/useReservationDraft';
+import { ConfirmModal } from '../../../components/base/ConfirmModal';
 
 interface DockCategory {
   id: string;
@@ -72,6 +74,14 @@ export default function DockModal({ dock, categories, statuses, orgId, onClose, 
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [hexInputValue, setHexInputValue] = useState('');
 
+  // ── Draft persistence ─────────────────────────────────────────────────────
+  const isNewRecord = !dock;
+  const DRAFT_KEY = `draft_dock_${orgId}_new`;
+  const [showDraftBanner, setShowDraftBanner] = useState(false);
+  const [showDiscardConfirm, setShowDiscardConfirm] = useState(false);
+  const [draftAgeLabel, setDraftAgeLabel] = useState('');
+  const { saveDraft, clearDraft, readDraft } = useFormDraft<typeof formData>({ storageKey: DRAFT_KEY, isNewRecord });
+
   useEffect(() => {
     const loadWarehouses = async () => {
       try {
@@ -109,19 +119,35 @@ export default function DockModal({ dock, categories, statuses, orgId, onClose, 
         is_active: dock.is_active
       });
       setHexInputValue(color);
+      setShowDraftBanner(false);
     } else {
-      setFormData({
-        name: '',
-        reference: '',
-        header_color: '',
-        category_id: categories[0]?.id || '',
-        status_id: statuses[0]?.id || '',
-        warehouse_id: '',
-        is_active: true
-      });
-      setHexInputValue('');
+      const draft = readDraft();
+      if (draft) {
+        setFormData(draft.formData);
+        setHexInputValue(draft.formData.header_color || '');
+        setDraftAgeLabel(getDraftAge(draft.savedAt));
+        setShowDraftBanner(true);
+      } else {
+        setFormData({
+          name: '',
+          reference: '',
+          header_color: '',
+          category_id: categories[0]?.id || '',
+          status_id: statuses[0]?.id || '',
+          warehouse_id: '',
+          is_active: true
+        });
+        setHexInputValue('');
+        setShowDraftBanner(false);
+      }
     }
   }, [dock, categories, statuses]);
+
+  // Auto-save borrador
+  useEffect(() => {
+    if (!isNewRecord) return;
+    saveDraft(formData);
+  }, [formData, isNewRecord]);
 
   const validate = () => {
     const newErrors: Record<string, string> = {};
@@ -167,6 +193,26 @@ export default function DockModal({ dock, categories, statuses, orgId, onClose, 
     setErrors(prev => ({ ...prev, header_color: '' }));
   };
 
+  const handleClose = useCallback(() => {
+    if (isNewRecord && formData.name.trim()) {
+      setShowDiscardConfirm(true);
+      return;
+    }
+    clearDraft();
+    onClose();
+  }, [isNewRecord, formData.name, clearDraft, onClose]);
+
+  const handleDiscardAndClose = useCallback(() => {
+    setShowDiscardConfirm(false);
+    clearDraft();
+    onClose();
+  }, [clearDraft, onClose]);
+
+  const handleKeepAndClose = useCallback(() => {
+    setShowDiscardConfirm(false);
+    onClose();
+  }, [onClose]);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
@@ -204,6 +250,7 @@ export default function DockModal({ dock, categories, statuses, orgId, onClose, 
         if (error) throw error;
       }
 
+      clearDraft();
       onSave();
     } catch (error: any) {
       setErrors({ general: error?.message || 'Error al guardar andén' });
@@ -223,7 +270,7 @@ export default function DockModal({ dock, categories, statuses, orgId, onClose, 
             {dock ? 'Editar Andén' : 'Nuevo Andén'}
           </h2>
           <button
-            onClick={onClose}
+            onClick={handleClose}
             className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
           >
             <i className="ri-close-line text-xl w-5 h-5 flex items-center justify-center"></i>
@@ -232,6 +279,29 @@ export default function DockModal({ dock, categories, statuses, orgId, onClose, 
 
         {/* Form */}
         <form onSubmit={handleSubmit} className="p-6 space-y-4">
+          {/* Banner de borrador */}
+          {showDraftBanner && (
+            <div className="bg-teal-50 border border-teal-200 rounded-xl p-4">
+              <div className="flex items-start gap-3">
+                <i className="ri-save-line text-teal-600 text-lg w-5 h-5 flex items-center justify-center flex-shrink-0 mt-0.5"></i>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-semibold text-teal-900">Borrador guardado {draftAgeLabel}</p>
+                  <p className="text-xs text-teal-700 mt-0.5">Se restauraron los datos que ingresaste anteriormente.</p>
+                  <div className="flex gap-2 mt-3">
+                    <button type="button" onClick={() => setShowDraftBanner(false)}
+                      className="px-3 py-1.5 text-xs font-semibold bg-teal-600 text-white rounded-lg hover:bg-teal-700 transition-colors whitespace-nowrap">
+                      Continuar con el borrador
+                    </button>
+                    <button type="button" onClick={() => { clearDraft(); setFormData({ name: '', reference: '', header_color: '', category_id: categories[0]?.id || '', status_id: statuses[0]?.id || '', warehouse_id: '', is_active: true }); setHexInputValue(''); setShowDraftBanner(false); }}
+                      className="px-3 py-1.5 text-xs font-medium border border-gray-300 bg-white text-gray-700 rounded-lg hover:bg-gray-50 transition-colors whitespace-nowrap">
+                      Descartar y empezar nuevo
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
           {errors.general && (
             <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-600">
               {errors.general}
@@ -282,7 +352,6 @@ export default function DockModal({ dock, categories, statuses, orgId, onClose, 
             </label>
 
             <div className="flex items-center gap-3">
-              {/* Color picker nativo */}
               <div className="relative flex-shrink-0">
                 <input
                   type="color"
@@ -292,8 +361,6 @@ export default function DockModal({ dock, categories, statuses, orgId, onClose, 
                   title="Seleccionar color"
                 />
               </div>
-
-              {/* Input hex */}
               <input
                 type="text"
                 value={hexInputValue}
@@ -304,8 +371,6 @@ export default function DockModal({ dock, categories, statuses, orgId, onClose, 
                   errors.header_color ? 'border-red-500' : 'border-gray-300'
                 }`}
               />
-
-              {/* Botón limpiar */}
               {formData.header_color && (
                 <button
                   type="button"
@@ -322,7 +387,6 @@ export default function DockModal({ dock, categories, statuses, orgId, onClose, 
               <p className="mt-1 text-sm text-red-500">{errors.header_color}</p>
             )}
 
-            {/* Preview */}
             {previewColor ? (
               <div
                 className="mt-2 rounded-lg px-3 py-2 flex flex-col items-center justify-center gap-0.5"
@@ -444,7 +508,7 @@ export default function DockModal({ dock, categories, statuses, orgId, onClose, 
           <div className="flex items-center justify-end gap-3 pt-4 border-t border-gray-200">
             <button
               type="button"
-              onClick={onClose}
+              onClick={handleClose}
               disabled={saving}
               className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
             >
@@ -470,6 +534,19 @@ export default function DockModal({ dock, categories, statuses, orgId, onClose, 
           </div>
         </form>
       </div>
+
+      {/* Confirm: conservar o descartar borrador */}
+      <ConfirmModal
+        isOpen={showDiscardConfirm}
+        type="warning"
+        title="Tenés un borrador sin guardar"
+        message="¿Qué hacemos con los datos del andén que ingresaste?"
+        confirmText="Descartar y cerrar"
+        cancelText="Conservar borrador"
+        showCancel
+        onConfirm={handleDiscardAndClose}
+        onCancel={handleKeepAndClose}
+      />
     </div>
   );
 }

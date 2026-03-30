@@ -95,6 +95,28 @@ export default function CalendarioPage() {
   const { user } = useAuth();
   const { lastRuleChange } = useClientPickupRulesContext();
 
+  // ── Banner de borrador pendiente ──────────────────────────────────────────
+  const [showResumeBanner, setShowResumeBanner] = useState(false);
+  const [resumeDraftAge, setResumeDraftAge] = useState('');
+
+  useEffect(() => {
+    if (!orgId) return;
+    try {
+      const raw = localStorage.getItem(`draft_reservation_${orgId}_new`);
+      if (!raw) return;
+      const draft = JSON.parse(raw);
+      if (draft?.formData && draft?.savedAt) {
+        const ms = Date.now() - new Date(draft.savedAt).getTime();
+        const minutes = Math.floor(ms / 60_000);
+        let age = 'hace un momento';
+        if (minutes >= 1 && minutes < 60) age = `hace ${minutes} min`;
+        else if (minutes >= 60) { const h = Math.floor(minutes / 60); age = `hace ${h} h`; }
+        setResumeDraftAge(age);
+        setShowResumeBanner(true);
+      }
+    } catch { /* draft corrupto */ }
+  }, [orgId]);
+
   // ✅ Estado de rango dinámico
   const [rangeDays, setRangeDays] = useState<number>(3); // 1, 3, o 7
   const [anchorDate, setAnchorDate] = useState(new Date());
@@ -1115,6 +1137,29 @@ export default function CalendarioPage() {
         </div>
       ) : (
         <>
+          {/* Banner de borrador pendiente */}
+          {showResumeBanner && (
+            <div className="bg-teal-50 border-b border-teal-200 px-6 py-3 flex items-center justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <i className="ri-save-line text-teal-600 text-lg w-5 h-5 flex items-center justify-center"></i>
+                <p className="text-sm text-teal-900">
+                  <span className="font-semibold">Tenés un borrador de reserva sin finalizar</span>
+                  <span className="text-teal-700 ml-1">({resumeDraftAge})</span>
+                </p>
+              </div>
+              <div className="flex items-center gap-2 flex-shrink-0">
+                <button
+                  onClick={() => { setShowResumeBanner(false); setReserveModalOpen(true); setSelectedReservation(null); setReserveModalSlot(null); }}
+                  className="px-3 py-1.5 bg-teal-600 text-white text-xs font-semibold rounded-lg hover:bg-teal-700 transition-colors whitespace-nowrap"
+                >Continuar</button>
+                <button
+                  onClick={() => { localStorage.removeItem(`draft_reservation_${orgId}_new`); setShowResumeBanner(false); }}
+                  className="px-3 py-1.5 border border-gray-300 bg-white text-gray-700 text-xs font-medium rounded-lg hover:bg-gray-50 transition-colors whitespace-nowrap"
+                >Descartar</button>
+              </div>
+            </div>
+          )}
+
           {/* Banner de modo selección */}
           {selectionMode && (
             <div className="bg-teal-600 text-white px-6 py-3 flex items-center justify-between">

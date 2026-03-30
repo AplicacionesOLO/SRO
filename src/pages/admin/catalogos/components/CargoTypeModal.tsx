@@ -1,6 +1,8 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { cargoTypesService } from '../../../../services/cargoTypesService';
 import type { CargoType } from '../../../../types/catalog';
+import { useFormDraft, getDraftAge } from '../../../../hooks/useReservationDraft';
+import { ConfirmModal } from '../../../../components/base/ConfirmModal';
 
 interface CargoTypeModalProps {
   orgId: string;
@@ -27,14 +29,65 @@ export default function CargoTypeModal({ orgId, cargoType, onClose, onSave }: Ca
     active: cargoType?.active ?? true
   });
 
+  // ── Draft persistence ─────────────────────────────────────────────────────
+  const isNewRecord = !cargoType;
+  const DRAFT_KEY = `draft_cargo_type_${orgId}_new`;
+  const [showDraftBanner, setShowDraftBanner] = useState(false);
+  const [showDiscardConfirm, setShowDiscardConfirm] = useState(false);
+  const [draftAgeLabel, setDraftAgeLabel] = useState('');
+
+  interface CargoTypeDraft { name: string; defaultMinutes: string; isDynamic: boolean }
+  const { saveDraft, clearDraft, readDraft } = useFormDraft<CargoTypeDraft>({ storageKey: DRAFT_KEY, isNewRecord });
+
   useEffect(() => {
     if (cargoType) {
       setName(cargoType.name);
       setDefaultMinutes(cargoType.default_minutes?.toString() || '');
       setIsDynamic(cargoType.is_dynamic);
       setIsActive(cargoType.is_active);
+      setShowDraftBanner(false);
+    } else {
+      const draft = readDraft();
+      if (draft) {
+        setName(draft.formData.name);
+        setDefaultMinutes(draft.formData.defaultMinutes);
+        setIsDynamic(draft.formData.isDynamic);
+        setDraftAgeLabel(getDraftAge(draft.savedAt));
+        setShowDraftBanner(true);
+      } else {
+        setName('');
+        setDefaultMinutes('');
+        setIsDynamic(false);
+        setShowDraftBanner(false);
+      }
     }
   }, [cargoType]);
+
+  // Auto-save borrador
+  useEffect(() => {
+    if (!isNewRecord) return;
+    saveDraft({ name, defaultMinutes, isDynamic });
+  }, [name, defaultMinutes, isDynamic, isNewRecord]);
+
+  const handleClose = useCallback(() => {
+    if (isNewRecord && name.trim()) {
+      setShowDiscardConfirm(true);
+      return;
+    }
+    clearDraft();
+    onClose();
+  }, [isNewRecord, name, clearDraft, onClose]);
+
+  const handleDiscardAndClose = useCallback(() => {
+    setShowDiscardConfirm(false);
+    clearDraft();
+    onClose();
+  }, [clearDraft, onClose]);
+
+  const handleKeepAndClose = useCallback(() => {
+    setShowDiscardConfirm(false);
+    onClose();
+  }, [onClose]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -63,6 +116,7 @@ export default function CargoTypeModal({ orgId, cargoType, onClose, onSave }: Ca
         await cargoTypesService.createCargoType(orgId, name.trim(), minutes, isDynamic);
       }
 
+      clearDraft();
       //console.log('[CargoTypeModal] Saved successfully');
       onSave();
     } catch (err: any) {
@@ -80,7 +134,7 @@ export default function CargoTypeModal({ orgId, cargoType, onClose, onSave }: Ca
             {cargoType ? 'Editar Tipo de Carga' : 'Nuevo Tipo de Carga'}
           </h2>
           <button
-            onClick={onClose}
+            onClick={handleClose}
             className="text-gray-400 hover:text-gray-600 transition-colors cursor-pointer"
           >
             <i className="ri-close-line text-2xl w-6 h-6 flex items-center justify-center"></i>
@@ -88,6 +142,28 @@ export default function CargoTypeModal({ orgId, cargoType, onClose, onSave }: Ca
         </div>
 
         <form onSubmit={handleSubmit} className="p-6">
+          {/* Banner de borrador */}
+          {showDraftBanner && (
+            <div className="mb-4 bg-teal-50 border border-teal-200 rounded-xl p-4">
+              <div className="flex items-start gap-3">
+                <i className="ri-save-line text-teal-600 text-lg w-5 h-5 flex items-center justify-center flex-shrink-0 mt-0.5"></i>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-semibold text-teal-900">Borrador guardado {draftAgeLabel}</p>
+                  <div className="flex gap-2 mt-2">
+                    <button type="button" onClick={() => setShowDraftBanner(false)}
+                      className="px-3 py-1 text-xs font-semibold bg-teal-600 text-white rounded-lg hover:bg-teal-700 whitespace-nowrap">
+                      Continuar
+                    </button>
+                    <button type="button" onClick={() => { clearDraft(); setName(''); setDefaultMinutes(''); setIsDynamic(false); setShowDraftBanner(false); }}
+                      className="px-3 py-1 text-xs border border-gray-300 bg-white text-gray-700 rounded-lg hover:bg-gray-50 whitespace-nowrap">
+                      Descartar
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
           {error && (
             <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-600">
               {error}
@@ -151,7 +227,7 @@ export default function CargoTypeModal({ orgId, cargoType, onClose, onSave }: Ca
           <div className="flex items-center justify-end gap-3">
             <button
               type="button"
-              onClick={onClose}
+              onClick={handleClose}
               className="px-4 py-2 text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors whitespace-nowrap cursor-pointer"
             >
               Cancelar
@@ -166,6 +242,18 @@ export default function CargoTypeModal({ orgId, cargoType, onClose, onSave }: Ca
           </div>
         </form>
       </div>
+
+      <ConfirmModal
+        isOpen={showDiscardConfirm}
+        type="warning"
+        title="Tenés un borrador sin guardar"
+        message="¿Qué hacemos con los datos del tipo de carga que ingresaste?"
+        confirmText="Descartar y cerrar"
+        cancelText="Conservar borrador"
+        showCancel
+        onConfirm={handleDiscardAndClose}
+        onCancel={handleKeepAndClose}
+      />
     </div>
   );
 }
