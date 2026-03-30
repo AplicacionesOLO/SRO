@@ -25,6 +25,9 @@ const ManpowerPage = lazy(() => import('../pages/manpower/page'));
 const CasetillaPage = lazy(() => import('../pages/casetilla/page'));
 
 const PerfilPage = lazy(() => import('../pages/perfil/page'));
+const ConocimientoPage = lazy(() => import('../pages/conocimiento/page'));
+const ChatPage = lazy(() => import('../pages/chat/page'));
+const ChatAuditoriaPage = lazy(() => import('../pages/chat/auditoria/page'));
 
 const routes: RouteObject[] = [
   { 
@@ -174,6 +177,36 @@ const routes: RouteObject[] = [
     element: (
       <ProtectedRoute>
         <PerfilPage />
+      </ProtectedRoute>
+    )
+  },
+  {
+    path: '/conocimiento',
+    element: (
+      <ProtectedRoute>
+        <RequirePermission permission="chat.documents.manage">
+          <ConocimientoPage />
+        </RequirePermission>
+      </ProtectedRoute>
+    )
+  },
+  {
+    path: '/chat',
+    element: (
+      <ProtectedRoute>
+        <RequirePermission permission="chat.ask">
+          <ChatPage />
+        </RequirePermission>
+      </ProtectedRoute>
+    )
+  },
+  {
+    path: '/chat/auditoria',
+    element: (
+      <ProtectedRoute>
+        <RequirePermission permission="chat.audit.view">
+          <ChatAuditoriaPage />
+        </RequirePermission>
       </ProtectedRoute>
     )
   },

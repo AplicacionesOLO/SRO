@@ -10,6 +10,7 @@ import Navbar from "./components/feature/Navbar";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { GmailConnectionGuard } from "./components/guards/GmailConnectionGuard";
 import { useAuth } from "./contexts/AuthContext";
+import SROAssistantWidget from "./components/feature/chat-widget/SROAssistantWidget";
 
 function AppContent() {
   const location = useLocation();
@@ -17,6 +18,7 @@ function AppContent() {
   
   const isLoginPage = location.pathname === '/login';
   const isAccessPendingPage = location.pathname === '/access-pending';
+  const isAuthenticatedLayout = !isLoginPage && !isAccessPendingPage;
 
   // ✅ Determinar si el guard está listo para ejecutarse
   const guardReady = !loading && !permissionsLoading && !!user;
@@ -28,12 +30,15 @@ function AppContent() {
       <GmailConnectionGuard orgId={orgId} ready={guardReady} />
       
       <div className="flex min-h-screen bg-gray-50">
-        {!isLoginPage && !isAccessPendingPage && <Sidebar />}
+        {isAuthenticatedLayout && <Sidebar />}
         <main className="flex-1 overflow-auto pb-16 lg:pb-0">
-          {!isLoginPage && !isAccessPendingPage && <Navbar />}
+          {isAuthenticatedLayout && <Navbar />}
           <AppRoutes />
         </main>
       </div>
+
+      {/* ✅ Widget flotante de chat — montado una sola vez, visible en toda la app autenticada */}
+      {isAuthenticatedLayout && <SROAssistantWidget />}
     </>
   );
 }
