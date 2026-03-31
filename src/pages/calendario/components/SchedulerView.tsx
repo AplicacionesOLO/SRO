@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { Dock, DockReservation, DockStatus } from '../../../types/dock';
+import ReservationHoverCard from './ReservationHoverCard';
 
 interface SchedulerViewProps {
   docks: Dock[];
@@ -286,19 +287,19 @@ export default function SchedulerView({
                       return (
                         <div
                           key={`${dock.id}-${slot}`}
-                          className="relative border-b border-gray-100 min-h-[60px] cursor-pointer"
+                          className="border-b border-gray-100 min-h-[60px] cursor-pointer"
                           style={{
+                            position: 'relative',
+                            zIndex: 0,
                             backgroundColor: 'rgba(13, 148, 136, 0.75)',
                             border: '1px solid rgba(13, 148, 136, 0.4)',
-                            transition: 'all 0.2s ease-in-out',
+                            transition: 'background-color 0.2s ease-in-out',
                           }}
                           onMouseEnter={(e) => {
                             e.currentTarget.style.backgroundColor = 'rgba(13, 148, 136, 0.92)';
-                            e.currentTarget.style.boxShadow = '0 2px 8px rgba(0, 0, 0, 0.1)';
                           }}
                           onMouseLeave={(e) => {
                             e.currentTarget.style.backgroundColor = 'rgba(13, 148, 136, 0.75)';
-                            e.currentTarget.style.boxShadow = 'none';
                           }}
                           onDragOver={handleDragOver}
                           onDrop={(e) => handleDrop(e, dock.id, day, slot)}
@@ -309,28 +310,32 @@ export default function SchedulerView({
 
                     {dayReservations.map(reservation => {
                       const position = calculateReservationPosition(reservation, day);
-                      const status = statuses.find(s => s.id === reservation.statusId);
                       
                       return (
-                        <div
+                        <ReservationHoverCard
                           key={reservation.id}
+                          reservation={reservation}
+                          statuses={statuses}
+                          docks={docks}
                           draggable
                           onDragStart={(e) => handleDragStart(e, reservation.id)}
                           onClick={(e) => {
                             e.stopPropagation();
                             onReservationClick(reservation);
                           }}
-                          className="absolute left-1 right-1 rounded-lg shadow-md hover:shadow-lg transition-all cursor-move overflow-hidden z-10 border-l-4"
+                          className="absolute left-1 right-1 rounded-lg transition-all cursor-move overflow-hidden border-l-4"
                           style={{
                             top: position.top,
                             height: position.height,
+                            zIndex: 20,
                             backgroundColor: `${getStatusColor(reservation.statusId)}20`,
-                            borderLeftColor: getStatusColor(reservation.statusId)
+                            borderLeftColor: getStatusColor(reservation.statusId),
+                            boxShadow: '0 1px 4px rgba(0,0,0,0.08)'
                           }}
                         >
                           <div className="p-2 h-full flex flex-col">
                             <div 
-                              className="text-[10px] font-bold uppercase tracking-wide mb-1 px-2 py-0.5 rounded inline-block self-start"
+                              className="text-[10px] font-bold uppercase tracking-wide mb-1 px-2 py-0.5 rounded inline-block self-start whitespace-nowrap"
                               style={{ 
                                 backgroundColor: getStatusColor(reservation.statusId),
                                 color: 'white'
@@ -352,7 +357,7 @@ export default function SchedulerView({
                               {new Date(reservation.endDateTime).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}
                             </div>
                           </div>
-                        </div>
+                        </ReservationHoverCard>
                       );
                     })}
                   </div>

@@ -19,6 +19,7 @@ import { dockAllocationService, type DockAllocationRule } from '../../services/d
 import { providersService } from '../../services/providersService';
 import { useClientPickupRulesContext } from '../../contexts/ClientPickupRulesContext';
 import BlocksManagementTab from './components/BlocksManagementTab';
+import ReservationHoverCard from './components/ReservationHoverCard';
 
 type ViewMode = '1day' | '3days' | '7days';
 type TabMode = 'calendar' | 'statuses' | 'blocks';
@@ -1069,6 +1070,22 @@ export default function CalendarioPage() {
     return '#F9FAFB';
   };
 
+  /**
+   * Mezcla un color hex con blanco para generar un tono pastel sólido.
+   * blend=0 → color original | blend=1 → blanco puro
+   * Usar blend ~0.82 para fondo pastel, ~0.55 para borde de contorno.
+   */
+  const hexToTint = (hex: string, blend: number): string => {
+    if (!hex || hex.length < 7) return blend > 0.7 ? '#f3f4f6' : '#9ca3af';
+    const r = parseInt(hex.slice(1, 3), 16);
+    const g = parseInt(hex.slice(3, 5), 16);
+    const b = parseInt(hex.slice(5, 7), 16);
+    const pr = Math.round(r + (255 - r) * blend);
+    const pg = Math.round(g + (255 - g) * blend);
+    const pb = Math.round(b + (255 - b) * blend);
+    return `#${pr.toString(16).padStart(2, '0')}${pg.toString(16).padStart(2, '0')}${pb.toString(16).padStart(2, '0')}`;
+  };
+
   /** Devuelve color de texto con contraste adecuado para un fondo hex */
   const getContrastColor = (hex: string): string => {
     if (!hex || hex.length < 7) return '#111827';
@@ -1481,11 +1498,15 @@ export default function CalendarioPage() {
                 <div ref={bodyScrollRef} className="flex-1 h-full overflow-auto" onScroll={handleBodyScroll}>
                   <div className="flex" style={{ width: totalWidth, minWidth: totalWidth }}>
                     {/* Columna de horas (sticky left + z-30 para quedar arriba) */}
-                    <div className="w-20 flex-shrink-0 bg-white border-r border-gray-200 sticky left-0 z-30 shadow-sm">
+                    <div className="w-20 flex-shrink-0 bg-white border-r border-gray-300 sticky left-0 z-30 shadow">
                       {timeSlots.map((slot) => (
                         <div
                           key={slot.label}
-                          className="h-[60px] border-b border-gray-200 flex items-start justify-end pr-2 pt-1 text-xs text-gray-500"
+                          className={`h-[60px] border-b flex items-start justify-end pr-2 pt-1 ${
+                            slot.minute === 0
+                              ? 'border-gray-300 text-gray-700 font-semibold text-xs'
+                              : 'border-gray-100 text-gray-400 text-[11px]'
+                          }`}
                         >
                           {slot.label}
                         </div>
@@ -1508,7 +1529,7 @@ export default function CalendarioPage() {
                           return (
                             <div
                               key={day.toISOString()}
-                              className="flex-shrink-0 border-r border-gray-200 relative"
+                              className="flex-shrink-0 border-r border-gray-400 relative"
                               style={{
                                 width: `${filteredDocks.length * COL_W}px`,
                                 minWidth: `${filteredDocks.length * COL_W}px`,
@@ -1543,10 +1564,10 @@ export default function CalendarioPage() {
                               )}
 
                               <div className="flex">
-                                {filteredDocks.map((dock) => (
+                                {filteredDocks.map((dock, dockIdx) => (
                                   <div
                                     key={dock.id}
-                                    className="flex-shrink-0 border-r border-gray-200"
+                                    className={`flex-shrink-0 border-r ${dockIdx % 2 === 1 ? 'bg-slate-50/50' : 'bg-white'} ${dockIdx < filteredDocks.length - 1 ? 'border-gray-300' : 'border-gray-200'}`}
                                     style={{ width: `${COL_W}px`, minWidth: `${COL_W}px` }}
                                   >
                                     {/* CONTENEDOR RELATIVE PARA SUPERPONER */}
@@ -1570,7 +1591,7 @@ export default function CalendarioPage() {
                                                     : dockDisabledByRule || dockBlockedByError
                                                     ? 'bg-red-50/40 cursor-not-allowed border-gray-100'
                                                     : 'bg-gray-100/50 cursor-not-allowed border-gray-100'
-                                                  : 'hover:bg-gray-50 cursor-pointer border-gray-100'
+                                                  : `hover:bg-gray-50/80 cursor-pointer ${slot.minute === 0 ? 'border-gray-300' : 'border-gray-100'}`
                                               }`}
                                               style={
                                                 inSelectionMode && eligible
@@ -1615,88 +1636,108 @@ export default function CalendarioPage() {
                                             const { top, height } = clamped;
 
                                             return (
-                                              <div
+                                              <ReservationHoverCard
                                                 key={reservation.id}
-                                                draggable={canMove && !selectionMode}
-                                                onDragStart={(e) => {
-                                                  if (selectionMode) { e.preventDefault(); return; }
-                                                  handleDragStart(e, {
-                                                    type: 'reservation',
-                                                    id: reservation.id,
-                                                    dockId: dock.id,
-                                                    startTime: start,
-                                                    endTime: end,
-                                                    data: reservation,
-                                                  });
+                                                data={{
+                                                  id: reservation.id,
+                                                  startDatetime: reservation.start_datetime,
+                                                  endDatetime: reservation.end_datetime,
+                                                  dua: reservation.dua,
+                                                  pedido: reservation.order_request_number,
+                                                  driver: (reservation as any).driver,
+                                                  notes: (reservation as any).notes,
+                                                  statusName: reservation.status?.name,
+                                                  statusColor: reservation.status?.color,
+                                                  dockName: filteredDocks.find(d => d.id === reservation.dock_id)?.name,
+                                                  providerName: providers.find(p => p.id === reservation.shipper_provider)?.name,
                                                 }}
-                                                onClick={(e) => {
-                                                  e.stopPropagation();
-                                                  // ✅ En modo selección, NO abrir modal de edición
-                                                  if (selectionMode) {
-                                                    setNotifyModal({
-                                                      isOpen: true,
-                                                      type: 'warning',
-                                                      title: 'Espacio ocupado',
-                                                      message: 'Ese espacio ya está reservado. Seleccioná un espacio disponible (verde).',
-                                                    });
-                                                    return;
-                                                  }
-                                                  handleSelectSlot({
-                                                    dockId: dock.id,
-                                                    date: day.toISOString(),
-                                                    time: '',
-                                                    eventType: 'reservation',
-                                                    id: reservation.id,
-                                                    data: reservation,
-                                                    startTime: start,
-                                                    endTime: end,
-                                                  });
-                                                }}
-                                                className={`absolute left-1 right-1 rounded-lg border-l-4 bg-white shadow-sm hover:shadow-md transition-shadow overflow-hidden pointer-events-auto ${
-                                                  selectionMode ? 'cursor-not-allowed opacity-70' : 'cursor-pointer'
-                                                }`}
-                                                style={{
-                                                  top: `${top}px`,
-                                                  height: `${height}px`,
-                                                  borderLeftColor: reservation.status?.color || '#6B7280',
-                                                  minHeight: '40px',
-                                                }}
+                                                disabled={selectionMode}
                                               >
-                                                <div className="p-2 h-full flex flex-col justify-between text-xs overflow-hidden">
-                                                  <div className="flex flex-col gap-0.5 overflow-hidden">
-                                                    <div className="font-semibold text-gray-900 truncate">
-                                                      #{reservation.id.slice(0, 8)}
+                                                <div
+                                                  draggable={canMove && !selectionMode}
+                                                  onDragStart={(e) => {
+                                                    if (selectionMode) { e.preventDefault(); return; }
+                                                    handleDragStart(e, {
+                                                      type: 'reservation',
+                                                      id: reservation.id,
+                                                      dockId: dock.id,
+                                                      startTime: start,
+                                                      endTime: end,
+                                                      data: reservation,
+                                                    });
+                                                  }}
+                                                  onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    // ✅ En modo selección, NO abrir modal de edición
+                                                    if (selectionMode) {
+                                                      setNotifyModal({
+                                                        isOpen: true,
+                                                        type: 'warning',
+                                                        title: 'Espacio ocupado',
+                                                        message: 'Ese espacio ya está reservado. Seleccioná un espacio disponible (verde).',
+                                                      });
+                                                      return;
+                                                    }
+                                                    handleSelectSlot({
+                                                      dockId: dock.id,
+                                                      date: day.toISOString(),
+                                                      time: '',
+                                                      eventType: 'reservation',
+                                                      id: reservation.id,
+                                                      data: reservation,
+                                                      startTime: start,
+                                                      endTime: end,
+                                                    });
+                                                  }}
+                                                  className={`absolute left-1 right-1 rounded-lg border border-l-4 shadow-sm hover:shadow transition-shadow overflow-hidden pointer-events-auto ${
+                                                    selectionMode ? 'cursor-not-allowed opacity-70' : 'cursor-pointer'
+                                                  }`}
+                                                  style={{
+                                                    top: `${top}px`,
+                                                    height: `${height}px`,
+                                                    borderLeftColor: reservation.status?.color || '#6B7280',
+                                                    borderColor: hexToTint(reservation.status?.color || '#6B7280', 0.55),
+                                                    borderLeftWidth: '4px',
+                                                    backgroundColor: hexToTint(reservation.status?.color || '#6B7280', 0.84),
+                                                    minHeight: '40px',
+                                                  }}
+                                                >
+                                                  <div className="p-2 h-full flex flex-col justify-between text-xs overflow-hidden">
+                                                    <div className="flex flex-col gap-0.5 overflow-hidden">
+                                                      <div className="font-semibold text-gray-900 truncate">
+                                                        #{reservation.id.slice(0, 8)}
+                                                      </div>
+                                                      {reservation.dua && (
+                                                        <div className="text-gray-500 truncate text-[10px]">
+                                                          DUA: {reservation.dua}
+                                                        </div>
+                                                      )}
+                                                      {reservation.order_request_number && (
+                                                        <div className="text-gray-500 truncate text-[10px]">
+                                                          Pedido: {reservation.order_request_number}
+                                                        </div>
+                                                      )}
+                                                      {reservation.shipper_provider && (
+                                                        <div className="text-gray-500 truncate text-[10px]">
+                                                          Prov: {providers.find(p => p.id === reservation.shipper_provider)?.name || reservation.shipper_provider}
+                                                        </div>
+                                                      )}
                                                     </div>
-                                                    {reservation.dua && (
-                                                      <div className="text-gray-500 truncate text-[10px]">
-                                                        DUA: {reservation.dua}
-                                                      </div>
-                                                    )}
-                                                    {reservation.order_request_number && (
-                                                      <div className="text-gray-500 truncate text-[10px]">
-                                                        Pedido: {reservation.order_request_number}
-                                                      </div>
-                                                    )}
-                                                    {reservation.shipper_provider && (
-                                                      <div className="text-gray-500 truncate text-[10px]">
-                                                        Prov: {providers.find(p => p.id === reservation.shipper_provider)?.name || reservation.shipper_provider}
-                                                      </div>
-                                                    )}
-                                                  </div>
-                                                  <div className="flex items-center justify-between mt-1 gap-1">
-                                                    <span
-                                                      className="px-2 py-0.5 rounded text-[10px] font-medium text-white shrink-0"
-                                                      style={{ backgroundColor: reservation.status?.color || '#6B7280' }}
-                                                    >
-                                                      {reservation.status?.name || 'Sin estado'}
-                                                    </span>
-                                                    <span className="text-[10px] text-gray-500 flex items-center gap-0.5 shrink-0">
-                                                      <i className="ri-time-line w-3 h-3 flex items-center justify-center"></i>
-                                                      {start.getHours().toString().padStart(2, '0')}:{start.getMinutes().toString().padStart(2, '0')} - {end.getHours().toString().padStart(2, '0')}:{end.getMinutes().toString().padStart(2, '0')}
-                                                    </span>
+                                                    <div className="flex items-center justify-between mt-1 gap-1">
+                                                      <span
+                                                        className="px-2 py-0.5 rounded text-[10px] font-medium text-white shrink-0"
+                                                        style={{ backgroundColor: reservation.status?.color || '#6B7280' }}
+                                                      >
+                                                        {reservation.status?.name || 'Sin estado'}
+                                                      </span>
+                                                      <span className="text-[10px] text-gray-500 flex items-center gap-0.5 shrink-0">
+                                                        <i className="ri-time-line w-3 h-3 flex items-center justify-center"></i>
+                                                        {start.getHours().toString().padStart(2, '0')}:{start.getMinutes().toString().padStart(2, '0')} - {end.getHours().toString().padStart(2, '0')}:{end.getMinutes().toString().padStart(2, '0')}
+                                                      </span>
+                                                    </div>
                                                   </div>
                                                 </div>
-                                              </div>
+                                              </ReservationHoverCard>
                                             );
                                           })}
 
@@ -1767,7 +1808,7 @@ export default function CalendarioPage() {
                                                     endTime: end,
                                                   });
                                                 }}
-                                                className={`absolute left-1 right-1 rounded-lg bg-gray-400 text-white shadow-sm overflow-hidden pointer-events-auto ${
+                                                className={`absolute left-1 right-1 rounded-lg border border-gray-300/40 bg-gray-500 text-white shadow-sm overflow-hidden pointer-events-auto ${
                                                   selectionMode ? 'cursor-not-allowed opacity-70' : 'cursor-pointer'
                                                 }`}
                                                 style={{

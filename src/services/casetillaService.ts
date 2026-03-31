@@ -137,7 +137,7 @@ class CasetillaService {
         if (arrivedPendingUnloadStatusId) {
           statusToId = arrivedPendingUnloadStatusId;
 
-          const { error: updateErr } = await supabase
+          const { data: updatedRowsFb, error: updateErrFb } = await supabase
             .from('reservations')
             .update({
               status_id: arrivedPendingUnloadStatusId,
@@ -145,12 +145,15 @@ class CasetillaService {
               updated_at: new Date().toISOString()
             })
             .eq('id', reservationId)
-            .eq('org_id', orgId);
+            .eq('org_id', orgId)
+            .select('id');
 
-          if (!updateErr) {
+          if (!updateErrFb && updatedRowsFb && updatedRowsFb.length > 0) {
             reservationUpdated = true;
+          } else if (!updateErrFb) {
+            updateError = new Error('El sistema actualizó 0 reservas. Verificá permisos o contactá a un administrador.');
           } else {
-            updateError = updateErr;
+            updateError = updateErrFb;
           }
         }
       } else {
@@ -185,7 +188,7 @@ class CasetillaService {
           if (arrivedPendingUnloadStatusId) {
             statusToId = arrivedPendingUnloadStatusId;
 
-            const { error: updateErr } = await supabase
+            const { data: updatedRows, error: updateErr } = await supabase
               .from('reservations')
               .update({
                 status_id: arrivedPendingUnloadStatusId,
@@ -193,10 +196,13 @@ class CasetillaService {
                 updated_at: new Date().toISOString()
               })
               .eq('id', reservationId)
-              .eq('org_id', orgId);
+              .eq('org_id', orgId)
+              .select('id');
 
-            if (!updateErr) {
+            if (!updateErr && updatedRows && updatedRows.length > 0) {
               reservationUpdated = true;
+            } else if (!updateErr) {
+              updateError = new Error('El sistema actualizó 0 reservas. Verificá permisos o contactá a un administrador.');
             } else {
               updateError = updateErr;
             }
@@ -645,7 +651,7 @@ async getExitEligibleReservations(orgId: string) {
         statusToId
       });*/
 
-      const { error: updateStatusError } = await supabase
+      const { data: updatedSalidaRows, error: updateStatusError } = await supabase
         .from('reservations')
         .update({
           status_id: statusToId,
@@ -653,11 +659,15 @@ async getExitEligibleReservations(orgId: string) {
           updated_at: new Date().toISOString()
         })
         .eq('id', reservationId)
-        .eq('org_id', orgId);
+        .eq('org_id', orgId)
+        .select('id');
 
       if (updateStatusError) {
-        // console.error('[CasetillaService][createSalida] Failed to update status', updateStatusError);
         throw new Error('No se pudo actualizar el estado de la reserva');
+      }
+
+      if (!updatedSalidaRows || updatedSalidaRows.length === 0) {
+        throw new Error('No se pudo actualizar el estado: el sistema no encontró la reserva o no tenés permisos suficientes. Contactá a un administrador.');
       }
 
       // 5) Insertar en casetilla_salidas
