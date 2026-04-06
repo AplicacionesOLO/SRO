@@ -63,12 +63,9 @@ export default function ReservationModal({
 }: ReservationModalProps) {
   const { user, canLocal } = useAuth();
 
-  // ✅ 3 niveles de permisos
+  // ✅ Niveles de permisos: owner, privilegiado, o mismo proveedor asignado
   const isOwner = reservation ? reservation.created_by === user?.id : true;
   const isPrivileged = canLocal('admin.users.create') || canLocal('admin.matrix.update');
-  const canEditReservation = !reservation || isOwner || isPrivileged;
-  const canViewSensitive = canEditReservation; // Solo dueño o privilegiado ve datos sensibles
-  const isReadOnly = !!reservation && !canEditReservation;
 
   const [removedExistingFileIds, setRemovedExistingFileIds] = useState<string[]>([]);
   const [savedReservationId, setSavedReservationId] = useState<string | null>(null);
@@ -113,6 +110,15 @@ export default function ReservationModal({
   const [allowedProviders, setAllowedProviders] = useState<UserProvider[]>([]);
   const [loadingProviders, setLoadingProviders] = useState(false);
   const [providersError, setProvidersError] = useState<string>('');
+
+  // Verificar si el usuario tiene asignado el mismo proveedor que la reserva
+  const hasSameProvider = reservation && reservation.shipper_provider
+    ? allowedProviders.some(p => p.id === reservation.shipper_provider)
+    : false;
+
+  const canEditReservation = !reservation || isOwner || isPrivileged || hasSameProvider;
+  const canViewSensitive = canEditReservation;
+  const isReadOnly = !!reservation && !canEditReservation;
 
   const [notifyModal, setNotifyModal] = useState({
     isOpen: false,
@@ -501,7 +507,7 @@ export default function ReservationModal({
         isOpen: true,
         type: 'warning',
         title: 'Sin permisos para editar',
-        message: 'Esta reserva pertenece a otro proveedor/usuario. Solo el creador de la reserva o un usuario Admin/Full Access puede modificarla.'
+        message: 'Esta reserva pertenece a otro proveedor/usuario. Solo el creador, un usuario Admin/Full Access, o un usuario con el mismo proveedor asignado puede modificarla.'
       });
       return;
     }
@@ -766,7 +772,7 @@ export default function ReservationModal({
             Solo lectura — Información limitada
           </h4>
           <p className="text-xs text-amber-800 mt-1">
-            Esta reserva pertenece a otro proveedor/usuario. Solo podés ver la información básica (andén, horario, estado y tipo de carga). Los datos sensibles, documentos y actividad no están disponibles.
+            Esta reserva pertenece a otro proveedor/usuario. Solo podés ver la información básica (andén, horario, estado y tipo de carga). Los datos sensibles, documentos y actividad no están disponibles. Si necesitás acceso completo, contactá a un administrador para que te asigne el proveedor correspondiente.
           </p>
         </div>
       </div>
@@ -782,7 +788,7 @@ export default function ReservationModal({
         </div>
         <h4 className="text-sm font-semibold text-gray-700 mb-1">No disponible</h4>
         <p className="text-xs text-gray-500 max-w-xs mx-auto">
-          No tenés permisos para ver {label} de esta reserva. Solo el creador o un usuario Admin/Full Access puede acceder.
+          No tenés permisos para ver {label} de esta reserva. Solo el creador, un usuario Admin/Full Access, o un usuario con el mismo proveedor asignado puede acceder.
         </p>
       </div>
     </div>
@@ -966,7 +972,7 @@ export default function ReservationModal({
                             Sin permisos para editar
                           </h4>
                           <p className="text-xs text-amber-800 mt-1">
-                            Esta reserva pertenece a otro proveedor/usuario. Solo el creador de la reserva o un usuario Admin/Full Access puede modificarla.
+                            Esta reserva pertenece a otro proveedor/usuario. Solo el creador, un usuario Admin/Full Access, o un usuario con el mismo proveedor asignado puede modificarla.
                           </p>
                         </div>
                       </div>

@@ -946,20 +946,83 @@ export default function CalendarioPage() {
     }
   };
 
-  // ✅ Handler de scroll con sincronización horizontal usando RAF (único)
+  // ✅ Ref para las etiquetas de fecha (una por día) — en la capa independiente
+  const dateLabelRefs = useRef<Map<string, HTMLSpanElement>>(new Map());
+  // ✅ Ref para el contenedor de la fila de fechas independiente
+  const dateRowRef = useRef<HTMLDivElement | null>(null);
+  // ✅ Ref para el div de fondos de color de la fila de fechas (se sincroniza con transform)
+  const dateBgRowRef = useRef<HTMLDivElement | null>(null);
+
+  // ✅ Función que recalcula posiciones de fechas dado un scrollLeft
+  const updateDateLabels = useCallback((scrollLeft: number, viewportW: number) => {
+    const TIME_COL_W = 80;
+    const docksCount = filteredDocks.length;
+    const dayW = docksCount * COL_W;
+    const scrollableW = viewportW - TIME_COL_W;
+
+    daysInView.forEach((day, dayIndex) => {
+      const key = day.toISOString();
+      const labelEl = dateLabelRefs.current.get(key);
+      if (!labelEl) return;
+
+      const labelW = labelEl.offsetWidth || 180;
+
+      // Inicio y fin del bloque del día en coordenadas absolutas del scroll
+      const dayAbsStart = dayIndex * dayW;
+      const dayAbsEnd = dayAbsStart + dayW;
+
+      // Área visible del scroll (en coordenadas del contenido)
+      const viewAbsStart = scrollLeft;
+      const viewAbsEnd = scrollLeft + scrollableW;
+
+      // Intersección visible del día con el viewport
+      const visibleStart = Math.max(dayAbsStart, viewAbsStart);
+      const visibleEnd = Math.min(dayAbsEnd, viewAbsEnd);
+
+      // Posición left del label en coordenadas del VIEWPORT (no del contenido)
+      // = centro del área visible del día - mitad del label - offset de la columna de horas
+      let newLeft: number;
+      if (visibleEnd <= visibleStart) {
+        // Día fuera de vista: ocultar
+        labelEl.style.opacity = '0';
+        return;
+      }
+
+      labelEl.style.opacity = '1';
+
+      // Centro del área visible del día en coordenadas del viewport
+      const visibleCenterViewport = (visibleStart + visibleEnd) / 2 - scrollLeft + TIME_COL_W;
+      newLeft = visibleCenterViewport - labelW / 2;
+
+      // Clamp: no salir de los límites del día en el viewport
+      const dayLeftInViewport = dayAbsStart - scrollLeft + TIME_COL_W;
+      const dayRightInViewport = dayAbsEnd - scrollLeft + TIME_COL_W;
+      newLeft = Math.max(dayLeftInViewport, Math.min(newLeft, dayRightInViewport - labelW));
+      // Clamp adicional: no salir del área scrolleable visible
+      newLeft = Math.max(TIME_COL_W, Math.min(newLeft, TIME_COL_W + scrollableW - labelW));
+
+      labelEl.style.left = `${newLeft}px`;
+    });
+  }, [daysInView, filteredDocks.length, COL_W]);
+
+  // ✅ Handler de scroll con sincronización horizontal usando RAF
   const handleBodyScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
     const scrollLeft = e.currentTarget.scrollLeft;
-
-    if (rafRef.current) {
-      cancelAnimationFrame(rafRef.current);
-    }
-
+    const viewportW = e.currentTarget.offsetWidth;
+    if (rafRef.current) cancelAnimationFrame(rafRef.current);
     rafRef.current = requestAnimationFrame(() => {
+      // Sincronizar header (andenes)
       if (headerInnerRef.current) {
         headerInnerRef.current.style.transform = `translateX(-${scrollLeft}px)`;
       }
+      // Sincronizar fondos de color de la fila de fechas
+      if (dateBgRowRef.current) {
+        dateBgRowRef.current.style.transform = `translateX(-${scrollLeft}px)`;
+      }
+      // Actualizar posición de etiquetas de fecha (capa independiente)
+      updateDateLabels(scrollLeft, viewportW);
     });
-  }, []);
+  }, [updateDateLabels]);
 
   // ✅ Modal de notificación (state)
   const [notifyModal, setNotifyModal] = useState({
@@ -1420,75 +1483,135 @@ export default function CalendarioPage() {
               </div>
             ) : (
               <div className="h-full flex flex-col">
-                {/* Encabezado FIJO (días + andenes) */}
+                {/* Encabezado FIJO (días + andenes) — estructura en 2 capas */}
                 <div className="flex-shrink-0 bg-white border-b border-gray-200">
+
+                  {/* ── CAPA 1: Fila de FECHAS — posición absoluta, independiente del scroll ── */}
+                  {/* Esta capa NO se mueve con transform. Las etiquetas se reposicionan por JS */}
+                  <div
+                    ref={dateRowRef}
+                    className="relative h-12 border-b border-gray-200 overflow-hidden"
+                    style={{ backgroundColor: '#f9fafb' }}
+                  >
+                    {/* Espacio de la columna de horas */}
+                    <div className="absolute left-0 top-0 w-20 h-full border-r border-gray-200 bg-white z-10" />
+
+                    {/* Fondos de color por día (se mueven con transform igual que el header de andenes) */}
+                    <div className="absolute left-20 top-0 bottom-0 overflow-hidden" style={{ right: 0 }}>
+                      <div
+                        ref={dateBgRowRef}
+                        className="flex h-full will-change-transform"
+                        style={{ width: totalWidth, minWidth: totalWidth }}
+                      >
+                        {daysInView.map((day) => {
+                          const isToday = isSameDayTz(day, nowTz, TIMEZONE);
+                          const dayW = filteredDocks.length * COL_W;
+                          return (
+                            <div
+                              key={day.toISOString()}
+                              className="flex-shrink-0 border-r border-gray-200 h-full"
+                              style={{
+                                width: `${dayW}px`,
+                                minWidth: `${dayW}px`,
+                                backgroundColor: isToday ? '#f0fdf4' : '#f9fafb',
+                              }}
+                            />
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    {/* Etiquetas de fecha — posición absolute en coords del viewport, actualizadas por JS */}
+                    {daysInView.map((day) => {
+                      const isToday = isSameDayTz(day, nowTz, TIMEZONE);
+                      const dayW = filteredDocks.length * COL_W;
+                      return (
+                        <span
+                          key={day.toISOString()}
+                          ref={(el) => {
+                            if (el) dateLabelRefs.current.set(day.toISOString(), el);
+                            else dateLabelRefs.current.delete(day.toISOString());
+                          }}
+                          className={`absolute font-semibold text-sm whitespace-nowrap pointer-events-none flex items-center gap-1.5 z-20 ${isToday ? 'text-teal-700' : 'text-gray-900'}`}
+                          style={{
+                            top: '50%',
+                            transform: 'translateY(-50%)',
+                            // Posición inicial: centrada en el primer día visible
+                            left: `${80 + dayW / 2}px`,
+                          }}
+                        >
+                          {isToday && <span className="inline-block w-2 h-2 rounded-full bg-teal-500 flex-shrink-0" />}
+                          {formatDayHeader(day)}
+                        </span>
+                      );
+                    })}
+                  </div>
+
+                  {/* ── CAPA 2: Fila de ANDENES — se mueve con transform (scroll sincronizado) ── */}
                   <div className="flex">
                     {/* Espacio para columna de horas */}
-                    <div className="w-20 flex-shrink-0 border-r border-gray-200"></div>
+                    <div className="w-20 flex-shrink-0 border-r border-gray-200 bg-white" />
 
-                    {/* Header scrolleable horizontalmente (sincronizado) */}
+                    {/* Header scrolleable horizontalmente (sincronizado con transform) */}
                     <div className="flex-1 overflow-hidden">
                       <div
                         ref={headerInnerRef}
                         style={{ width: totalWidth, minWidth: totalWidth }}
                         className="flex will-change-transform"
                       >
-                        {daysInView.map((day) => (
-                          <div
-                            key={day.toISOString()}
-                            className="flex-shrink-0 border-r border-gray-200"
-                            style={{
-                              width: `${filteredDocks.length * COL_W}px`,
-                              minWidth: `${filteredDocks.length * COL_W}px`,
-                            }}
-                          >
-                            <div className="h-12 flex items-center justify-center bg-gray-50 border-b border-gray-200">
-                              <span className="font-semibold text-gray-900">{formatDayHeader(day)}</span>
-                            </div>
+                        {daysInView.map((day) => {
+                          const dayW = filteredDocks.length * COL_W;
+                          return (
+                            <div
+                              key={day.toISOString()}
+                              className="flex-shrink-0 border-r border-gray-200"
+                              style={{ width: `${dayW}px`, minWidth: `${dayW}px` }}
+                            >
+                              {/* Fila de andenes */}
+                              <div className="flex h-12">
+                                {filteredDocks.map((dock) => {
+                                  const hasCustomColor = !!(dock as any).header_color;
+                                  const bgColor = hasCustomColor
+                                    ? (dock as any).header_color
+                                    : getCategoryColor(dock.category);
+                                  const nameColor = hasCustomColor
+                                    ? getContrastColor((dock as any).header_color)
+                                    : '#111827';
+                                  const refColor = hasCustomColor
+                                    ? getContrastColor((dock as any).header_color)
+                                    : '#6B7280';
 
-                            <div className="flex h-12">
-                              {filteredDocks.map((dock) => {
-                                const hasCustomColor = !!(dock as any).header_color;
-                                const bgColor = hasCustomColor
-                                  ? (dock as any).header_color
-                                  : getCategoryColor(dock.category);
-                                const nameColor = hasCustomColor
-                                  ? getContrastColor((dock as any).header_color)
-                                  : '#111827';
-                                const refColor = hasCustomColor
-                                  ? getContrastColor((dock as any).header_color)
-                                  : '#6B7280';
-
-                                return (
-                                  <div
-                                    key={dock.id}
-                                    className="flex-shrink-0 border-r border-gray-200 flex flex-col items-center justify-center px-2"
-                                    style={{
-                                      width: `${COL_W}px`,
-                                      minWidth: `${COL_W}px`,
-                                      backgroundColor: bgColor,
-                                    }}
-                                  >
-                                    <span
-                                      className="font-semibold text-sm truncate w-full text-center leading-tight"
-                                      style={{ color: nameColor }}
+                                  return (
+                                    <div
+                                      key={dock.id}
+                                      className="flex-shrink-0 border-r border-gray-200 flex flex-col items-center justify-center px-2"
+                                      style={{
+                                        width: `${COL_W}px`,
+                                        minWidth: `${COL_W}px`,
+                                        backgroundColor: bgColor,
+                                      }}
                                     >
-                                      {dock.name}
-                                    </span>
-                                    {dock.reference && (
                                       <span
-                                        className="text-[10px] truncate w-full text-center leading-tight mt-0.5"
-                                        style={{ color: refColor, opacity: hasCustomColor ? 0.85 : 1 }}
+                                        className="font-semibold text-sm truncate w-full text-center leading-tight"
+                                        style={{ color: nameColor }}
                                       >
-                                        {dock.reference}
+                                        {dock.name}
                                       </span>
-                                    )}
-                                  </div>
-                                );
-                              })}
+                                      {dock.reference && (
+                                        <span
+                                          className="text-[10px] truncate w-full text-center leading-tight mt-0.5"
+                                          style={{ color: refColor, opacity: hasCustomColor ? 0.85 : 1 }}
+                                        >
+                                          {dock.reference}
+                                        </span>
+                                      )}
+                                    </div>
+                                  );
+                                })}
+                              </div>
                             </div>
-                          </div>
-                        ))}
+                          );
+                        })}
                       </div>
                     </div>
                   </div>
@@ -1519,7 +1642,7 @@ export default function CalendarioPage() {
                       style={{ width: `${totalWidth - 80}px`, minWidth: `${totalWidth - 80}px` }}
                     >
                       <div className="flex">
-                        {daysInView.map((day) => {
+                        {daysInView.map((day, dayIndex) => {
                           // ✅ NUEVO: Calcular si este día es "hoy" y si debe mostrar el indicador
                           const isToday = isSameDayTz(day, nowTz, TIMEZONE);
                           const nowTop = isToday ? getTopFromBusinessStart(nowTz) : -1;
