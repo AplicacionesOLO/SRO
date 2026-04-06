@@ -156,11 +156,15 @@ function normalizeRulePayloadForDb(
       ? (ruleData as any).include_casetilla_photos
       : false;
 
+  // warehouse_id: puede venir en ruleData
+  const warehouseId = asUuid((ruleData as any).warehouse_id) ?? null;
+
   // Base payload
   const base = {
     org_id: orgId,
     name: (ruleData as any).name,
     event_type: (ruleData as any).event_type,
+    warehouse_id: warehouseId,
 
     status_from_id: statusFromId,
     status_to_id: statusToId,
@@ -207,18 +211,26 @@ function normalizeRulePayloadForDb(
 
 export const correspondenceService = {
   /**
-   * Get all correspondence rules for an organization
+   * Get all correspondence rules for an organization, optionally filtered by warehouseId.
+   * Rules with warehouse_id = null are treated as "global legacy" and shown in all warehouses.
    */
-  async getRules(orgId: string): Promise<CorrespondenceRule[]> {
+  async getRules(orgId: string, warehouseId?: string | null): Promise<CorrespondenceRule[]> {
     try {
-      //console.log("[correspondenceService] getRules start", { orgId });
+      //console.log("[correspondenceService] getRules start", { orgId, warehouseId });
 
       // Query 1: reglas base
-      const { data: rulesData, error: rulesError } = await supabase
+      let query = supabase
         .from("correspondence_rules")
         .select("*")
         .eq("org_id", orgId)
         .order("created_at", { ascending: false });
+
+      // Si hay warehouseId activo, mostrar reglas de ese almacén + reglas legacy (warehouse_id null)
+      if (warehouseId) {
+        query = query.or(`warehouse_id.eq.${warehouseId},warehouse_id.is.null`);
+      }
+
+      const { data: rulesData, error: rulesError } = await query;
 
       if (rulesError) {
         throw rulesError;
@@ -462,9 +474,22 @@ export const correspondenceService = {
   },
 
   /**
-   * Retrieves the correspondence logs for a given organisation.
+   * Toggle rule active status
    */
-  async getLogs(orgId: string): Promise<CorrespondenceLog[]> {
+  async toggleRuleStatus(ruleId: string, isActive: boolean): Promise<void> {
+    const { error } = await supabase
+      .from("correspondence_rules")
+      .update({ is_active: isActive })
+      .eq("id", ruleId);
+    if (error) throw error;
+  },
+
+  /**
+   * Retrieves the correspondence logs for a given organisation,
+   * optionally filtered by warehouseId (via rule's warehouse_id).
+   * Logs from rules with warehouse_id = null are treated as global/legacy.
+   */
+  async getLogs(orgId: string, warehouseId?: string | null): Promise<CorrespondenceLog[]> {
     try {
       //console.log("[correspondenceService] getLogs start", { orgId });
 
@@ -515,7 +540,7 @@ export const correspondenceService = {
         return [];
       }
 
-      // Resolve rule names
+      // Resolve rule names + warehouse_id for filtering
       const ruleIds = [
         ...new Set(
           (data ?? [])
@@ -524,22 +549,35 @@ export const correspondenceService = {
         ),
       ];
 
-      let rulesMap: Record<string, string> = {};
+      let rulesMap: Record<string, { name: string; warehouse_id: string | null }> = {};
 
       if (ruleIds.length > 0) {
         const { data: rulesData, error: rulesError } = await supabase
           .from("correspondence_rules")
-          .select("id, name")
+          .select("id, name, warehouse_id")
           .in("id", ruleIds);
 
-        if (rulesError) {
-          // rule lookup failed silently
-        } else if (rulesData) {
-          rulesMap = Object.fromEntries((rulesData as any[]).map((rule) => [rule.id, rule.name]));
+        if (!rulesError && rulesData) {
+          rulesMap = Object.fromEntries(
+            (rulesData as any[]).map((rule) => [rule.id, { name: rule.name, warehouse_id: rule.warehouse_id ?? null }])
+          );
         }
       }
 
-      const logs: CorrespondenceLog[] = (data ?? []).map((row: any) => ({
+      // Filter logs by warehouseId if provided:
+      // - Show logs from rules matching the active warehouse
+      // - Also show logs from rules with warehouse_id = null (global/legacy)
+      let filteredData = data ?? [];
+      if (warehouseId) {
+        filteredData = filteredData.filter((row: any) => {
+          if (!row.rule_id) return true; // no rule → show always
+          const rule = rulesMap[row.rule_id];
+          if (!rule) return true; // rule not found → show
+          return rule.warehouse_id === warehouseId || rule.warehouse_id === null;
+        });
+      }
+
+      const logs: CorrespondenceLog[] = filteredData.map((row: any) => ({
         id: row.id,
         org_id: row.org_id,
         rule_id: row.rule_id,
@@ -558,7 +596,7 @@ export const correspondenceService = {
         error: row.error,
         created_at: row.created_at,
         sent_at: row.sent_at,
-        rule: row.rule_id && rulesMap[row.rule_id] ? { name: rulesMap[row.rule_id] } : undefined,
+        rule: row.rule_id && rulesMap[row.rule_id] ? { name: rulesMap[row.rule_id].name, warehouse_id: rulesMap[row.rule_id].warehouse_id } : undefined,
         actor_user: row.actor_user
           ? {
               full_name: row.actor_user.name,

@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { supabase } from '../../../lib/supabase';
 import { usePermissions } from '../../../hooks/usePermissions';
 import { useAuth } from '../../../contexts/AuthContext';
+import { useActiveWarehouse } from '../../../contexts/ActiveWarehouseContext';
 
 interface Role {
   id: string;
@@ -200,6 +201,7 @@ const getCategoryLabel = (category: string): string => {
 export default function MatrizPermisosPage() {
   const { user } = useAuth();
   const { orgId, loading: permissionsLoading, can } = usePermissions();
+  const { activeWarehouse } = useActiveWarehouse();
 
   const [roles, setRoles] = useState<Role[]>([]);
   const [permissions, setPermissions] = useState<Permission[]>([]);
@@ -532,6 +534,13 @@ const groupedPermissions = safePermissions.reduce((acc, perm) => {
         <div className="mb-8">
           <h1 className="text-3xl font-bold text-gray-900 mb-2">Matriz de Permisos</h1>
           <p className="text-gray-600 text-lg">Gestiona los permisos de cada rol en el sistema</p>
+          {activeWarehouse && (
+            <div className="flex items-center gap-1.5 mt-2">
+              <i className="ri-store-2-line text-teal-600 text-xs w-4 h-4 flex items-center justify-center"></i>
+              <span className="text-xs text-teal-700 font-medium">Almacén activo: {activeWarehouse.name}</span>
+              <span className="text-xs text-gray-400">(los permisos aplican a toda la organización)</span>
+            </div>
+          )}
         </div>
 
         <div className="bg-white rounded-xl shadow-md border border-gray-200 overflow-hidden">

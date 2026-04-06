@@ -59,19 +59,9 @@ export default function ReservationHoverCard({
   // mientras el elemento está bajo el cursor (luego el currentTarget es null).
   const handleTriggerEnter = useCallback(
     (e: React.MouseEvent<HTMLElement>) => {
-      console.log('[RESERVA REAL] enter', data.id);
       if (disabled) return;
 
-      // Capturar rect sincrónicamente ANTES de que se ejecute el timeout
       const rect = e.currentTarget.getBoundingClientRect();
-      console.log('[HoverCard] rect calculado:', {
-        top: rect.top,
-        left: rect.left,
-        right: rect.right,
-        bottom: rect.bottom,
-        width: rect.width,
-        height: rect.height,
-      });
 
       if (closeTimer.current) {
         clearTimeout(closeTimer.current);
@@ -86,7 +76,6 @@ export default function ReservationHoverCard({
         const left = goLeft ? rect.left - CARD_WIDTH - OFFSET : rect.right + OFFSET;
         const top = goUp ? Math.max(8, rect.bottom - CARD_ESTIMATED_HEIGHT) : rect.top;
 
-        console.log('[HoverCard] setVisible(true):', { top, left, goLeft, goUp });
         setCardPos({ top, left });
         setVisible(true);
       }, OPEN_DELAY);
@@ -95,21 +84,18 @@ export default function ReservationHoverCard({
   );
 
   const handleTriggerLeave = useCallback(() => {
-    console.log('[RESERVA REAL] leave', data.id);
     if (openTimer.current) {
       clearTimeout(openTimer.current);
       openTimer.current = null;
     }
     closeTimer.current = setTimeout(() => {
       if (!insideCard.current) {
-        console.log('[HoverCard] setVisible(false)');
         setVisible(false);
       }
     }, CLOSE_DELAY);
   }, [data.id]);
 
   const handleTriggerMove = useCallback(() => {
-    console.log('[RESERVA REAL] move', data.id);
   }, [data.id]);
 
   // ── Handlers de la tarjeta flotante ────────────────────────────────────

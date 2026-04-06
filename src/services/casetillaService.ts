@@ -2,6 +2,12 @@ import { supabase } from '../lib/supabase';
 import type { CreateCasetillaIngresoInput, CasetillaIngreso } from '../types/casetilla';
 import { emailTriggerService } from './emailTriggerService';
 
+// ─── Tipos de segregación ────────────────────────────────────────────────────
+export interface CasetillaClientOption {
+  id: string;
+  name: string;
+}
+
 type PendingReservationRow = {
   id: string;
   dua: string;
@@ -39,6 +45,67 @@ type DurationReportFilters = {
 };
 
 class CasetillaService {
+  // ─── SEGREGACIÓN: obtener warehouses permitidos para el usuario ──────────
+  // FUENTE REAL: user_warehouse_access (user_warehouses está vacía y no se usa)
+  async getUserAllowedWarehouseIds(orgId: string, userId: string): Promise<string[] | null> {
+    // null = sin restricción (ve todos los warehouses de la org)
+    const { data, error } = await supabase
+      .from('user_warehouse_access')
+      .select('warehouse_id, restricted')
+      .eq('org_id', orgId)
+      .eq('user_id', userId);
+
+    if (error) return null;
+    if (!data || data.length === 0) return null; // sin filas → sin restricción (fallback)
+
+    // Si tiene alguna fila con restricted=false → acceso global
+    const hasUnrestricted = data.some((r: any) => r.restricted === false);
+    if (hasUnrestricted) return null;
+
+    // Solo filas restricted=true → restringido a esos warehouses
+    const restricted = data.filter((r: any) => r.restricted === true);
+    if (restricted.length === 0) return null;
+    return restricted.map((r: any) => r.warehouse_id as string);
+  }
+
+  // ─── SEGREGACIÓN: obtener clientes disponibles para un set de warehouses ─
+  async getClientsForWarehouses(orgId: string, warehouseIds: string[]): Promise<CasetillaClientOption[]> {
+    if (warehouseIds.length === 0) return [];
+
+    const { data, error } = await supabase
+      .from('warehouse_clients')
+      .select('client_id, clients!warehouse_clients_client_id_fkey(id, name)')
+      .eq('org_id', orgId)
+      .in('warehouse_id', warehouseIds);
+
+    if (error || !data) return [];
+
+    const seen = new Set<string>();
+    const result: CasetillaClientOption[] = [];
+
+    for (const row of data as any[]) {
+      const client = row.clients;
+      if (client && !seen.has(client.id)) {
+        seen.add(client.id);
+        result.push({ id: client.id, name: client.name });
+      }
+    }
+
+    return result.sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  // ─── SEGREGACIÓN: obtener dock_ids de un cliente ─────────────────────────
+  private async getDockIdsForClient(orgId: string, clientId: string): Promise<string[]> {
+    const { data, error } = await supabase
+      .from('client_docks')
+      .select('dock_id')
+      .eq('org_id', orgId)
+      .eq('client_id', clientId);
+
+    if (error || !data) return [];
+    return data.map((r: any) => r.dock_id as string);
+  }
+
   // helper: obtener status_id por code o name, intentando con org_id si existe
   private async getStatusIdFlexible(params: {
     orgId: string;
@@ -288,7 +355,11 @@ class CasetillaService {
     }
   }
 
-  async getPendingReservations(orgId: string) {
+  async getPendingReservations(
+    orgId: string,
+    allowedWarehouseIds?: string[] | null,
+    clientId?: string | null
+  ) {
     try {
       // ✅ Usar RPC que filtra PENDING + NOT EXISTS casetilla_ingresos en una sola query SQL
       const { data: reservations, error: rpcError } = await supabase
@@ -297,9 +368,45 @@ class CasetillaService {
       if (rpcError) throw rpcError;
       if (!reservations || reservations.length === 0) return [];
 
-      const rows = reservations as PendingReservationRow[];
+      let rows = reservations as PendingReservationRow[];
 
-      // 3) Docks (para derivar warehouse)
+      // ─── SEGREGACIÓN: filtrar por docks permitidos ────────────────────────
+      // Construir set de dock_ids permitidos según warehouse y/o cliente
+      let allowedDockIds: Set<string> | null = null;
+
+      if (allowedWarehouseIds && allowedWarehouseIds.length > 0) {
+        // Traer docks de los warehouses permitidos
+        const { data: allowedDocks } = await supabase
+          .from('docks')
+          .select('id')
+          .eq('org_id', orgId)
+          .in('warehouse_id', allowedWarehouseIds);
+
+        allowedDockIds = new Set((allowedDocks ?? []).map((d: any) => d.id as string));
+      }
+
+      if (clientId) {
+        // Traer docks del cliente
+        const clientDockIds = await this.getDockIdsForClient(orgId, clientId);
+        const clientDockSet = new Set(clientDockIds);
+
+        if (allowedDockIds !== null) {
+          // Intersección: docks que están en warehouses permitidos Y en el cliente
+          allowedDockIds = new Set([...allowedDockIds].filter((id) => clientDockSet.has(id)));
+        } else {
+          allowedDockIds = clientDockSet;
+        }
+      }
+
+      // Aplicar filtro de docks si hay restricción
+      if (allowedDockIds !== null) {
+        rows = rows.filter((r) => allowedDockIds!.has(r.dock_id));
+      }
+
+      if (rows.length === 0) return [];
+      // ─────────────────────────────────────────────────────────────────────
+
+      // Docks (para derivar warehouse)
       const dockIds = [...new Set(rows.map((r) => r.dock_id).filter(Boolean))];
 
       let docksMap = new Map<string, { name?: string; warehouse_id?: string | null }>();
@@ -315,7 +422,7 @@ class CasetillaService {
         });
       }
 
-      // 4) Warehouses
+      // Warehouses
       const warehouseIds = [
         ...new Set(
           [...docksMap.values()]
@@ -339,7 +446,7 @@ class CasetillaService {
         }
       }
 
-      // 5) Providers
+      // Providers
       const providerIds = [
         ...new Set(
           rows
@@ -363,7 +470,7 @@ class CasetillaService {
         }
       }
 
-      // 6) Map final para UI
+      // Map final para UI
       return rows.map((r) => {
         const dock = docksMap.get(r.dock_id);
         const whName = dock?.warehouse_id ? warehousesMap.get(dock.warehouse_id) : null;
@@ -386,14 +493,18 @@ class CasetillaService {
         };
       });
     } catch (error) {
-      // console.error('Error fetching pending reservations:', error);
       throw error;
     }
   }
 
-  async searchPendingReservations(orgId: string, searchTerm: string) {
+  async searchPendingReservations(
+    orgId: string,
+    searchTerm: string,
+    allowedWarehouseIds?: string[] | null,
+    clientId?: string | null
+  ) {
     try {
-      const allReservations = await this.getPendingReservations(orgId);
+      const allReservations = await this.getPendingReservations(orgId, allowedWarehouseIds, clientId);
 
       if (!searchTerm.trim()) return allReservations;
 
@@ -415,7 +526,11 @@ class CasetillaService {
 // ✅ REEMPLAZA getExitEligibleReservations(orgId)
 // Regla: listar reservas que tengan ingreso en casetilla_ingresos,
 // excluir: canceladas, con salida ya registrada, y status DISPATCHED.
-async getExitEligibleReservations(orgId: string) {
+async getExitEligibleReservations(
+  orgId: string,
+  allowedWarehouseIds?: string[] | null,
+  clientId?: string | null
+) {
   try {
     // 1) Obtener status DISPATCHED desde tabla (NO quemado)
     const { data: dispatchedRow, error: dispatchedErr } = await supabase
@@ -463,6 +578,31 @@ async getExitEligibleReservations(orgId: string) {
 
     if (eligibleReservationIds.length === 0) return [];
 
+    // ─── SEGREGACIÓN: filtrar por docks permitidos ────────────────────────
+    let allowedDockIds: Set<string> | null = null;
+
+    if (allowedWarehouseIds && allowedWarehouseIds.length > 0) {
+      const { data: allowedDocks } = await supabase
+        .from('docks')
+        .select('id')
+        .eq('org_id', orgId)
+        .in('warehouse_id', allowedWarehouseIds);
+
+      allowedDockIds = new Set((allowedDocks ?? []).map((d: any) => d.id as string));
+    }
+
+    if (clientId) {
+      const clientDockIds = await this.getDockIdsForClient(orgId, clientId);
+      const clientDockSet = new Set(clientDockIds);
+
+      if (allowedDockIds !== null) {
+        allowedDockIds = new Set([...allowedDockIds].filter((id) => clientDockSet.has(id)));
+      } else {
+        allowedDockIds = clientDockSet;
+      }
+    }
+    // ─────────────────────────────────────────────────────────────────────
+
     // 4) Traer reservas (no canceladas, no despachadas)
     let q = supabase
       .from("reservations")
@@ -493,7 +633,12 @@ async getExitEligibleReservations(orgId: string) {
     if (reservationsError) throw reservationsError;
     if (!reservations || reservations.length === 0) return [];
 
-    const rows = reservations as any[];
+    // Aplicar filtro de docks si hay restricción
+    let rows = reservations as any[];
+    if (allowedDockIds !== null) {
+      rows = rows.filter((r: any) => allowedDockIds!.has(r.dock_id));
+    }
+    if (rows.length === 0) return [];
 
     // 5) Docks -> Warehouses
     const dockIds = [...new Set(rows.map((r) => r.dock_id).filter(Boolean))];
@@ -518,16 +663,18 @@ async getExitEligibleReservations(orgId: string) {
       ),
     ];
 
-    const warehousesMap = new Map<string, string>();
+    const warehousesMap = new Map<string, { name: string; timezone: string }>();
     if (warehouseIds.length > 0) {
       const { data: whData, error: whErr } = await supabase
         .from("warehouses")
-        .select("id,name")
+        .select("id,name,timezone")
         .in("id", warehouseIds);
 
       if (whErr) throw whErr;
 
-      (whData ?? []).forEach((w: any) => warehousesMap.set(w.id, w.name));
+      (whData ?? []).forEach((w: any) =>
+        warehousesMap.set(w.id, { name: w.name, timezone: w.timezone || 'America/Costa_Rica' })
+      );
     }
 
     // 6) Providers (si shipper_provider trae UUID)
@@ -568,16 +715,19 @@ async getExitEligibleReservations(orgId: string) {
 
       const providerName = isUUID ? providersMap.get(shipper) ?? "N/A" : shipper ?? "N/A";
 
+      const whData = dock?.warehouse_id ? warehousesMap.get(dock.warehouse_id) : null;
+
       return {
         id: r.id,
         dua: r.dua ?? null,
         matricula: r.truck_plate ?? "",
         chofer: r.driver ?? "",
         proveedor: providerName,
-        almacen: whName ?? "N/A",
+        almacen: whData?.name ?? "N/A",
         provider_name: providerName,
-        warehouse_name: whName ?? "N/A",
+        warehouse_name: whData?.name ?? "N/A",
         warehouse_id: dock?.warehouse_id ?? null,
+        warehouse_timezone: whData?.timezone ?? 'America/Costa_Rica',
         provider_id: shipper ?? null,
         orden_compra: r.purchase_order ?? "",
         numero_pedido: r.order_request_number ?? "",
@@ -736,19 +886,60 @@ async getExitEligibleReservations(orgId: string) {
   }
 
   // ✅ NUEVA FUNCIÓN: Obtener reporte de duración
-  async getDurationReport(orgId: string, filters?: DurationReportFilters) {
+  async getDurationReport(
+    orgId: string,
+    filters?: DurationReportFilters,
+    allowedWarehouseIds?: string[] | null,
+    clientId?: string | null
+  ) {
     try {
+      // ─── SEGREGACIÓN: pre-calcular dock_ids permitidos ────────────────────
+      let allowedDockIds: Set<string> | null = null;
+
+      if (allowedWarehouseIds && allowedWarehouseIds.length > 0) {
+        const { data: allowedDocks } = await supabase
+          .from('docks')
+          .select('id')
+          .eq('org_id', orgId)
+          .in('warehouse_id', allowedWarehouseIds);
+
+        allowedDockIds = new Set((allowedDocks ?? []).map((d: any) => d.id as string));
+      }
+
+      if (clientId) {
+        const clientDockIds = await this.getDockIdsForClient(orgId, clientId);
+        const clientDockSet = new Set(clientDockIds);
+
+        if (allowedDockIds !== null) {
+          allowedDockIds = new Set([...allowedDockIds].filter((id) => clientDockSet.has(id)));
+        } else {
+          allowedDockIds = clientDockSet;
+        }
+      }
+      // ─────────────────────────────────────────────────────────────────────
+
       // 1) Join entre casetilla_ingresos y casetilla_salidas
       const { data: ingresos, error: ingresosError } = await supabase
         .from('casetilla_ingresos')
-        .select('reservation_id, chofer, matricula, dua, created_at, fotos')
+        .select('reservation_id, chofer, matricula, dua, created_at, fotos, reservations(dock_id, docks(warehouse_id, warehouses(timezone)))')
         .eq('org_id', orgId)
         .order('created_at', { ascending: false });
 
       if (ingresosError) throw ingresosError;
       if (!ingresos || ingresos.length === 0) return [];
 
-      const reservationIds = ingresos.map((ing: any) => ing.reservation_id).filter(Boolean);
+      // ─── SEGREGACIÓN: filtrar ingresos por dock permitido ─────────────────
+      let filteredIngresos = ingresos as any[];
+      if (allowedDockIds !== null) {
+        filteredIngresos = filteredIngresos.filter((ing: any) => {
+          const dockId = ing?.reservations?.dock_id;
+          return dockId && allowedDockIds!.has(dockId);
+        });
+      }
+      if (filteredIngresos.length === 0) return [];
+      // ─────────────────────────────────────────────────────────────────────
+
+      const reservationIds = filteredIngresos.map((ing: any) => ing.reservation_id).filter(Boolean);
 
       if (reservationIds.length === 0) return [];
 
@@ -771,7 +962,7 @@ async getExitEligibleReservations(orgId: string) {
       });
 
       // 3) Combinar ingresos con salidas y calcular duración
-      let reportRows = ingresos
+      let reportRows = filteredIngresos
         .filter((ing: any) => ing.reservation_id && salidasMap.has(ing.reservation_id))
         .map((ing: any) => {
           const salidaData = salidasMap.get(ing.reservation_id)!;
@@ -782,6 +973,10 @@ async getExitEligibleReservations(orgId: string) {
           const horas = Math.floor(duracionMinutos / 60);
           const minutos = duracionMinutos % 60;
           const duracionFormato = `${horas.toString().padStart(2, '0')}:${minutos.toString().padStart(2, '0')}`;
+
+          // Extraer warehouse_timezone del join anidado
+          const warehouseTimezone: string =
+            (ing as any)?.reservations?.docks?.warehouses?.timezone || 'America/Costa_Rica';
 
           return {
             reservation_id: ing.reservation_id,
@@ -794,6 +989,7 @@ async getExitEligibleReservations(orgId: string) {
             duracion_formato: duracionFormato,
             fotos_ingreso: (ing.fotos as string[] | null) ?? null,
             fotos_salida: salidaData.fotos ?? null,
+            warehouse_timezone: warehouseTimezone,
           };
         });
 

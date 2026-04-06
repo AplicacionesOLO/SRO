@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { correspondenceService } from '../../../../services/correspondenceService';
 import { useAuth } from '../../../../contexts/AuthContext';
 import { usePermissions } from '../../../../hooks/usePermissions';
+import { useActiveWarehouse } from '../../../../contexts/ActiveWarehouseContext';
 import type { CorrespondenceLog } from '../../../../types/correspondence';
 import { CORRESPONDENCE_LOG_STATUS_LABELS, CORRESPONDENCE_EVENT_LABELS } from '../../../../types/correspondence';
 import { ConfirmModal } from '../../../../components/base/ConfirmModal';
@@ -9,17 +10,9 @@ import { ConfirmModal } from '../../../../components/base/ConfirmModal';
 export function LogsTab() {
   const { user } = useAuth();
   const { orgId: currentOrgId } = usePermissions();
+  const { activeWarehouseId, activeWarehouse, allowedWarehouses } = useActiveWarehouse();
 
-  // ✅ FIX: Usar el resolver correcto de orgId (currentOrgId → user.orgId → fallback)
-  const orgId = useMemo(() => {
-    const resolved = currentOrgId || user?.orgId || null;
-    /**console.log('[LogsTab] orgId resolver', {
-      currentOrgId,
-      userOrgId: user?.orgId,
-      resolved
-    });*/
-    return resolved;
-  }, [currentOrgId, user?.orgId]);
+  const orgId = useMemo(() => currentOrgId || user?.orgId || null, [currentOrgId, user?.orgId]);
 
   const [logs, setLogs] = useState<CorrespondenceLog[]>([]);
   const [filteredLogs, setFilteredLogs] = useState<CorrespondenceLog[]>([]);
@@ -49,38 +42,21 @@ export function LogsTab() {
   // ✅ FIX: Remover lastOrgLoadedRef - permitir recargas cuando sea necesario
   const loadLogs = useCallback(async () => {
     if (!orgId) {
-      //console.log('[LogsTab] loadLogs - no orgId, skipping');
       setLogs([]);
       setLoading(false);
       return;
     }
-
     try {
-      //console.log('[LogsTab] loadLogs start', { orgId });
       setLoading(true);
-      const data = await correspondenceService.getLogs(orgId);
-      /**console.log('[LogsTab] loadLogs success', {
-        orgId,
-        count: data.length,
-        sample: data.slice(0, 3).map(l => ({
-          id: l.id,
-          event: l.event_type,
-          status: l.status,
-          to: l.to_emails
-        }))
-      });*/
+      // Pasar warehouseId para filtrar logs por almacén activo
+      const data = await correspondenceService.getLogs(orgId, activeWarehouseId);
       setLogs(data);
     } catch (error) {
-      setPopup({
-        isOpen: true,
-        type: 'error',
-        title: 'Error',
-        message: 'Error al cargar los logs'
-      });
+      setPopup({ isOpen: true, type: 'error', title: 'Error', message: 'Error al cargar los logs' });
     } finally {
       setLoading(false);
     }
-  }, [orgId]);
+  }, [orgId, activeWarehouseId]);
 
   useEffect(() => {
     loadLogs();
@@ -183,6 +159,16 @@ export function LogsTab() {
         onConfirm={() => setPopup(prev => ({ ...prev, isOpen: false }))}
         confirmText="Entendido"
       />
+
+      {/* Banner de filtro por almacén */}
+      {activeWarehouseId && activeWarehouse && (
+        <div className="p-3 bg-teal-50 border border-teal-200 rounded-lg flex items-center gap-2">
+          <i className="ri-store-2-line text-teal-600 text-sm w-4 h-4 flex items-center justify-center"></i>
+          <p className="text-sm text-teal-800">
+            Mostrando envíos del almacén <strong>{activeWarehouse.name}</strong> + reglas globales (legacy).
+          </p>
+        </div>
+      )}
 
       {/* Filtros */}
       <div className="bg-white rounded-lg border border-gray-200 p-4">
@@ -296,6 +282,9 @@ export function LogsTab() {
                   Regla
                 </th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider">
+                  Almacén
+                </th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider">
                   Evento
                 </th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider">
@@ -318,76 +307,95 @@ export function LogsTab() {
             <tbody className="divide-y divide-gray-200">
               {filteredLogs.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="px-4 py-8 text-center text-gray-500">
+                  <td colSpan={9} className="px-4 py-8 text-center text-gray-500">
                     <i className="ri-mail-line text-3xl mb-2"></i>
-                    <p>No hay registros de envíos</p>
+                    <p>{activeWarehouseId ? `No hay envíos para ${activeWarehouse?.name}` : 'No hay registros de envíos'}</p>
                   </td>
                 </tr>
               ) : (
-                filteredLogs.map((log) => (
-                  <tr key={log.id} className="hover:bg-gray-50">
-                    <td className="px-4 py-3 text-sm text-gray-900 whitespace-nowrap">
-                      {formatDate(log.created_at)}
-                    </td>
-                    <td className="px-4 py-3 text-sm text-gray-900">
-                      {log.rule?.name || '-'}
-                    </td>
-                    <td className="px-4 py-3 text-sm text-gray-900">
-                      {CORRESPONDENCE_EVENT_LABELS[log.event_type as keyof typeof CORRESPONDENCE_EVENT_LABELS] || log.event_type}
-                    </td>
-                    <td className="px-4 py-3 text-sm text-gray-900">
-                      <div className="flex flex-col">
-                        <span className="font-medium">{log.sender_user?.full_name || 'Usuario'}</span>
-                        <span className="text-xs text-gray-500">{log.sender_email}</span>
-                      </div>
-                    </td>
-                    <td className="px-4 py-3 text-sm text-gray-900">
-                      <div className="flex flex-wrap gap-1">
-                        {log.to_emails.slice(0, 2).map((email, idx) => (
-                          <span key={idx} className="inline-flex items-center px-2 py-0.5 rounded text-xs bg-gray-100 text-gray-700">
-                            {email}
+                filteredLogs.map((log) => {
+                  const ruleWarehouseId = (log.rule as any)?.warehouse_id ?? null;
+                  const warehouseName = ruleWarehouseId
+                    ? allowedWarehouses.find(w => w.id === ruleWarehouseId)?.name || 'Almacén'
+                    : null;
+                  return (
+                    <tr key={log.id} className="hover:bg-gray-50">
+                      <td className="px-4 py-3 text-sm text-gray-900 whitespace-nowrap">
+                        {formatDate(log.created_at)}
+                      </td>
+                      <td className="px-4 py-3 text-sm text-gray-900">
+                        {log.rule?.name || '-'}
+                      </td>
+                      <td className="px-4 py-3">
+                        {warehouseName ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-teal-50 text-teal-700">
+                            <i className="ri-store-2-line text-xs"></i>
+                            {warehouseName}
                           </span>
-                        ))}
-                        {log.to_emails.length > 2 && (
-                          <span className="inline-flex items-center px-2 py-0.5 rounded text-xs bg-gray-100 text-gray-700">
-                            +{log.to_emails.length - 2}
+                        ) : (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-gray-100 text-gray-500">
+                            <i className="ri-global-line text-xs"></i>
+                            Global
                           </span>
                         )}
-                      </div>
-                    </td>
-                    <td className="px-4 py-3 text-sm text-gray-900 max-w-xs truncate">
-                      {log.subject}
-                    </td>
-                    <td className="px-4 py-3 text-sm whitespace-nowrap">
-                      <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getStatusBadgeClass(log.status)}`}>
-                        {CORRESPONDENCE_LOG_STATUS_LABELS[log.status]}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 text-sm text-right whitespace-nowrap">
-                      <button
-                        onClick={() => setSelectedLog(log)}
-                        className="text-teal-600 hover:text-teal-700 mr-3"
-                        title="Ver detalle"
-                      >
-                        <i className="ri-eye-line text-lg"></i>
-                      </button>
-                      {log.status === 'failed' && (
-                        <button
-                          onClick={() => handleRetry(log.id)}
-                          disabled={retrying === log.id}
-                          className="text-orange-600 hover:text-orange-700 disabled:opacity-50"
-                          title="Reintentar envío"
-                        >
-                          {retrying === log.id ? (
-                            <i className="ri-loader-4-line animate-spin text-lg"></i>
-                          ) : (
-                            <i className="ri-refresh-line text-lg"></i>
+                      </td>
+                      <td className="px-4 py-3 text-sm text-gray-900">
+                        {CORRESPONDENCE_EVENT_LABELS[log.event_type as keyof typeof CORRESPONDENCE_EVENT_LABELS] || log.event_type}
+                      </td>
+                      <td className="px-4 py-3 text-sm text-gray-900">
+                        <div className="flex flex-col">
+                          <span className="font-medium">{log.sender_user?.full_name || 'Usuario'}</span>
+                          <span className="text-xs text-gray-500">{log.sender_email}</span>
+                        </div>
+                      </td>
+                      <td className="px-4 py-3 text-sm text-gray-900">
+                        <div className="flex flex-wrap gap-1">
+                          {log.to_emails.slice(0, 2).map((email, idx) => (
+                            <span key={idx} className="inline-flex items-center px-2 py-0.5 rounded text-xs bg-gray-100 text-gray-700">
+                              {email}
+                            </span>
+                          ))}
+                          {log.to_emails.length > 2 && (
+                            <span className="inline-flex items-center px-2 py-0.5 rounded text-xs bg-gray-100 text-gray-700">
+                              +{log.to_emails.length - 2}
+                            </span>
                           )}
+                        </div>
+                      </td>
+                      <td className="px-4 py-3 text-sm text-gray-900 max-w-xs truncate">
+                        {log.subject}
+                      </td>
+                      <td className="px-4 py-3 text-sm whitespace-nowrap">
+                        <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getStatusBadgeClass(log.status)}`}>
+                          {CORRESPONDENCE_LOG_STATUS_LABELS[log.status]}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-sm text-right whitespace-nowrap">
+                        <button
+                          onClick={() => setSelectedLog(log)}
+                          className="text-teal-600 hover:text-teal-700 mr-3"
+                          title="Ver detalle"
+                        >
+                          <i className="ri-eye-line text-lg"></i>
                         </button>
-                      )}
-                    </td>
-                  </tr>
-                ))
+                        {log.status === 'failed' && (
+                          <button
+                            onClick={() => handleRetry(log.id)}
+                            disabled={retrying === log.id}
+                            className="text-orange-600 hover:text-orange-700 disabled:opacity-50"
+                            title="Reintentar envío"
+                          >
+                            {retrying === log.id ? (
+                              <i className="ri-loader-4-line animate-spin text-lg"></i>
+                            ) : (
+                              <i className="ri-refresh-line text-lg"></i>
+                            )}
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })
               )}
             </tbody>
           </table>

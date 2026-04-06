@@ -6,6 +6,9 @@ export interface Dock {
   category: 'recepcion' | 'despacho' | 'zona_franca';
   status: 'disponible' | 'ocupado' | 'bloqueado' | 'danado';
   order: number;
+  warehouse_id?: string | null;
+  warehouse_name?: string | null;
+  location?: string | null;
 }
 
 export interface DockStatus {

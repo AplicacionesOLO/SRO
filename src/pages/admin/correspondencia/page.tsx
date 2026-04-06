@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { usePermissions } from '../../../hooks/usePermissions';
 import { useAuth } from '../../../contexts/AuthContext';
+import { useActiveWarehouse } from '../../../contexts/ActiveWarehouseContext';
 import { correspondenceService } from '../../../services/correspondenceService';
 import type { CorrespondenceRule, CorrespondenceRuleFormData } from '../../../types/correspondence';
 import { CORRESPONDENCE_EVENT_LABELS } from '../../../types/correspondence';
@@ -9,12 +10,21 @@ import RuleModal from './components/RuleModal';
 import LogsTab from './components/LogsTab';
 import SmtpServiceTab from './components/SmtpServiceTab';
 import { ConfirmModal } from '../../../components/base/ConfirmModal';
+import WarehousePageHeader from '../../../components/feature/WarehousePageHeader';
 
 export default function CorrespondenciaPage() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const { can, loading: permissionsLoading, orgId } = usePermissions();
   const { user } = useAuth();
+  const {
+    activeWarehouseId,
+    activeWarehouse,
+    allowedWarehouses,
+    hasMultipleWarehouses,
+    setActiveWarehouseId,
+    loading: warehouseLoading,
+  } = useActiveWarehouse();
   
   // ✅ Leer tab desde query param o usar default
   const tabFromUrl = searchParams.get('tab') as 'gmail' | 'rules' | 'logs' | null;
@@ -96,7 +106,8 @@ export default function CorrespondenciaPage() {
     setLoadingRules(true);
     
     try {
-      const data = await correspondenceService.getRules(orgId);
+      // Pasar warehouseId para filtrar por almacén activo
+      const data = await correspondenceService.getRules(orgId, activeWarehouseId);
       // console.log('[CorrespondenciaPage] loadRules success', { 
       //   orgId, 
       //   count: data.length,
@@ -109,7 +120,7 @@ export default function CorrespondenciaPage() {
     } finally {
       setLoadingRules(false);
     }
-  }, [orgId]); // FIX: Solo depender de orgId
+  }, [orgId, activeWarehouseId]); // FIX: Solo depender de orgId
 
   // FIX: useEffect solo depende de loadRules (que ya depende de orgId)
   useEffect(() => {
@@ -126,7 +137,8 @@ export default function CorrespondenciaPage() {
     if (!orgId) return;
     
     try {
-      await correspondenceService.createRule(orgId, data);
+      // Inyectar warehouse_id del almacén activo al crear
+      await correspondenceService.createRule(orgId, { ...data, warehouse_id: activeWarehouseId } as any);
       await loadRules();
       setIsModalOpen(false);
     } catch (error) {
@@ -348,10 +360,16 @@ export default function CorrespondenciaPage() {
       />
 
       <div className="px-6 py-6">
-        <div className="mb-6">
-          <h1 className="text-2xl font-bold text-gray-900 mb-2">Correspondencia</h1>
-          <p className="text-gray-600">Gestiona el envío automatizado de correos electrónicos</p>
-        </div>
+        {/* Header con almacén activo */}
+        <WarehousePageHeader
+          title="Correspondencia"
+          subtitle="Gestiona el envío automatizado de correos electrónicos"
+          activeWarehouse={activeWarehouse}
+          allowedWarehouses={allowedWarehouses}
+          hasMultipleWarehouses={hasMultipleWarehouses}
+          onWarehouseChange={setActiveWarehouseId}
+          loading={warehouseLoading}
+        />
 
         {/* Tabs */}
         <div className="border-b border-gray-200 bg-white">
@@ -407,6 +425,26 @@ export default function CorrespondenciaPage() {
           )}
           {activeTab === 'rules' && canViewRulesTab && (
             <div className="space-y-4">
+              {/* Aviso si no hay almacén seleccionado y hay múltiples */}
+              {!activeWarehouseId && hasMultipleWarehouses && (
+                <div className="p-4 bg-amber-50 border border-amber-200 rounded-lg flex items-center gap-3">
+                  <i className="ri-information-line text-amber-600 text-xl w-5 h-5 flex items-center justify-center flex-shrink-0"></i>
+                  <p className="text-sm text-amber-800">
+                    Mostrando reglas de todos los almacenes. Seleccioná un almacén para ver y crear reglas específicas.
+                  </p>
+                </div>
+              )}
+
+              {/* Badge de almacén activo en reglas */}
+              {activeWarehouseId && activeWarehouse && (
+                <div className="p-3 bg-teal-50 border border-teal-200 rounded-lg flex items-center gap-2">
+                  <i className="ri-store-2-line text-teal-600 text-sm w-4 h-4 flex items-center justify-center"></i>
+                  <p className="text-sm text-teal-800">
+                    Mostrando reglas del almacén <strong>{activeWarehouse.name}</strong>. Las nuevas reglas se crearán para este almacén.
+                  </p>
+                </div>
+              )}
+
               {/* Botón Nueva Regla */}
               <div className="flex justify-between items-center">
                 <p className="text-sm text-gray-600">
@@ -432,7 +470,11 @@ export default function CorrespondenciaPage() {
               ) : rules.length === 0 ? (
                 <div className="text-center py-12">
                   <i className="ri-mail-line text-5xl text-gray-300 mb-4"></i>
-                  <p className="text-gray-500 mb-4">No hay reglas de correspondencia configuradas</p>
+                  <p className="text-gray-500 mb-4">
+                    {activeWarehouseId
+                      ? `No hay reglas para ${activeWarehouse?.name || 'este almacén'}`
+                      : 'No hay reglas de correspondencia configuradas'}
+                  </p>
                   <button
                     onClick={openCreateModal}
                     className="px-4 py-2 bg-teal-600 text-white rounded-lg hover:bg-teal-700 transition-colors text-sm font-medium whitespace-nowrap"
@@ -449,6 +491,7 @@ export default function CorrespondenciaPage() {
                         <th className="text-left py-3 px-4 text-sm font-medium text-gray-700">Evento</th>
                         <th className="text-left py-3 px-4 text-sm font-medium text-gray-700">Condición</th>
                         <th className="text-left py-3 px-4 text-sm font-medium text-gray-700">Destinatarios</th>
+                        <th className="text-left py-3 px-4 text-sm font-medium text-gray-700">Almacén</th>
                         <th className="text-left py-3 px-4 text-sm font-medium text-gray-700">Estado</th>
                         <th className="text-left py-3 px-4 text-sm font-medium text-gray-700">Acciones</th>
                       </tr>
@@ -470,6 +513,19 @@ export default function CorrespondenciaPage() {
                           </td>
                           <td className="py-3 px-4 text-sm text-gray-600">
                             {getRecipientsSummary(rule)}
+                          </td>
+                          <td className="py-3 px-4">
+                            {(rule as any).warehouse_id ? (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-teal-50 text-teal-700">
+                                <i className="ri-store-2-line text-xs"></i>
+                                {allowedWarehouses.find(w => w.id === (rule as any).warehouse_id)?.name || 'Almacén'}
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-gray-100 text-gray-500">
+                                <i className="ri-global-line text-xs"></i>
+                                Global
+                              </span>
+                            )}
                           </td>
                           <td className="py-3 px-4">
                             <button
@@ -537,6 +593,8 @@ export default function CorrespondenciaPage() {
           onSave={selectedRule ? handleUpdateRule : handleCreateRule}
           rule={selectedRule}
           orgId={orgId}
+          activeWarehouseId={activeWarehouseId}
+          activeWarehouseName={activeWarehouse?.name}
         />
       )}
     </div>

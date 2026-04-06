@@ -1,5 +1,8 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { supabase } from '../../lib/supabase';
 import { usePermissions } from '../../hooks/usePermissions';
+import { useUserScope } from '../../hooks/useUserScope';
+import { useActiveWarehouse } from '../../contexts/ActiveWarehouseContext';
 import { useDebouncedValue } from '../../hooks/useDebouncedValue';
 import {
   calendarService,
@@ -20,6 +23,56 @@ import { providersService } from '../../services/providersService';
 import { useClientPickupRulesContext } from '../../contexts/ClientPickupRulesContext';
 import BlocksManagementTab from './components/BlocksManagementTab';
 import ReservationHoverCard from './components/ReservationHoverCard';
+import {
+  getWarehouseTimezone,
+  getStartOfDayInTimezone,
+  getEndOfDayInTimezone,
+  isSameDayInTimezone,
+  toWarehouseDateString,
+  toWarehouseTimeString,
+  getDatePartsInTimezone,
+} from '../../utils/timezoneUtils';
+
+/**
+ * Calcula el offset UTC del timezone dado en el instante actual.
+ * Retorna string tipo "UTC-4" o "UTC-6" o "UTC-4:30".
+ */
+function getUtcOffsetLabel(timezone: string): string {
+  try {
+    const now = new Date();
+    // Obtener la hora en UTC y en el timezone destino
+    const utcParts = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'UTC',
+      hour: 'numeric',
+      minute: 'numeric',
+      hour12: false,
+    }).formatToParts(now);
+    const tzParts = new Intl.DateTimeFormat('en-US', {
+      timeZone: timezone,
+      hour: 'numeric',
+      minute: 'numeric',
+      hour12: false,
+    }).formatToParts(now);
+
+    const utcH = parseInt(utcParts.find(p => p.type === 'hour')?.value || '0', 10);
+    const utcM = parseInt(utcParts.find(p => p.type === 'minute')?.value || '0', 10);
+    const tzH = parseInt(tzParts.find(p => p.type === 'hour')?.value || '0', 10);
+    const tzM = parseInt(tzParts.find(p => p.type === 'minute')?.value || '0', 10);
+
+    let diffMin = (tzH * 60 + tzM) - (utcH * 60 + utcM);
+    // Ajustar si cruza medianoche
+    if (diffMin > 720) diffMin -= 1440;
+    if (diffMin < -720) diffMin += 1440;
+
+    const sign = diffMin >= 0 ? '+' : '-';
+    const absDiff = Math.abs(diffMin);
+    const h = Math.floor(absDiff / 60);
+    const m = absDiff % 60;
+    return m === 0 ? `UTC${sign}${h}` : `UTC${sign}${h}:${m.toString().padStart(2, '0')}`;
+  } catch {
+    return '';
+  }
+}
 
 type ViewMode = '1day' | '3days' | '7days';
 type TabMode = 'calendar' | 'statuses' | 'blocks';
@@ -39,62 +92,32 @@ interface CalendarEvent {
   data?: Reservation | DockTimeBlock;
 }
 
-const TIMEZONE = 'America/Costa_Rica';
+// Fallback timezone cuando no hay almacén seleccionado
+const DEFAULT_FALLBACK_TZ = 'America/Costa_Rica';
 const BUFFER_DAYS = 2;
-
-// ✅ Función para obtener inicio de día en timezone específico
-// FIX: evita doble conversión browser-local. Usa UTC noon como referencia estable
-// para calcular el offset del timezone y construir la medianoche exacta en UTC.
-const getStartOfDay = (date: Date, timezone: string): Date => {
-  const dateStr = date.toLocaleDateString('en-CA', { timeZone: timezone }); // 'YYYY-MM-DD'
-  // Referencia: noon UTC del mismo día (seguro ante cualquier transición horaria)
-  const noonUTC = new Date(`${dateStr}T12:00:00.000Z`);
-  // ¿Qué hora local muestra noon UTC en `timezone`? Para UTC-6 → 6; UTC+2 → 14
-  const localHour = parseInt(
-    new Intl.DateTimeFormat('en-US', { timeZone: timezone, hour: '2-digit', hour12: false }).format(noonUTC),
-    10
-  );
-  // offset = localHour - 12  → p.e. 6 - 12 = -6 para CR
-  // Medianoche TZ = UTC midnight - (offset * 1h)  → 0h - (-6h) = 06:00 UTC para CR
-  const utcOffsetMs = (localHour - 12) * 3_600_000;
-  return new Date(new Date(`${dateStr}T00:00:00.000Z`).getTime() - utcOffsetMs);
-};
-
-// ✅ Función para obtener fin de día en timezone específico
-const getEndOfDay = (date: Date, timezone: string): Date => {
-  const dateStr = date.toLocaleDateString('en-CA', { timeZone: timezone }); // 'YYYY-MM-DD'
-  const noonUTC = new Date(`${dateStr}T12:00:00.000Z`);
-  const localHour = parseInt(
-    new Intl.DateTimeFormat('en-US', { timeZone: timezone, hour: '2-digit', hour12: false }).format(noonUTC),
-    10
-  );
-  const utcOffsetMs = (localHour - 12) * 3_600_000;
-  // 23:59:59.999 en TZ = siguiente UTC midnight - 1ms
-  const nextDay = new Date(new Date(`${dateStr}T00:00:00.000Z`).getTime() - utcOffsetMs + 86_400_000);
-  return new Date(nextDay.getTime() - 1);
-};
-
-const getNowInTimezone = (timezone: string): Date => {
-  return new Date(new Date().toLocaleString('en-US', { timeZone: timezone }));
-};
-
-// ✅ NUEVO: Helper para comparar si dos fechas son el mismo día en timezone
-const isSameDayTz = (day: Date, nowTz: Date, timezone: string): boolean => {
-  const dayStart = getStartOfDay(day, timezone);
-  const nowStart = getStartOfDay(nowTz, timezone);
-  return dayStart.getTime() === nowStart.getTime();
-};
-
-// ✅ FIX: Helper de comparación de día independiente del browser timezone.
-// Usa el Intl API directamente, sin intermediarios, para comparar fechas en CR.
-const isSameDayInCR = (a: Date, b: Date): boolean =>
-  a.toLocaleDateString('en-CA', { timeZone: TIMEZONE }) ===
-  b.toLocaleDateString('en-CA', { timeZone: TIMEZONE });
 
 export default function CalendarioPage() {
   const { can, orgId, loading: permLoading } = usePermissions();
   const { user } = useAuth();
   const { lastRuleChange } = useClientPickupRulesContext();
+  const {
+    allowedWarehouseIds,
+    availableWarehouses: scopeWarehouses,
+    isGlobalAccess,
+    loading: scopeLoading,
+  } = useUserScope();
+
+  // ── Almacén activo desde contexto compartido ──────────────────────────────
+  const {
+    allowedWarehouses,
+    activeWarehouseId: ctxWarehouseId,
+    activeWarehouse: ctxActiveWarehouse,
+    setActiveWarehouseId: ctxSetWarehouseId,
+    hasMultipleWarehouses,
+    loading: activeWhLoading,
+    selectionInvalidated,
+    acknowledgeInvalidation,
+  } = useActiveWarehouse();
 
   // ── Banner de borrador pendiente ──────────────────────────────────────────
   const [showResumeBanner, setShowResumeBanner] = useState(false);
@@ -130,11 +153,12 @@ export default function CalendarioPage() {
   const [categories, setCategories] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // Estados de warehouses
+  // Estados de warehouses — ahora sincronizados con el contexto activo
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
-  const [warehouseId, setWarehouseId] = useState<string | null>(null);
   const [warehouseLoading, setWarehouseLoading] = useState(false);
   const [warehouseModalOpen, setWarehouseModalOpen] = useState(false);
+  // Flag para saber si ya se ejecutó la lógica de auto-selección inicial
+  const warehouseInitDoneRef = useRef(false);
 
   const [reserveModalOpen, setReserveModalOpen] = useState(false);
   const [reserveModalSlot, setReserveModalSlot] = useState<any>(null);
@@ -171,7 +195,7 @@ export default function CalendarioPage() {
   const [enabledDockIds, setEnabledDockIds] = useState<Set<string>>(new Set());
 
   // ✅ NUEVO: Estado para el indicador de hora actual
-  const [nowTz, setNowTz] = useState<Date>(getNowInTimezone(TIMEZONE));
+  const [nowTz, setNowTz] = useState<Date>(new Date());
 
   // ✅ Refs para sincronización de scroll horizontal
   const bodyScrollRef = useRef<HTMLDivElement | null>(null);
@@ -187,14 +211,16 @@ export default function CalendarioPage() {
   // ✅ Constante de ancho de columna
   const COL_W = 200;
 
-  // ✅ NUEVO: useEffect para actualizar nowTz cada 60 segundos
+  // ✅ Actualizar nowTz cada 60 segundos (nowTz es siempre Date UTC real)
   useEffect(() => {
     const interval = setInterval(() => {
-      setNowTz(getNowInTimezone(TIMEZONE));
-    }, 60000); // 60 segundos
-
+      setNowTz(new Date());
+    }, 60000);
     return () => clearInterval(interval);
   }, []);
+
+  // warehouseId efectivo = el del contexto activo
+  const warehouseId = ctxWarehouseId;
 
   // ✅ Moved all useMemo hooks here (no hooks after returns)
   const canView = useMemo(() => can('calendar.view'), [can]);
@@ -212,22 +238,27 @@ export default function CalendarioPage() {
     return warehouses.find((w) => w.id === warehouseId) || null;
   }, [warehouseId, warehouses]);
 
+  // ✅ Timezone dinámico del almacén seleccionado — fuente de verdad para todo el calendario
+  const warehouseTimezone = useMemo(
+    () => getWarehouseTimezone(selectedWarehouse),
+    [selectedWarehouse]
+  );
+
   // ✅ Calcular rango de fechas basado en rangeDays y anchorDate (simétrico)
   const dateRange = useMemo(() => {
     const halfRange = Math.floor(rangeDays / 2);
 
-    // Calcular inicio y fin del rango visible
     const startDate = new Date(anchorDate);
     startDate.setDate(anchorDate.getDate() - halfRange);
 
     const endDate = new Date(anchorDate);
     endDate.setDate(anchorDate.getDate() + (rangeDays - halfRange - 1));
 
-    // Ajustar a inicio/fin de día en timezone correcto
-    const startOfRange = getStartOfDay(startDate, TIMEZONE);
-    const endOfRange = getEndOfDay(endDate, TIMEZONE);
+    // ✅ Usar timezone del almacén seleccionado (o fallback)
+    const tz = warehouseTimezone;
+    const startOfRange = getStartOfDayInTimezone(startDate, tz);
+    const endOfRange = getEndOfDayInTimezone(endDate, tz);
 
-    // Calcular rango con buffer para prefetch
     const bufferStart = new Date(startOfRange);
     bufferStart.setDate(bufferStart.getDate() - BUFFER_DAYS);
 
@@ -240,7 +271,7 @@ export default function CalendarioPage() {
       bufferStart,
       bufferEnd,
     };
-  }, [anchorDate, rangeDays]);
+  }, [anchorDate, rangeDays, warehouseTimezone]);
 
   // ✅ Calcular días visibles en el calendario
   const daysInView = useMemo(() => {
@@ -336,26 +367,25 @@ export default function CalendarioPage() {
   // ✅ Cada fila (slot) mide 60px, entonces px/minuto depende del intervalo
   const PX_PER_MINUTE_DYNAMIC = useMemo(() => 60 / slotInterval, [slotInterval]);
 
-  // ✅ FIX: Construye un Date sumando ms directamente desde la medianoche CR en UTC.
-  // NO usa setHours() que aplica la timezone LOCAL del browser y desplaza 6 h en browsers UTC.
+  // ✅ Construye un Date sumando ms desde la medianoche del almacén en UTC.
+  // Usa el timezone del almacén seleccionado, NO el del browser.
   const buildDateFromMinutes = useCallback(
     (day: Date, minutesFromMidnight: number) => {
-      const dayStartTz = getStartOfDay(day, TIMEZONE); // medianoche CR expresada en UTC
+      const dayStartTz = getStartOfDayInTimezone(day, warehouseTimezone);
       return new Date(dayStartTz.getTime() + minutesFromMidnight * 60_000);
     },
-    []
+    [warehouseTimezone]
   );
 
-  // ✅ FIX: Calcula top desde la medianoche CR real, NO desde browser getHours() que varía con la TZ del browser.
+  // ✅ Calcula top desde la medianoche del almacén, NO desde browser getHours().
   const getTopFromBusinessStart = useCallback(
     (date: Date): number => {
-      // offset real desde la medianoche CR (en ms) → no depende de la TZ del browser
-      const dayStart = getStartOfDay(date, TIMEZONE);
-      const minutesFromCRMidnight = (date.getTime() - dayStart.getTime()) / 60_000;
-      const minutesFromStart = minutesFromCRMidnight - businessStartMinutes;
+      const dayStart = getStartOfDayInTimezone(date, warehouseTimezone);
+      const minutesFromMidnight = (date.getTime() - dayStart.getTime()) / 60_000;
+      const minutesFromStart = minutesFromMidnight - businessStartMinutes;
       return minutesFromStart * PX_PER_MINUTE_DYNAMIC;
     },
-    [businessStartMinutes, PX_PER_MINUTE_DYNAMIC]
+    [businessStartMinutes, PX_PER_MINUTE_DYNAMIC, warehouseTimezone]
   );
 
   const calculateEventHeightDynamic = useCallback(
@@ -404,16 +434,43 @@ export default function CalendarioPage() {
   );
 
   // Generar slots de tiempo (según horario hábil + intervalo configurable)
+  // Incluye slots fuera de horario (off-hours) para señal visual
   const timeSlots: TimeSlot[] = useMemo(() => {
     const slots: TimeSlot[] = [];
 
     // Protección: si por alguna razón viene mal configurado
     if (businessEndMinutes <= businessStartMinutes) return slots;
 
+    // ── Slots ANTES del horario hábil (off-hours top) ──
+    // Mostrar hasta 2 slots antes del inicio (máximo desde las 00:00)
+    const offHoursBeforeStart = Math.max(0, businessStartMinutes - slotInterval * 2);
+    for (let min = offHoursBeforeStart; min < businessStartMinutes; min += slotInterval) {
+      const h = Math.floor(min / 60);
+      const m = min % 60;
+      slots.push({
+        hour: h,
+        minute: m,
+        label: `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`,
+      });
+    }
+
+    // ── Slots DENTRO del horario hábil ──
     for (let min = businessStartMinutes; min < businessEndMinutes; min += slotInterval) {
       const h = Math.floor(min / 60);
       const m = min % 60;
+      slots.push({
+        hour: h,
+        minute: m,
+        label: `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`,
+      });
+    }
 
+    // ── Slots DESPUÉS del horario hábil (off-hours bottom) ──
+    // Mostrar hasta 2 slots después del fin (máximo hasta las 23:59)
+    const offHoursAfterEnd = Math.min(24 * 60, businessEndMinutes + slotInterval * 2);
+    for (let min = businessEndMinutes; min < offHoursAfterEnd; min += slotInterval) {
+      const h = Math.floor(min / 60);
+      const m = min % 60;
       slots.push({
         hour: h,
         minute: m,
@@ -424,8 +481,8 @@ export default function CalendarioPage() {
     return slots;
   }, [businessStartMinutes, businessEndMinutes, slotInterval]);
 
-  // ✅ Ejecutar carga solo cuando esté listo
-  const ready = useMemo(() => !!orgId && !permLoading, [orgId, permLoading]);
+  // ✅ Ejecutar carga solo cuando esté listo (incluyendo scope de permisos)
+  const ready = useMemo(() => !!orgId && !permLoading && !scopeLoading, [orgId, permLoading, scopeLoading]);
 
   // ✅ Label para almacén (para PreReservationMiniModal)
   const warehouseLabel = useMemo(() => {
@@ -433,43 +490,90 @@ export default function CalendarioPage() {
     return 'Ver todos los andenes';
   }, [selectedWarehouse]);
 
-  // Cargar warehouses al montar
+  // Cargar warehouses al montar — usa scopeWarehouses del useUserScope (ya filtrados por permisos)
   useEffect(() => {
-    if (!orgId) return;
+    if (!orgId || scopeLoading) return;
 
-    const loadWarehouses = async () => {
-      setWarehouseLoading(true);
-      try {
-        const data = await calendarService.getWarehouses(orgId);
-        setWarehouses(data);
-        // console.log('[Calendar] warehouses loaded', { count: data.length });
+    setWarehouseLoading(true);
+    calendarService.getWarehouses(orgId).then((fullData) => {
+      const filtered = isGlobalAccess
+        ? fullData
+        : fullData.filter((w) => scopeWarehouses.some((sw) => sw.id === w.id));
+      setWarehouses(filtered);
+    }).catch(() => {
+      const data: Warehouse[] = scopeWarehouses.map((w) => ({
+        id: w.id,
+        org_id: orgId,
+        name: w.name,
+        location: w.location,
+        business_start_time: '06:00:00',
+        business_end_time: '17:00:00',
+        slot_interval_minutes: 60,
+        timezone: w.timezone,
+      }));
+      setWarehouses(data);
+    }).finally(() => {
+      setWarehouseLoading(false);
+    });
+  }, [orgId, scopeLoading, scopeWarehouses, isGlobalAccess]);
 
-        // Inicializar warehouseId desde localStorage o mantener null (ver todos)
-        const storageKey = `calendar_selected_warehouse_${orgId}`;
-        const savedId = localStorage.getItem(storageKey);
+  // ── Auto-selección inteligente de almacén al cargar ──────────────────────
+  // Reglas:
+  //   1 warehouse  → el contexto ya lo auto-selecciona (ActiveWarehouseContext)
+  //                  aquí solo nos aseguramos de NO abrir el modal
+  //   >1 warehouse → si no hay selección activa → abrir modal automáticamente
+  //   0 warehouses → no hacer nada
+  //   selección invalidada → abrir modal para re-seleccionar
+  useEffect(() => {
+    // Esperar a que el scope y el contexto de warehouse estén listos
+    if (activeWhLoading || scopeLoading) return;
+    // Esperar a que la lista de warehouses esté cargada (o confirmar que no hay)
+    if (warehouses.length === 0 && !isGlobalAccess) return;
 
-        if (savedId === 'null' || savedId === '') {
-          setWarehouseId(null);
-          // console.log('[Calendar] warehouse set to "Ver todos" from localStorage');
-        } else if (savedId && data.some((w) => w.id === savedId)) {
-          setWarehouseId(savedId);
-          // console.log('[Calendar] warehouse restored from localStorage', { id: savedId });
-        } else {
-          setWarehouseId(null);
-          // console.log('[Calendar] warehouse initialized to "Ver todos" (default)');
-        }
-      } catch (err) {
-        // console.error('[Calendar] loadWarehouses error', err);
-      } finally {
-        setWarehouseLoading(false);
+    // ── Caso: selección invalidada (warehouse ya no en scope) ──────────────
+    if (selectionInvalidated) {
+      if (warehouses.length === 1) {
+        // Ahora solo tiene 1 → auto-seleccionar directamente, sin modal
+        ctxSetWarehouseId(warehouses[0].id);
+        acknowledgeInvalidation();
+      } else if (warehouses.length > 1) {
+        // Tiene múltiples → abrir modal para elegir
+        setWarehouseModalOpen(true);
+        acknowledgeInvalidation();
       }
-    };
+      warehouseInitDoneRef.current = true;
+      return;
+    }
 
-    loadWarehouses();
-  }, [orgId]);
+    // ── Caso: 1 solo almacén ───────────────────────────────────────────────
+    // El contexto ya lo seleccionó automáticamente en su inicialización.
+    // Aquí solo garantizamos que el modal NUNCA se abra.
+    if (warehouses.length === 1) {
+      // Si por algún motivo el contexto aún no lo tiene (race condition), forzarlo
+      if (!ctxWarehouseId) {
+        ctxSetWarehouseId(warehouses[0].id);
+      }
+      warehouseInitDoneRef.current = true;
+      return;
+    }
+
+    // ── Caso: >1 almacén sin selección activa (primera vez) ───────────────
+    if (!warehouseInitDoneRef.current && warehouses.length > 1 && !ctxWarehouseId) {
+      warehouseInitDoneRef.current = true;
+      setWarehouseModalOpen(true);
+      return;
+    }
+
+    // Marcar como inicializado si aún no lo está
+    if (!warehouseInitDoneRef.current) {
+      warehouseInitDoneRef.current = true;
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeWhLoading, scopeLoading, warehouses.length, ctxWarehouseId, isGlobalAccess, selectionInvalidated]);
 
   // ✅ Cargar datos con caché inteligente (SIN searchTerm)
-  const loadData = useCallback(async () => {
+  // forceRefresh=true omite el caché y siempre va a la BD
+  const loadData = useCallback(async (forceRefresh = false) => {
     if (!orgId) return;
 
     try {
@@ -482,34 +586,21 @@ export default function CalendarioPage() {
         warehouseId || 'all'
       }:${filterCategory}`;
 
-      // // console.log('[Calendar] loadData', {
-      //   orgId,
-      //   warehouseId,
-      //   bufferStart: bufferStart.toISOString(),
-      //   bufferEnd: bufferEnd.toISOString(),
-      //   rangeDays,
-      //   cacheKey,
-      //   cached: cacheRef.current.has(cacheKey),
-      // });
-
-      // Verificar caché
-      const cached = cacheRef.current.get(cacheKey);
-
-      if (cached) {
-        // // console.log('[Calendar] Using cached data', {
-        //   reservations: cached.reservations.length,
-        //   blocks: cached.blocks.length,
-        // });
-        setReservations(cached.reservations);
-        setBlocks(cached.blocks);
-        setLoading(false);
-        return;
+      // Verificar caché (solo si no es forceRefresh)
+      if (!forceRefresh) {
+        const cached = cacheRef.current.get(cacheKey);
+        if (cached) {
+          setReservations(cached.reservations);
+          setBlocks(cached.blocks);
+          setLoading(false);
+          return;
+        }
       }
 
-      // Cargar datos en paralelo
+      // Cargar datos en paralelo — pasar allowedWarehouseIds para segregación
       const [docksData, reservationsData, blocksData, statusesData, categoriesData] = await Promise.all([
-        calendarService.getDocks(orgId, warehouseId),
-        calendarService.getReservations(orgId, bufferStart.toISOString(), bufferEnd.toISOString()),
+        calendarService.getDocks(orgId, warehouseId, allowedWarehouseIds),
+        calendarService.getReservations(orgId, bufferStart.toISOString(), bufferEnd.toISOString(), allowedWarehouseIds),
         calendarService.getDockTimeBlocks(orgId, bufferStart.toISOString(), bufferEnd.toISOString()),
         calendarService.getReservationStatuses(orgId),
         calendarService.getDockCategories(orgId),
@@ -544,22 +635,6 @@ export default function CalendarioPage() {
       setStatuses(statusesData);
       setCategories(categoriesData);
 
-      // 🔍 LOG DE DIAGNÓSTICO — filtrar por '[CALENDAR-BLOCK]' en DevTools Console
-      const cpBlocks = filteredBlocks.filter(b => b.reason?.startsWith('CLIENT_PICKUP'));
-      console.log('[CALENDAR-BLOCK] loadData:done', {
-        total_blocks_loaded: filteredBlocks.length,
-        client_pickup_count: cpBlocks.length,
-        client_pickup_blocks: cpBlocks.map(b => ({
-          id: b.id,
-          dock_id: b.dock_id,
-          start_utc: b.start_datetime,
-          end_utc: b.end_datetime,
-          reason: b.reason,
-        })),
-        buffer_range: { from: bufferStart.toISOString(), to: bufferEnd.toISOString() },
-        docks_in_view: docksData.map(d => ({ id: d.id, name: d.name })),
-      });
-
       // Guardar en caché
       cacheRef.current.set(cacheKey, {
         reservations: filteredReservations,
@@ -582,10 +657,77 @@ export default function CalendarioPage() {
     }
   }, [orgId, dateRange, rangeDays, warehouseId, filterCategory]); // ✅ REMOVIDO: searchTerm
 
+  // ── Mantener refs sincronizados con valores actuales ─────────────────────
+  useEffect(() => { loadDataRef.current = loadData; }, [loadData]);
+
+  // ── Cuando el modal se cierra, ejecutar refetch pendiente si lo hay ───────
+  useEffect(() => {
+    reserveModalOpenRef.current = reserveModalOpen;
+
+    if (!reserveModalOpen && pendingRealtimeRefreshRef.current) {
+      pendingRealtimeRefreshRef.current = false;
+      cacheRef.current.clear();
+      loadData(true);
+    }
+  }, [reserveModalOpen, loadData]);
+
   useEffect(() => {
     if (!ready) return;
     loadData();
   }, [ready, loadData]);
+
+  // ── Flag para posponer refetch cuando el modal está abierto ──────────────
+  const pendingRealtimeRefreshRef = useRef(false);
+  // ── Refs para acceder a valores actuales dentro del handler realtime (evita stale closure) ──
+  const reserveModalOpenRef = useRef(false);
+  const loadDataRef = useRef<(forceRefresh?: boolean) => Promise<void>>(async () => {});
+
+  // ✅ FIX BUG 2 (v2): Realtime subscription a la tabla reservations.
+  //
+  // IMPORTANTE: Supabase Realtime con filtro por columna (org_id=eq.X) en eventos UPDATE
+  // requiere REPLICA IDENTITY FULL en la tabla. Sin eso, el filtro no funciona para UPDATEs.
+  // Solución: suscribir SIN filtro de columna y filtrar manualmente en el handler.
+  //
+  // Cuando llega un cambio:
+  // - Si el modal está cerrado → invalidar caché y recargar inmediatamente
+  // - Si el modal está abierto → marcar pendingRealtimeRefreshRef para recargar al cerrar
+  useEffect(() => {
+    if (!orgId || !ready) return;
+
+    const channel = supabase
+      .channel(`calendar_reservations_rt_${orgId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'reservations',
+        },
+        (payload) => {
+          const recordOrgId =
+            (payload.new as any)?.org_id || (payload.old as any)?.org_id;
+          if (recordOrgId && recordOrgId !== orgId) return;
+
+          const isModalOpen = reserveModalOpenRef.current;
+
+          if (isModalOpen) {
+            pendingRealtimeRefreshRef.current = true;
+            return;
+          }
+
+          cacheRef.current.clear();
+          loadDataRef.current(true);
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  // Solo re-montar cuando cambia orgId o ready — NO incluir reserveModalOpen ni loadData
+  // para evitar re-suscripciones innecesarias. El handler usa closure sobre reserveModalOpen.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orgId, ready]);
 
   // ✅ Recargar bloques automáticamente cuando cambian reglas de Cliente Retira
   // NOTA: colocado DESPUÉS de loadData para tener la referencia correcta.
@@ -605,27 +747,25 @@ export default function CalendarioPage() {
     loadData();
   }, [lastRuleChange, ready, loadData]);
 
-  // Handler para seleccionar almacén
+  // Handler para seleccionar almacén — actualiza el contexto global
+  // ✅ FIX BUG 1: Resetear estado local ANTES de cambiar el contexto para evitar
+  // que se vean datos del almacén anterior mientras carga el nuevo.
+  // NO llamar loadData() aquí — el useEffect que depende de [ready, loadData]
+  // se disparará automáticamente cuando warehouseId cambie en el contexto.
   const handleWarehouseSelect = (selectedId: string | null) => {
-    setWarehouseId(selectedId);
     setWarehouseModalOpen(false);
 
-    // Guardar en localStorage
-    if (orgId) {
-      const storageKey = `calendar_selected_warehouse_${orgId}`;
-      localStorage.setItem(storageKey, selectedId || 'null');
-    }
+    // ── Reset inmediato del estado visual ──────────────────────────────────
+    setDocks([]);
+    setReservations([]);
+    setBlocks([]);
+    setLoading(true);
 
-    // Limpiar cache y recargar
+    // ── Limpiar caché completo para forzar refetch limpio ──────────────────
     cacheRef.current.clear();
 
-    // const selected = selectedId ? warehouses.find((w) => w.id === selectedId) : null;
-    // console.log('[Calendar] warehouse selected', {
-    //   id: selectedId,
-    //   name: selected?.name || 'Ver todos',
-    // });
-
-    loadData();
+    // ── Actualizar contexto global (dispara re-render + useEffect de loadData) ──
+    ctxSetWarehouseId(selectedId);
   };
 
   // ✅ Navegación: Ir a hoy
@@ -637,8 +777,8 @@ export default function CalendarioPage() {
     if (!value) return;
     const [y, m, d] = value.split('-').map(Number);
     if (!y || !m || !d) return;
-
-    setAnchorDate(new Date(y, m - 1, d));
+    // ✅ Usar UTC noon para evitar ambigüedad de timezone del browser
+    setAnchorDate(new Date(Date.UTC(y, m - 1, d, 12, 0, 0)));
     setRangeDays(1); // cuando eliges fecha, mostramos 1 día
   };
 
@@ -663,81 +803,64 @@ export default function CalendarioPage() {
   };
 
   const formatDayHeader = (date: Date): string => {
+    // ✅ Usar timezone del almacén para obtener el día correcto
+    const parts = getDatePartsInTimezone(date, warehouseTimezone);
     const days = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
     const months = [
-      'enero',
-      'febrero',
-      'marzo',
-      'abril',
-      'mayo',
-      'junio',
-      'julio',
-      'agosto',
-      'septiembre',
-      'octubre',
-      'noviembre',
-      'diciembre',
+      'enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio',
+      'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre',
     ];
-    return `${days[date.getDay()]}, ${date.getDate()} de ${
-      months[date.getMonth()]
-    } de ${date.getFullYear()}`;
+    return `${days[parts.weekday]}, ${parts.day} de ${months[parts.month - 1]} de ${parts.year}`;
   };
 
-  // ✅ NUEVO: Helper para validar si un slot es elegible
+  // ✅ Helper para validar si un slot es elegible (usa timezone del almacén)
   const isSlotEligible = useCallback(
     (dockId: string, day: Date, timeSlot: TimeSlot): boolean => {
       if (!selectionMode || requiredMinutes < 5) return false;
 
-      // ✅ Per-slot dock allocation: calcular habilitados dinámicamente
-      if (allocationRule && !allocationRule.allowAllDocks && allocationRule.clientDocks.length > 0) {
-        const dayStartTz = getStartOfDay(day, TIMEZONE);
-        const slotStartForAlloc = new Date(dayStartTz);
-        slotStartForAlloc.setHours(timeSlot.hour, timeSlot.minute, 0, 0);
-        const slotEndForAlloc = new Date(slotStartForAlloc.getTime() + requiredMinutes * 60 * 1000);
+      // Calcular slotStart usando timezone del almacén
+      const dayStartTz = getStartOfDayInTimezone(day, warehouseTimezone);
+      const slotStart = new Date(dayStartTz.getTime() + (timeSlot.hour * 60 + timeSlot.minute) * 60_000);
+      const slotEnd = new Date(slotStart.getTime() + requiredMinutes * 60_000);
 
+      // Per-slot dock allocation
+      if (allocationRule && !allocationRule.allowAllDocks && allocationRule.clientDocks.length > 0) {
         const enabledForSlot = dockAllocationService.getEnabledDockIdsForSlot(
           allocationRule.clientDocks,
           allocationRule.dockAllocationMode,
           reservations,
-          slotStartForAlloc,
-          slotEndForAlloc
+          slotStart,
+          slotEnd
         );
-
         if (!enabledForSlot.has(dockId)) return false;
       } else {
-        // Fallback al comportamiento estático anterior
         if (enabledDockIds.size > 0 && !enabledDockIds.has(dockId)) return false;
         if (enabledDockIds.size === 0 && allocationError) return false;
       }
 
-      const dayStartTz = getStartOfDay(day, TIMEZONE);
-      const slotStart = new Date(dayStartTz);
-      slotStart.setHours(timeSlot.hour, timeSlot.minute, 0, 0);
-
-      const nowTz = getNowInTimezone(TIMEZONE);
-
-      // Bloquear días en el pasado
-      const startOfToday = getStartOfDay(nowTz, TIMEZONE);
-      const startOfSlotDay = getStartOfDay(day, TIMEZONE);
+      const nowUtc = new Date();
+      // Bloquear días en el pasado (comparar en timezone del almacén)
+      const startOfToday = getStartOfDayInTimezone(nowUtc, warehouseTimezone);
+      const startOfSlotDay = getStartOfDayInTimezone(day, warehouseTimezone);
       if (startOfSlotDay < startOfToday) return false;
 
       // Si es hoy, bloquear horas anteriores a "ahora"
-      if (startOfSlotDay.getTime() === startOfToday.getTime() && slotStart < nowTz) {
+      if (startOfSlotDay.getTime() === startOfToday.getTime() && slotStart < nowUtc) {
         return false;
       }
 
-      const slotEnd = new Date(slotStart.getTime() + requiredMinutes * 60 * 1000);
-
-      // ✅ Validar que el espacio esté dentro del horario hábil del almacén
-      const slotStartMin = slotStart.getHours() * 60 + slotStart.getMinutes();
-      const slotEndMin = slotEnd.getHours() * 60 + slotEnd.getMinutes();
+      // Validar dentro del horario hábil usando minutos desde medianoche en TZ del almacén
+      const { hour: slotStartH, minute: slotStartM } = getDatePartsInTimezone(slotStart, warehouseTimezone);
+      const { hour: slotEndH, minute: slotEndM } = getDatePartsInTimezone(slotEnd, warehouseTimezone);
+      const slotStartMin = slotStartH * 60 + slotStartM;
+      const slotEndMin = slotEndH * 60 + slotEndM;
       if (slotStartMin < businessStartMinutes) return false;
       if (slotEndMin > businessEndMinutes) return false;
 
-      // Regla: no cruzar a otro día
-      if (slotStart.toDateString() !== slotEnd.toDateString()) return false;
+      // No cruzar a otro día (en timezone del almacén)
+      if (toWarehouseDateString(slotStart, warehouseTimezone) !== toWarehouseDateString(slotEnd, warehouseTimezone)) return false;
 
-      // Verificar conflictos con reservas existentes
+      // Conflictos con reservas
       const hasReservationConflict = reservations.some((r) => {
         if (r.dock_id !== dockId) return false;
         const rStart = new Date(r.start_datetime);
@@ -746,7 +869,7 @@ export default function CalendarioPage() {
       });
       if (hasReservationConflict) return false;
 
-      // Verificar conflictos con bloques
+      // Conflictos con bloques
       const hasBlockConflict = blocks.some((b) => {
         if (b.dock_id !== dockId) return false;
         const bStart = new Date(b.start_datetime);
@@ -767,6 +890,7 @@ export default function CalendarioPage() {
       enabledDockIds,
       allocationError,
       allocationRule,
+      warehouseTimezone,
     ]
   );
 
@@ -788,14 +912,14 @@ export default function CalendarioPage() {
     [canCreate, canBlockUpdate, canBlockDelete]
   );
 
-  // ✅ MODIFICADO: handleCellClick con soporte para modo selección
+  // ✅ handleCellClick con timezone del almacén
   const handleCellClick = useCallback(
     (e: React.MouseEvent, dockId: string, day: Date, timeSlot: TimeSlot) => {
-      const cellStart = new Date(day);
-      cellStart.setHours(timeSlot.hour, timeSlot.minute, 0, 0);
+      // Construir cellStart usando timezone del almacén (no setHours del browser)
+      const dayStartTz = getStartOfDayInTimezone(day, warehouseTimezone);
+      const cellStart = new Date(dayStartTz.getTime() + (timeSlot.hour * 60 + timeSlot.minute) * 60_000);
 
-      const cellEnd = new Date(cellStart);
-      cellEnd.setMinutes(cellEnd.getMinutes() + slotInterval);
+      const cellEnd = new Date(cellStart.getTime() + slotInterval * 60_000);
 
       // ✅ NUEVO: Si estamos en modo selección
       if (selectionMode) {
@@ -870,8 +994,9 @@ export default function CalendarioPage() {
 
     const duration = new Date(reservation.end_datetime).getTime() - new Date(reservation.start_datetime).getTime();
 
-    const newStart = new Date(targetDay);
-    newStart.setHours(targetSlot.hour, targetSlot.minute, 0, 0);
+    // ✅ Usar timezone del almacén para construir la nueva hora de inicio
+    const dayStartTz = getStartOfDayInTimezone(targetDay, warehouseTimezone);
+    const newStart = new Date(dayStartTz.getTime() + (targetSlot.hour * 60 + targetSlot.minute) * 60_000);
 
     const newEnd = new Date(newStart.getTime() + duration);
 
@@ -1005,6 +1130,27 @@ export default function CalendarioPage() {
     });
   }, [daysInView, filteredDocks.length, COL_W]);
 
+  // ✅ Recalcular posición de etiquetas de fecha en el render inicial y cuando cambian días/docks
+  // useLayoutEffect garantiza que se ejecuta ANTES de que el browser pinte, evitando el flash
+  React.useLayoutEffect(() => {
+    const container = bodyScrollRef.current;
+    if (!container) return;
+
+    const scrollLeft = container.scrollLeft;
+    const viewportW = container.offsetWidth;
+
+    // Sincronizar header de andenes
+    if (headerInnerRef.current) {
+      headerInnerRef.current.style.transform = `translateX(-${scrollLeft}px)`;
+    }
+    // Sincronizar fondos de color de la fila de fechas
+    if (dateBgRowRef.current) {
+      dateBgRowRef.current.style.transform = `translateX(-${scrollLeft}px)`;
+    }
+    // Recalcular posición de etiquetas de fecha (capa independiente)
+    updateDateLabels(scrollLeft, viewportW);
+  }, [daysInView, filteredDocks, updateDateLabels]);
+
   // ✅ Handler de scroll con sincronización horizontal usando RAF
   const handleBodyScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
     const scrollLeft = e.currentTarget.scrollLeft;
@@ -1034,13 +1180,11 @@ export default function CalendarioPage() {
 
   // ✅ NUEVO: Handler para confirmar preselección y activar modo selección
   const handlePreReservationConfirm = useCallback(async (payload: { cargoTypeId: string; providerId: string; clientId: string; requiredMinutes: number }) => {
-    // console.log('[Calendar] Pre-reservation confirmed', payload);
     setPreCargoTypeId(payload.cargoTypeId);
     setPreProviderId(payload.providerId);
     setRequiredMinutes(payload.requiredMinutes);
     setPreModalOpen(false);
 
-    // ✅ REESCRITO: Cargar reglas usando clientId directamente (no providerId)
     setAllocationLoading(true);
     setAllocationError('');
     setAllocationRule(null);
@@ -1048,7 +1192,6 @@ export default function CalendarioPage() {
     const clientId = payload.clientId;
 
     if (!clientId) {
-      // console.warn('[DockAllocation] missing clientId - no client linked to provider');
       setAllocationError('No se encontró un cliente vinculado al proveedor. Las reglas de andenes no se aplicarán.');
       setAllocationRule(null);
       setSelectionMode(true);
@@ -1056,29 +1199,19 @@ export default function CalendarioPage() {
     }
 
     try {
-      // console.log('[DockAllocation] context', { orgId, warehouseId, clientId });
-
       const rule = await dockAllocationService.getDockAllocationRule(
         orgId!,
         clientId
       );
 
       if (!rule) {
-        // console.warn('[DockAllocation] missing - could not load allocation rule for clientId', clientId);
         setAllocationError('No se pudieron cargar las reglas del cliente. Contactá a un administrador.');
         setAllocationRule(null);
       } else {
         setAllocationRule(rule);
         setAllocationError('');
-        // console.log('[DockAllocation] rule loaded successfully', {
-        //   clientId: rule.clientId,
-        //   clientName: rule.clientName,
-        //   mode: rule.dockAllocationMode,
-        //   docksCount: rule.clientDocks.length,
-        // });
       }
     } catch (err: any) {
-      console.error('[DockAllocation] error loading allocation rule', err);
       setAllocationError('No se pudieron cargar las reglas del cliente. Contactá a un administrador.');
       setAllocationRule(null);
     } finally {
@@ -1161,6 +1294,44 @@ export default function CalendarioPage() {
 
   return (
     <div className="h-screen flex flex-col bg-gray-50">
+      {/* Header con título del almacén activo */}
+      <div className="bg-white border-b border-gray-200">
+        <div className="px-6 py-3 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <h1 className="text-lg font-semibold text-gray-900">
+              {selectedWarehouse ? (
+                <span className="flex items-center gap-2">
+                  <i className="ri-building-2-line text-teal-600 w-5 h-5 flex items-center justify-center"></i>
+                  {selectedWarehouse.name}
+                  <span className="text-sm font-normal text-gray-500">
+                    ({getUtcOffsetLabel(warehouseTimezone)})
+                  </span>
+                </span>
+              ) : (
+                <span className="flex items-center gap-2 text-gray-600">
+                  <i className="ri-stack-line w-5 h-5 flex items-center justify-center"></i>
+                  Todos los almacenes
+                </span>
+              )}
+            </h1>
+            {selectedWarehouse && (
+              <span className="px-2 py-0.5 bg-teal-50 text-teal-700 text-xs font-medium rounded-full">
+                Almacén activo
+              </span>
+            )}
+          </div>
+          {warehouses.length > 1 && (
+            <button
+              onClick={() => setWarehouseModalOpen(true)}
+              className="text-sm text-teal-600 hover:text-teal-700 font-medium flex items-center gap-1"
+            >
+              <i className="ri-exchange-line w-4 h-4 flex items-center justify-center"></i>
+              Cambiar almacén
+            </button>
+          )}
+        </div>
+      </div>
+
       {/* Pestañas de navegación */}
       <div className="bg-white border-b border-gray-200">
         <div className="px-6">
@@ -1348,14 +1519,21 @@ export default function CalendarioPage() {
                         ? 'bg-gray-100 text-gray-500'
                         : selectedWarehouse
                         ? 'bg-teal-50 text-teal-700'
-                        : 'bg-blue-50 text-blue-700'
+                        : 'bg-gray-100 text-gray-600'
                     }`}
                   >
                     <i className="ri-building-2-line mr-2 w-4 h-4 flex items-center justify-center"></i>
                     {warehouseLoading
                       ? 'Cargando…'
                       : selectedWarehouse
-                      ? `Almacén: ${selectedWarehouse.name}`
+                      ? (
+                        <>
+                          Almacén: {selectedWarehouse.name}
+                          <span className="ml-1.5 text-xs font-normal opacity-70">
+                            ({getUtcOffsetLabel(warehouseTimezone)})
+                          </span>
+                        </>
+                      )
                       : 'Ver todos los andenes'}
                   </span>
 
@@ -1504,7 +1682,7 @@ export default function CalendarioPage() {
                         style={{ width: totalWidth, minWidth: totalWidth }}
                       >
                         {daysInView.map((day) => {
-                          const isToday = isSameDayTz(day, nowTz, TIMEZONE);
+                          const isToday = isSameDayInTimezone(day, nowTz, warehouseTimezone);
                           const dayW = filteredDocks.length * COL_W;
                           return (
                             <div
@@ -1523,7 +1701,7 @@ export default function CalendarioPage() {
 
                     {/* Etiquetas de fecha — posición absolute en coords del viewport, actualizadas por JS */}
                     {daysInView.map((day) => {
-                      const isToday = isSameDayTz(day, nowTz, TIMEZONE);
+                      const isToday = isSameDayInTimezone(day, nowTz, warehouseTimezone);
                       const dayW = filteredDocks.length * COL_W;
                       return (
                         <span
@@ -1536,8 +1714,8 @@ export default function CalendarioPage() {
                           style={{
                             top: '50%',
                             transform: 'translateY(-50%)',
-                            // Posición inicial: centrada en el primer día visible
-                            left: `${80 + dayW / 2}px`,
+                            // Posición inicial en 0; useLayoutEffect la corrige antes del primer paint
+                            left: '0px',
                           }}
                         >
                           {isToday && <span className="inline-block w-2 h-2 rounded-full bg-teal-500 flex-shrink-0" />}
@@ -1622,18 +1800,25 @@ export default function CalendarioPage() {
                   <div className="flex" style={{ width: totalWidth, minWidth: totalWidth }}>
                     {/* Columna de horas (sticky left + z-30 para quedar arriba) */}
                     <div className="w-20 flex-shrink-0 bg-white border-r border-gray-300 sticky left-0 z-30 shadow">
-                      {timeSlots.map((slot) => (
-                        <div
-                          key={slot.label}
-                          className={`h-[60px] border-b flex items-start justify-end pr-2 pt-1 ${
-                            slot.minute === 0
-                              ? 'border-gray-300 text-gray-700 font-semibold text-xs'
-                              : 'border-gray-100 text-gray-400 text-[11px]'
-                          }`}
-                        >
-                          {slot.label}
-                        </div>
-                      ))}
+                      {timeSlots.map((slot) => {
+                        const slotMin = slot.hour * 60 + slot.minute;
+                        const isOff = slotMin < businessStartMinutes || slotMin >= businessEndMinutes;
+                        return (
+                          <div
+                            key={slot.label}
+                            className={`h-[60px] border-b flex items-start justify-end pr-2 pt-1 ${
+                              isOff
+                                ? 'border-gray-200 text-gray-300 text-[11px] italic'
+                                : slot.minute === 0
+                                ? 'border-gray-300 text-gray-700 font-semibold text-xs'
+                                : 'border-gray-100 text-gray-400 text-[11px]'
+                            }`}
+                            style={isOff ? { backgroundColor: 'rgba(243,244,246,0.85)' } : undefined}
+                          >
+                            {slot.label}
+                          </div>
+                        );
+                      })}
                     </div>
 
                     {/* Grid de días y andenes (z-10 para quedar debajo) */}
@@ -1643,11 +1828,26 @@ export default function CalendarioPage() {
                     >
                       <div className="flex">
                         {daysInView.map((day, dayIndex) => {
-                          // ✅ NUEVO: Calcular si este día es "hoy" y si debe mostrar el indicador
-                          const isToday = isSameDayTz(day, nowTz, TIMEZONE);
-                          const nowTop = isToday ? getTopFromBusinessStart(nowTz) : -1;
-                          const maxHeight = (businessEndMinutes - businessStartMinutes) * PX_PER_MINUTE_DYNAMIC;
-                          const shouldShowNowIndicator = isToday && nowTop >= 0 && nowTop <= maxHeight;
+                          const effectiveTzForDay = selectedWarehouse
+                            ? warehouseTimezone
+                            : (filteredDocks[0]?.warehouse_timezone || warehouseTimezone);
+
+                          const isToday = isSameDayInTimezone(day, nowTz, effectiveTzForDay);
+
+                          const nowTopForDay = isToday
+                            ? (() => {
+                                const dayStart = getStartOfDayInTimezone(nowTz, effectiveTzForDay);
+                                const minutesFromMidnight = (nowTz.getTime() - dayStart.getTime()) / 60_000;
+                                const gridStartMinutes = timeSlots.length > 0
+                                  ? timeSlots[0].hour * 60 + timeSlots[0].minute
+                                  : businessStartMinutes;
+                                const minutesFromGridStart = minutesFromMidnight - gridStartMinutes;
+                                return minutesFromGridStart * PX_PER_MINUTE_DYNAMIC;
+                              })()
+                            : -1;
+
+                          const totalGridHeight = timeSlots.length * 60;
+                          const shouldShowNowIndicator = isToday && nowTopForDay >= 0 && nowTopForDay <= totalGridHeight;
 
                           return (
                             <div
@@ -1658,13 +1858,12 @@ export default function CalendarioPage() {
                                 minWidth: `${filteredDocks.length * COL_W}px`,
                               }}
                             >
-                              {/* ✅ NUEVO: Indicador de hora actual (NOW INDICATOR) */}
+                              {/* Indicador de hora actual (NOW INDICATOR) */}
                               {shouldShowNowIndicator && (
                                 <div
                                   className="absolute left-0 right-0 pointer-events-none z-40"
-                                  style={{ top: `${nowTop}px` }}
+                                  style={{ top: `${nowTopForDay}px` }}
                                 >
-                                  {/* Punto rojo al inicio */}
                                   <div
                                     className="absolute rounded-full"
                                     style={{
@@ -1675,7 +1874,6 @@ export default function CalendarioPage() {
                                       top: '-4px',
                                     }}
                                   />
-                                  {/* Línea roja horizontal */}
                                   <div
                                     className="absolute left-0 right-0"
                                     style={{
@@ -1686,23 +1884,25 @@ export default function CalendarioPage() {
                                 </div>
                               )}
 
+                              {/* Columnas por andén dentro del día */}
                               <div className="flex">
-                                {filteredDocks.map((dock, dockIdx) => (
+                                {filteredDocks.map((dock) => (
                                   <div
                                     key={dock.id}
-                                    className={`flex-shrink-0 border-r ${dockIdx % 2 === 1 ? 'bg-slate-50/50' : 'bg-white'} ${dockIdx < filteredDocks.length - 1 ? 'border-gray-300' : 'border-gray-200'}`}
+                                    className="flex-shrink-0 border-r border-gray-200 relative"
                                     style={{ width: `${COL_W}px`, minWidth: `${COL_W}px` }}
                                   >
-                                    {/* CONTENEDOR RELATIVE PARA SUPERPONER */}
                                     <div className="relative">
                                       {/* CAPA GRID (ABAJO) - z-0 */}
                                       <div className="relative z-0">
                                         {timeSlots.map((slot) => {
                                           const eligible = selectionMode ? isSlotEligible(dock.id, day, slot) : false;
                                           const inSelectionMode = selectionMode;
-                                          // ✅ NUEVO: Verificar si el dock está deshabilitado por reglas
                                           const dockDisabledByRule = inSelectionMode && enabledDockIds.size > 0 && !enabledDockIds.has(dock.id);
-                                          const dockBlockedByError = inSelectionMode && allocationError && enabledDockIds.size === 0;
+                                          const dockBlockedByError = inSelectionMode && !!allocationError && enabledDockIds.size === 0;
+
+                                          const slotMinutes = slot.hour * 60 + slot.minute;
+                                          const isOffHours = slotMinutes < businessStartMinutes || slotMinutes >= businessEndMinutes;
 
                                           return (
                                             <div
@@ -1714,11 +1914,15 @@ export default function CalendarioPage() {
                                                     : dockDisabledByRule || dockBlockedByError
                                                     ? 'bg-red-50/40 cursor-not-allowed border-gray-100'
                                                     : 'bg-gray-100/50 cursor-not-allowed border-gray-100'
+                                                  : isOffHours
+                                                  ? `cursor-default ${slot.minute === 0 ? 'border-gray-200' : 'border-gray-100'}`
                                                   : `hover:bg-gray-50/80 cursor-pointer ${slot.minute === 0 ? 'border-gray-300' : 'border-gray-100'}`
                                               }`}
                                               style={
                                                 inSelectionMode && eligible
-                                                  ? { backgroundColor: 'rgba(20, 184, 166, 0.35)' }
+                                                  ? { backgroundColor: 'rgba(20, 184, 166, 0.60)' }
+                                                  : isOffHours && !inSelectionMode
+                                                  ? { backgroundColor: 'rgba(243, 244, 246, 0.85)', backgroundImage: 'repeating-linear-gradient(45deg, transparent, transparent 4px, rgba(209,213,219,0.3) 4px, rgba(209,213,219,0.3) 5px)' }
                                                   : undefined
                                               }
                                               onMouseEnter={(e) => {
@@ -1741,13 +1945,12 @@ export default function CalendarioPage() {
 
                                       {/* CAPA OVERLAY (ARRIBA) - z-20 */}
                                       <div className="absolute inset-0 z-20 pointer-events-none">
-                                        {/* ✅ CORREGIDO: Renderizar RESERVAS filtradas */}
+                                        {/* Renderizar RESERVAS filtradas */}
                                         {filteredReservations
                                           .filter((r) => {
                                             if (r.dock_id !== dock.id) return false;
                                             const rStart = new Date(r.start_datetime);
-                                            // ✅ FIX: comparar en CR timezone, no en browser local
-                                            return isSameDayInCR(rStart, day);
+                                            return isSameDayInTimezone(rStart, day, warehouseTimezone);
                                           })
                                           .map((reservation) => {
                                             const start = new Date(reservation.start_datetime);
@@ -1791,7 +1994,6 @@ export default function CalendarioPage() {
                                                   }}
                                                   onClick={(e) => {
                                                     e.stopPropagation();
-                                                    // ✅ En modo selección, NO abrir modal de edición
                                                     if (selectionMode) {
                                                       setNotifyModal({
                                                         isOpen: true,
@@ -1855,7 +2057,7 @@ export default function CalendarioPage() {
                                                       </span>
                                                       <span className="text-[10px] text-gray-500 flex items-center gap-0.5 shrink-0">
                                                         <i className="ri-time-line w-3 h-3 flex items-center justify-center"></i>
-                                                        {start.getHours().toString().padStart(2, '0')}:{start.getMinutes().toString().padStart(2, '0')} - {end.getHours().toString().padStart(2, '0')}:{end.getMinutes().toString().padStart(2, '0')}
+                                                        {toWarehouseTimeString(start, warehouseTimezone)} - {toWarehouseTimeString(end, warehouseTimezone)}
                                                       </span>
                                                     </div>
                                                   </div>
@@ -1864,43 +2066,18 @@ export default function CalendarioPage() {
                                             );
                                           })}
 
-                                        {/* Renderizar BLOQUES (sin cambios) */}
+                                        {/* Renderizar BLOQUES */}
                                         {blocks
                                           .filter((b) => {
                                             if (b.dock_id !== dock.id) return false;
                                             const bStart = new Date(b.start_datetime);
-                                            const passes = isSameDayInCR(bStart, day);
-                                            // 🔍 LOG: traza por bloque
-                                            if (b.reason?.startsWith('CLIENT_PICKUP')) {
-                                              console.log('[CALENDAR-BLOCK] filter:day', {
-                                                block_id: b.id,
-                                                dock_id: b.dock_id,
-                                                dock_name: dock.name,
-                                                start_utc: b.start_datetime,
-                                                bStart_cr: bStart.toLocaleDateString('en-CA', { timeZone: TIMEZONE }),
-                                                day_cr: day.toLocaleDateString('en-CA', { timeZone: TIMEZONE }),
-                                                passes_day_filter: passes,
-                                              });
-                                            }
-                                            return passes;
+                                            return isSameDayInTimezone(bStart, day, warehouseTimezone);
                                           })
                                           .map((block) => {
                                             const start = new Date(block.start_datetime);
                                             const end = new Date(block.end_datetime);
 
                                             const clamped = clampEventToBusinessHours(day, start, end);
-                                            // 🔍 LOG: resultado del clamp
-                                            if (block.reason?.startsWith('CLIENT_PICKUP')) {
-                                              console.log('[CALENDAR-BLOCK] clamp:result', {
-                                                block_id: block.id,
-                                                start_utc: block.start_datetime,
-                                                end_utc: block.end_datetime,
-                                                businessStartMinutes,
-                                                businessEndMinutes,
-                                                clamped: clamped ? { top: clamped.top, height: clamped.height } : null,
-                                                visible: !!clamped,
-                                              });
-                                            }
                                             if (!clamped) return null;
 
                                             const { top, height } = clamped;
@@ -1910,7 +2087,6 @@ export default function CalendarioPage() {
                                                 key={block.id}
                                                 onClick={(e) => {
                                                   e.stopPropagation();
-                                                  // ✅ En modo selección, NO abrir modal de bloque
                                                   if (selectionMode) {
                                                     setNotifyModal({
                                                       isOpen: true,
@@ -1971,6 +2147,7 @@ export default function CalendarioPage() {
             docks={docks}
             statuses={statuses}
             orgId={orgId!}
+            warehouseTimezone={warehouseTimezone}
             onClose={() => {
               setReserveModalOpen(false);
               setSelectedReservation(null);
@@ -1980,8 +2157,10 @@ export default function CalendarioPage() {
               setReserveModalOpen(false);
               setSelectedReservation(null);
               setReserveModalSlot(null);
+              pendingRealtimeRefreshRef.current = false;
               cacheRef.current.clear();
-              await loadData();
+              await new Promise(resolve => setTimeout(resolve, 300));
+              await loadData(true);
             }}
           />
 
@@ -1989,6 +2168,7 @@ export default function CalendarioPage() {
             <BlockModal
               block={selectedBlock}
               docks={docks}
+              warehouseTimezone={warehouseTimezone}
               onClose={() => {
                 setIsBlockModalOpen(false);
                 setSelectedBlock(null);
@@ -2043,30 +2223,32 @@ export default function CalendarioPage() {
             {/* Lista */}
             <div className="flex-1 overflow-y-auto p-6">
               <div className="space-y-3">
-                {/* Opción "Ver todos" */}
-                <button
-                  onClick={() => handleWarehouseSelect(null)}
-                  className={`w-full text-left p-4 rounded-lg border-2 transition-all ${
-                    warehouseId === null
-                      ? 'border-blue-500 bg-blue-50'
-                      : 'border-gray-200 hover:border-blue-300 hover:bg-gray-50'
-                  }`}
-                >
-                  <div className="flex items-start justify-between">
-                    <div className="flex-1">
-                      <div className="flex items-center gap-2">
-                        <h3 className="font-semibold text-gray-900">Ver todos los andenes</h3>
-                        {warehouseId === null && <i className="ri-check-line text-blue-600 w-5 h-5 flex items-center justify-center"></i>}
+                {/* Opción "Ver todos" — solo para usuarios con acceso global */}
+                {isGlobalAccess && (
+                  <button
+                    onClick={() => handleWarehouseSelect(null)}
+                    className={`w-full text-left p-4 rounded-lg border-2 transition-all ${
+                      warehouseId === null
+                        ? 'border-teal-500 bg-teal-50'
+                        : 'border-gray-200 hover:border-teal-300 hover:bg-gray-50'
+                    }`}
+                  >
+                    <div className="flex items-start justify-between">
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2">
+                          <h3 className="font-semibold text-gray-900">Ver todos los andenes</h3>
+                          {warehouseId === null && <i className="ri-check-line text-teal-600 w-5 h-5 flex items-center justify-center"></i>}
+                        </div>
+                        <p className="text-sm text-gray-600 mt-1">
+                          Muestra los andenes de todos los almacenes sin filtrar
+                        </p>
                       </div>
-                      <p className="text-sm text-gray-600 mt-1">
-                        Muestra los andenes de todos los almacenes sin filtrar
-                      </p>
+                      <div className="w-10 h-10 bg-teal-100 rounded-lg flex items-center justify-center ml-4">
+                        <i className="ri-stack-line text-xl text-teal-600 w-5 h-5 flex items-center justify-center"></i>
+                      </div>
                     </div>
-                    <div className="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center ml-4">
-                      <i className="ri-stack-line text-xl text-blue-600 w-5 h-5 flex items-center justify-center"></i>
-                    </div>
-                  </div>
-                </button>
+                  </button>
+                )}
 
                 {/* Lista de almacenes */}
                 {warehouses.length === 0 ? (

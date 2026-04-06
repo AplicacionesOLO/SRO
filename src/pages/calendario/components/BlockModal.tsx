@@ -3,12 +3,20 @@ import { usePermissions } from '../../../hooks/usePermissions';
 import { calendarService, type DockTimeBlock, type Dock } from '../../../services/calendarService';
 import { ConfirmModal } from '../../../components/base/ConfirmModal';
 import { useFormDraft, getDraftAge } from '../../../hooks/useReservationDraft';
+import {
+  toWarehouseDateString,
+  toWarehouseTimeString,
+  fromWarehouseLocalToUtc,
+  DEFAULT_TIMEZONE,
+} from '../../../utils/timezoneUtils';
 
 interface BlockModalProps {
   block: DockTimeBlock | null;
   docks: Dock[];
   onClose: () => void;
   onSave: () => void;
+  /** Timezone IANA del almacén seleccionado */
+  warehouseTimezone?: string;
   /** Habilita la edición de un bloqueo existente */
   allowEdit?: boolean;
   /** Muestra título "Renovar Bloqueo" en lugar de "Editar Bloqueo" */
@@ -27,9 +35,29 @@ const WEEKDAYS = [
 
 const WEEKS_OPTIONS = [1, 2, 3, 4, 6, 8, 12];
 
-export default function BlockModal({ block, docks, onClose, onSave, allowEdit = false, renewalMode = false }: BlockModalProps) {
+/**
+ * Convierte un Date UTC a string 'YYYY-MM-DDTHH:MM' en el timezone del almacén.
+ * Esto es lo que necesita el input type="datetime-local".
+ */
+function toDatetimeLocalInTz(dateUtc: Date, timezone: string): string {
+  const dateStr = toWarehouseDateString(dateUtc, timezone);
+  const timeStr = toWarehouseTimeString(dateUtc, timezone);
+  return `${dateStr}T${timeStr}`;
+}
+
+export default function BlockModal({
+  block,
+  docks,
+  onClose,
+  onSave,
+  warehouseTimezone = DEFAULT_TIMEZONE,
+  allowEdit = false,
+  renewalMode = false,
+}: BlockModalProps) {
   const { can, orgId } = usePermissions();
   const [loading, setLoading] = useState(false);
+
+  // formData almacena strings 'YYYY-MM-DDTHH:MM' en el timezone del almacén
   const [formData, setFormData] = useState({
     dock_id: '',
     start_datetime: '',
@@ -68,10 +96,13 @@ export default function BlockModal({ block, docks, onClose, onSave, allowEdit = 
 
   useEffect(() => {
     if (block) {
+      // ✅ Convertir UTC → timezone del almacén para mostrar en el input
+      const startUtc = new Date(block.start_datetime);
+      const endUtc = new Date(block.end_datetime);
       setFormData({
         dock_id: block.dock_id,
-        start_datetime: new Date(block.start_datetime).toISOString().slice(0, 16),
-        end_datetime: new Date(block.end_datetime).toISOString().slice(0, 16),
+        start_datetime: toDatetimeLocalInTz(startUtc, warehouseTimezone),
+        end_datetime: toDatetimeLocalInTz(endUtc, warehouseTimezone),
         reason: block.reason,
       });
       setShowDraftBanner(false);
@@ -85,18 +116,19 @@ export default function BlockModal({ block, docks, onClose, onSave, allowEdit = 
         setDraftAgeLabel(getDraftAge(draft.savedAt));
         setShowDraftBanner(true);
       } else {
-        const now = new Date();
-        const oneHourLater = new Date(now.getTime() + 60 * 60 * 1000);
+        // ✅ Hora actual en el timezone del almacén
+        const nowUtc = new Date();
+        const oneHourLaterUtc = new Date(nowUtc.getTime() + 60 * 60 * 1000);
         setFormData({
           dock_id: docks[0]?.id || '',
-          start_datetime: now.toISOString().slice(0, 16),
-          end_datetime: oneHourLater.toISOString().slice(0, 16),
+          start_datetime: toDatetimeLocalInTz(nowUtc, warehouseTimezone),
+          end_datetime: toDatetimeLocalInTz(oneHourLaterUtc, warehouseTimezone),
           reason: '',
         });
         setShowDraftBanner(false);
       }
     }
-  }, [block, docks]);
+  }, [block, docks, warehouseTimezone]);
 
   // Auto-save borrador
   useEffect(() => {
@@ -107,7 +139,12 @@ export default function BlockModal({ block, docks, onClose, onSave, allowEdit = 
   const handlePersistentToggle = (checked: boolean) => {
     setIsPersistent(checked);
     if (checked && formData.start_datetime) {
-      const dayOfWeek = new Date(formData.start_datetime).getDay();
+      // ✅ Calcular día de la semana en el timezone del almacén
+      const [datePart] = formData.start_datetime.split('T');
+      const [timePart] = formData.start_datetime.split('T').slice(1);
+      const startUtc = fromWarehouseLocalToUtc(datePart, timePart || '00:00', warehouseTimezone);
+      // getDay() en UTC puede diferir; usamos el datePart directamente
+      const dayOfWeek = new Date(`${datePart}T12:00:00Z`).getUTCDay();
       setPersistentWeekdays([dayOfWeek]);
     } else if (!checked) {
       setPersistentWeekdays([]);
@@ -148,6 +185,15 @@ export default function BlockModal({ block, docks, onClose, onSave, allowEdit = 
     onClose();
   }, [onClose]);
 
+  /**
+   * Parsea el string 'YYYY-MM-DDTHH:MM' del input (que está en timezone del almacén)
+   * y lo convierte a Date UTC usando fromWarehouseLocalToUtc.
+   */
+  const parseLocalInputToUtc = (datetimeLocal: string): Date => {
+    const [datePart, timePart] = datetimeLocal.split('T');
+    return fromWarehouseLocalToUtc(datePart, timePart || '00:00', warehouseTimezone);
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
@@ -161,8 +207,9 @@ export default function BlockModal({ block, docks, onClose, onSave, allowEdit = 
       return;
     }
 
-    const start = new Date(formData.start_datetime);
-    const end = new Date(formData.end_datetime);
+    // ✅ Convertir hora local del almacén → UTC para persistir
+    const start = parseLocalInputToUtc(formData.start_datetime);
+    const end = parseLocalInputToUtc(formData.end_datetime);
 
     if (end <= start) {
       setNotifyModal({ isOpen: true, type: 'warning', title: 'Fecha inválida', message: 'La fecha de fin debe ser posterior a la fecha de inicio' });
@@ -267,6 +314,22 @@ export default function BlockModal({ block, docks, onClose, onSave, allowEdit = 
       : 'Detalles del Bloqueo'
     : 'Nuevo Bloqueo de Tiempo';
 
+  // ✅ Función para resetear a nuevo borrador (usa timezone del almacén)
+  const handleDiscardDraftAndStartNew = () => {
+    clearDraft();
+    const nowUtc = new Date();
+    const oneHourLaterUtc = new Date(nowUtc.getTime() + 60 * 60 * 1000);
+    setFormData({
+      dock_id: docks[0]?.id || '',
+      start_datetime: toDatetimeLocalInTz(nowUtc, warehouseTimezone),
+      end_datetime: toDatetimeLocalInTz(oneHourLaterUtc, warehouseTimezone),
+      reason: '',
+    });
+    setIsPersistent(false);
+    setPersistentWeekdays([]);
+    setShowDraftBanner(false);
+  };
+
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
       <div className="bg-white rounded-xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
@@ -304,7 +367,7 @@ export default function BlockModal({ block, docks, onClose, onSave, allowEdit = 
                       className="px-3 py-1 text-xs font-semibold bg-teal-600 text-white rounded-lg hover:bg-teal-700 whitespace-nowrap">
                       Continuar con el borrador
                     </button>
-                    <button type="button" onClick={() => { clearDraft(); const now = new Date(); const oneHourLater = new Date(now.getTime() + 60 * 60 * 1000); setFormData({ dock_id: docks[0]?.id || '', start_datetime: now.toISOString().slice(0, 16), end_datetime: oneHourLater.toISOString().slice(0, 16), reason: '' }); setIsPersistent(false); setPersistentWeekdays([]); setShowDraftBanner(false); }}
+                    <button type="button" onClick={handleDiscardDraftAndStartNew}
                       className="px-3 py-1 text-xs border border-gray-300 bg-white text-gray-700 rounded-lg hover:bg-gray-50 whitespace-nowrap">
                       Descartar y empezar nuevo
                     </button>
@@ -338,6 +401,7 @@ export default function BlockModal({ block, docks, onClose, onSave, allowEdit = 
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
                 Fecha y hora de inicio *
+                <span className="ml-2 text-xs text-gray-400 font-normal">({warehouseTimezone})</span>
               </label>
               <input
                 type="datetime-local"
@@ -353,6 +417,7 @@ export default function BlockModal({ block, docks, onClose, onSave, allowEdit = 
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
                 Fecha y hora de fin *
+                <span className="ml-2 text-xs text-gray-400 font-normal">({warehouseTimezone})</span>
               </label>
               <input
                 type="datetime-local"

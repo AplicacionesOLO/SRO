@@ -1,23 +1,28 @@
 
 import { useState, useMemo } from 'react';
-
-interface ExitEligibleReservation {
-  id: string;
-  dua: string | null;
-  matricula: string;
-  chofer: string;
-  proveedor: string;
-  almacen: string;
-  orden_compra: string | null;
-  fecha_ingreso: string;
-  warehouse_id: string;
-  provider_id: string;
-}
+import type { ExitEligibleReservation } from '../../../types/casetilla';
+import { formatInWarehouseTimezone } from '../../../utils/timezoneUtils';
 
 interface ExitReservationsGridProps {
   reservations: ExitEligibleReservation[];
   onOpenExit: (reservation: ExitEligibleReservation) => void;
   isLoading: boolean;
+}
+
+/**
+ * Formatea fecha/hora UTC usando el timezone del almacén.
+ * Fallback a America/Costa_Rica si no hay timezone.
+ */
+function formatFechaIngreso(fechaUtc: string | null | undefined, timezone: string | undefined): string {
+  if (!fechaUtc) return 'N/A';
+  const tz = timezone || 'America/Costa_Rica';
+  return formatInWarehouseTimezone(new Date(fechaUtc), tz, {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
 }
 
 export default function ExitReservationsGrid({
@@ -169,13 +174,7 @@ export default function ExitReservationsGrid({
                       )}
                     </td>
                     <td className="px-4 py-3 text-sm text-gray-700">
-                      {new Date(reservation.fecha_ingreso).toLocaleString('es-ES', {
-                        day: '2-digit',
-                        month: '2-digit',
-                        year: 'numeric',
-                        hour: '2-digit',
-                        minute: '2-digit'
-                      })}
+                      {formatFechaIngreso(reservation.fecha_ingreso, reservation.warehouse_timezone)}
                     </td>
                     <td className="px-4 py-3 text-right">
                       <button
@@ -248,13 +247,7 @@ export default function ExitReservationsGrid({
                     <div className="col-span-2">
                       <span className="text-gray-500 block mb-0.5">Fecha Ingreso:</span>
                       <span className="text-gray-900 font-medium">
-                        {new Date(reservation.fecha_ingreso).toLocaleString('es-ES', {
-                          day: '2-digit',
-                          month: '2-digit',
-                          year: 'numeric',
-                          hour: '2-digit',
-                          minute: '2-digit'
-                        })}
+                        {formatFechaIngreso(reservation.fecha_ingreso, reservation.warehouse_timezone)}
                       </span>
                     </div>
                   </div>

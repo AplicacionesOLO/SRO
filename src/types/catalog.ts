@@ -15,6 +15,8 @@ export interface CargoType {
   name: string;
   default_minutes?: number;
   active: boolean;
+  is_dynamic?: boolean;
+  is_active?: boolean;
   created_by?: string;
   created_at?: string;
   updated_by?: string;
@@ -27,6 +29,7 @@ export interface ProviderCargoTimeProfile {
   provider_id: string;
   cargo_type_id: string;
   avg_minutes: number;
+  warehouse_id?: string | null;
   p90_minutes?: number;
   sample_size?: number;
   source?: string;

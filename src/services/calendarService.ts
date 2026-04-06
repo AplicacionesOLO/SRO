@@ -57,6 +57,8 @@ export interface DockTimeBlock {
       color: string;
     };
   };
+  /** Timezone IANA del almacén asociado al dock (ej: America/Costa_Rica) */
+  warehouse_timezone?: string;
 }
 
 export interface Dock {
@@ -69,6 +71,8 @@ export interface Dock {
   status_id: string | null;
   is_active: boolean;
   warehouse_id?: string | null;
+  /** Timezone IANA del almacén al que pertenece este dock (ej: America/Caracas) */
+  warehouse_timezone?: string | null;
   category?: {
     name: string;
     code: string;
@@ -91,6 +95,7 @@ export interface Warehouse {
   business_start_time: string; // 'HH:MM:SS'
   business_end_time: string;   // 'HH:MM:SS'
   slot_interval_minutes: number; // 15 | 30 | 60
+  timezone: string; // IANA timezone, e.g. 'America/Costa_Rica'
 }
 
 /**
@@ -176,7 +181,12 @@ const tryExtractPathFromFileUrl = (fileUrlOrPath: string) => {
 };
 
 export const calendarService = {
-  async getReservations(orgId: string, startDate: string, endDate: string): Promise<Reservation[]> {
+  async getReservations(
+    orgId: string,
+    startDate: string,
+    endDate: string,
+    allowedWarehouseIds?: string[] | null
+  ): Promise<Reservation[]> {
     const { data, error } = await supabase
       .from('reservations')
       .select(`
@@ -193,11 +203,35 @@ export const calendarService = {
       return [];
     }
 
-    return data || [];
+    let result = data || [];
+
+    // ── SEGREGACIÓN: filtrar por warehouses permitidos ──────────────────────
+    if (allowedWarehouseIds && allowedWarehouseIds.length > 0 && result.length > 0) {
+      const dockIds = [...new Set(result.map((r) => r.dock_id).filter(Boolean))];
+      const { data: docksData } = await supabase
+        .from('docks')
+        .select('id, warehouse_id')
+        .in('id', dockIds);
+
+      const allowedDockIds = new Set(
+        (docksData ?? [])
+          .filter((d: any) => allowedWarehouseIds.includes(d.warehouse_id))
+          .map((d: any) => d.id)
+      );
+
+      result = result.filter((r) => allowedDockIds.has(r.dock_id));
+    }
+
+    return result;
   },
 
   // Igual que getReservations pero SIN filtrar is_cancelled — para el módulo de Reservas
-  async getAllReservations(orgId: string, startDate: string, endDate: string): Promise<Reservation[]> {
+  async getAllReservations(
+    orgId: string,
+    startDate: string,
+    endDate: string,
+    allowedWarehouseIds?: string[] | null
+  ): Promise<Reservation[]> {
     const { data, error } = await supabase
       .from('reservations')
       .select(`
@@ -213,7 +247,26 @@ export const calendarService = {
       return [];
     }
 
-    return data || [];
+    let result = data || [];
+
+    // ── SEGREGACIÓN: filtrar por warehouses permitidos ──────────────────────
+    if (allowedWarehouseIds && allowedWarehouseIds.length > 0 && result.length > 0) {
+      const dockIds = [...new Set(result.map((r) => r.dock_id).filter(Boolean))];
+      const { data: docksData } = await supabase
+        .from('docks')
+        .select('id, warehouse_id')
+        .in('id', dockIds);
+
+      const allowedDockIds = new Set(
+        (docksData ?? [])
+          .filter((d: any) => allowedWarehouseIds.includes(d.warehouse_id))
+          .map((d: any) => d.id)
+      );
+
+      result = result.filter((r) => allowedDockIds.has(r.dock_id));
+    }
+
+    return result;
   },
 
   async getDockTimeBlocks(orgId: string, startDate: string, endDate: string): Promise<DockTimeBlock[]> {
@@ -273,24 +326,48 @@ export const calendarService = {
         supabase.from('profiles').select('id, name, email').in('id', creatorIds),
         supabase
           .from('docks')
-          .select('id, name, reference, category:dock_categories(name, color)')
+          .select('id, name, reference, warehouse_id, category:dock_categories(name, color)')
           .in('id', dockIds),
       ]);
 
       const profileMap = new Map((profilesResult.data || []).map((p) => [p.id, p]));
       const dockMap = new Map((docksResult.data || []).map((d) => [d.id, d]));
 
-      return data.map((block) => ({
-        ...block,
-        creator: profileMap.get(block.created_by) || undefined,
-        dock: dockMap.get(block.dock_id) || undefined,
-      }));
+      // ✅ Traer warehouses para obtener timezone de cada dock
+      const warehouseIds = [...new Set(
+        (docksResult.data || [])
+          .map((d) => (d as any).warehouse_id)
+          .filter(Boolean)
+      )];
+      let warehouseMap = new Map<string, string>();
+      if (warehouseIds.length > 0) {
+        const { data: whData } = await supabase
+          .from('warehouses')
+          .select('id, timezone')
+          .in('id', warehouseIds);
+        (whData || []).forEach((w: any) => warehouseMap.set(w.id, w.timezone || 'America/Costa_Rica'));
+      }
+
+      return data.map((block) => {
+        const dock = dockMap.get(block.dock_id);
+        const warehouseId = (dock as any)?.warehouse_id;
+        return {
+          ...block,
+          creator: profileMap.get(block.created_by) || undefined,
+          dock: dock || undefined,
+          warehouse_timezone: warehouseId ? warehouseMap.get(warehouseId) : 'America/Costa_Rica',
+        };
+      });
     }
 
     return data || [];
   },
 
-  async getDocks(orgId: string, warehouseId?: string | null): Promise<Dock[]> {
+  async getDocks(
+    orgId: string,
+    warehouseId?: string | null,
+    allowedWarehouseIds?: string[] | null
+  ): Promise<Dock[]> {
     let query = supabase
       .from('docks')
       .select(`
@@ -304,27 +381,47 @@ export const calendarService = {
 
     if (warehouseId) {
       query = query.eq('warehouse_id', warehouseId);
+    } else if (allowedWarehouseIds && allowedWarehouseIds.length > 0) {
+      // Si no hay warehouse específico pero hay restricción de permisos, filtrar por warehouses permitidos
+      query = query.in('warehouse_id', allowedWarehouseIds);
     }
 
     const { data, error } = await query.order('name', { ascending: true });
 
     if (error) {
-      // console.error('[Calendar] docksError', {
-      //   code: error.code,
-      //   message: error.message,
-      //   details: error.details,
-      //   hint: error.hint,
-      // });
       return [];
     }
 
-    return data || [];
+    if (!data || data.length === 0) return [];
+
+    // ✅ Enriquecer cada dock con el timezone de su almacén
+    const warehouseIds = [...new Set(
+      data.map((d: any) => d.warehouse_id).filter(Boolean)
+    )] as string[];
+
+    let warehouseTimezoneMap = new Map<string, string>();
+    if (warehouseIds.length > 0) {
+      const { data: whData } = await supabase
+        .from('warehouses')
+        .select('id, timezone')
+        .in('id', warehouseIds);
+      (whData || []).forEach((w: any) => {
+        warehouseTimezoneMap.set(w.id, w.timezone || 'America/Costa_Rica');
+      });
+    }
+
+    return data.map((dock: any) => ({
+      ...dock,
+      warehouse_timezone: dock.warehouse_id
+        ? (warehouseTimezoneMap.get(dock.warehouse_id) || null)
+        : null,
+    }));
   },
 
   async getWarehouses(orgId: string): Promise<Warehouse[]> {
     const { data, error } = await supabase
       .from('warehouses')
-      .select('id, org_id, name, location, business_start_time, business_end_time, slot_interval_minutes')
+      .select('id, org_id, name, location, business_start_time, business_end_time, slot_interval_minutes, timezone')
       .eq('org_id', orgId)
       .order('name', { ascending: true });
 
@@ -528,15 +625,17 @@ export const calendarService = {
       oldOrgId = oldReservation?.org_id || null;
     }
 
+    const updatePayload = {
+      ...updates,
+      updated_by: user.id,
+      updated_at: new Date().toISOString(),
+    };
+
     // ✅ PASO 1: Solo actualizar, sin pedir SELECT en el mismo query
     // Esto evita el error 406 cuando RLS no permite leer la fila después del UPDATE
     const { error } = await supabase
       .from('reservations')
-      .update({
-        ...updates,
-        updated_by: user.id,
-        updated_at: new Date().toISOString(),
-      })
+      .update(updatePayload)
       .eq('id', id);
 
     if (error) {

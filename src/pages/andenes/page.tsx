@@ -1,9 +1,12 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { usePermissions } from '../../hooks/usePermissions';
+import { useUserScope } from '../../hooks/useUserScope';
+import { useActiveWarehouse } from '../../contexts/ActiveWarehouseContext';
 import { supabase } from '../../lib/supabase';
 import DockModal from './components/DockModal';
 import { sortDocksByNameNumber } from '../../utils/sortDocks';
+import WarehouseSelector from '../../components/feature/WarehouseSelector';
 
 interface DockCategory {
   id: string;
@@ -45,6 +48,18 @@ interface Dock {
 export default function AndenesPage() {
   const { user, permissionsLoading } = useAuth();
   const { orgId, can, loading } = usePermissions();
+  const {
+    allowedWarehouseIds,
+    availableWarehouses: scopeWarehouses,
+    isGlobalAccess,
+    loading: scopeLoading,
+  } = useUserScope();
+  const {
+    activeWarehouse,
+    hasMultipleWarehouses,
+    effectiveWarehouseIds,
+    loading: activeWhLoading,
+  } = useActiveWarehouse();
   
   const [docks, setDocks] = useState<Dock[]>([]);
   const [categories, setCategories] = useState<DockCategory[]>([]);
@@ -77,10 +92,68 @@ export default function AndenesPage() {
   const [resumeDraftAge, setResumeDraftAge] = useState('');
 
   // ✅ TODOS LOS HOOKS PRIMERO (antes de cualquier return)
+  const loadData = useCallback(async () => {
+    if (!orgId || scopeLoading || activeWhLoading) return;
+    try {
+      setLoadingData(true);
+
+      if (effectiveWarehouseIds !== null && effectiveWarehouseIds.length === 0) {
+        setDocks([]);
+        setCategories([]);
+        setStatuses([]);
+        setWarehouses([]);
+        setLoadingData(false);
+        return;
+      }
+
+      let docksQuery = supabase
+        .from('docks')
+        .select(`
+          id, name, reference, header_color, category_id, status_id,
+          warehouse_id, is_active, created_at, updated_at,
+          category:dock_categories(id, name, code, color),
+          status:dock_statuses(id, name, code, color, is_blocking),
+          warehouse:warehouses(id, name, location)
+        `)
+        .eq('org_id', orgId)
+        .order('name');
+
+      if (effectiveWarehouseIds && effectiveWarehouseIds.length > 0) {
+        docksQuery = docksQuery.in('warehouse_id', effectiveWarehouseIds);
+      }
+
+      const { data: docksData, error: docksError } = await docksQuery;
+      if (docksError) throw docksError;
+
+      const [categoriesRes, statusesRes] = await Promise.all([
+        supabase.from('dock_categories').select('id, name, code, color').eq('org_id', orgId).order('name'),
+        supabase.from('dock_statuses').select('id, name, code, color, is_blocking').eq('org_id', orgId).order('name'),
+      ]);
+
+      if (categoriesRes.error) throw categoriesRes.error;
+      if (statusesRes.error) throw statusesRes.error;
+
+      const scopeWarehousesMapped: Warehouse[] = scopeWarehouses.map((w) => ({
+        id: w.id,
+        name: w.name,
+        location: w.location,
+      }));
+
+      const sortedDocks = [...(docksData ?? [])].sort(sortDocksByNameNumber);
+      setDocks(sortedDocks);
+      setCategories(categoriesRes.data || []);
+      setStatuses(statusesRes.data || []);
+      setWarehouses(scopeWarehousesMapped);
+    } catch {
+      setPermissionErrorModal({ isOpen: true, message: 'Error al cargar andenes' });
+    } finally {
+      setLoadingData(false);
+    }
+  }, [orgId, scopeLoading, activeWhLoading, effectiveWarehouseIds, scopeWarehouses]);
+
   useEffect(() => {
-    if (orgId) {
+    if (orgId && !scopeLoading && !activeWhLoading) {
       loadData();
-      // Verificar si hay borrador de andén pendiente
       try {
         const raw = localStorage.getItem(`draft_dock_${orgId}_new`);
         if (raw) {
@@ -94,78 +167,7 @@ export default function AndenesPage() {
         }
       } catch { /* corrupt */ }
     }
-  }, [orgId]);
-
-  // ✅ Funciones auxiliares
-  const loadData = async () => {
-    try {
-      setLoadingData(true);
-
-      // Cargar andenes con categorías, estados y almacenes
-      const { data: docksData, error: docksError } = await supabase
-        .from('docks')
-        .select(`
-          id,
-          name,
-          reference,
-          header_color,
-          category_id,
-          status_id,
-          warehouse_id,
-          is_active,
-          created_at,
-          updated_at,
-          category:dock_categories(id, name, code, color),
-          status:dock_statuses(id, name, code, color, is_blocking),
-          warehouse:warehouses(id, name, location)
-        `)
-        .eq('org_id', orgId)
-        .order('name');
-
-      if (docksError) throw docksError;
-
-      // Cargar categorías
-      const { data: categoriesData, error: categoriesError } = await supabase
-        .from('dock_categories')
-        .select('id, name, code, color')
-        .eq('org_id', orgId)
-        .order('name');
-
-      if (categoriesError) throw categoriesError;
-
-      // Cargar estados
-      const { data: statusesData, error: statusesError } = await supabase
-        .from('dock_statuses')
-        .select('id, name, code, color, is_blocking')
-        .eq('org_id', orgId)
-        .order('name');
-
-      if (statusesError) throw statusesError;
-
-      // Cargar almacenes
-      const { data: warehousesData, error: warehousesError } = await supabase
-        .from('warehouses')
-        .select('id, name, location')
-        .eq('org_id', orgId)
-        .order('name');
-
-      if (warehousesError) throw warehousesError;
-
-      // ✅ Ordenar andenes por número natural
-      const sortedDocks = [...(docksData ?? [])].sort(sortDocksByNameNumber);
-      setDocks(sortedDocks);
-      setCategories(categoriesData || []);
-      setStatuses(statusesData || []);
-      setWarehouses(warehousesData || []);
-    } catch (error: any) {
-      setPermissionErrorModal({
-        isOpen: true,
-        message: 'Error al cargar andenes'
-      });
-    } finally {
-      setLoadingData(false);
-    }
-  };
+  }, [orgId, scopeLoading, activeWhLoading, loadData]);
 
   const handleCreate = () => {
     if (!can('docks.create')) {
@@ -248,8 +250,7 @@ export default function AndenesPage() {
   });
 
   // ✅ GUARDS DESPUÉS DE TODOS LOS HOOKS
-  // ✅ Guard 1: Verificar permisos mientras cargan
-  if (permissionsLoading || loading) {
+  if (permissionsLoading || loading || scopeLoading || activeWhLoading) {
     return (
       <div className="min-h-screen bg-gray-50">
         <div className="flex items-center justify-center h-[calc(100vh-80px)]">
@@ -328,8 +329,21 @@ export default function AndenesPage() {
         {/* Header */}
         <div className="flex items-center justify-between mb-6">
           <div>
-            <h1 className="text-2xl font-bold text-gray-900 mb-2">Gestión de Andenes</h1>
-            <p className="text-gray-600">Administra los andenes de tu organización</p>
+            <h1 className="text-2xl font-bold text-gray-900 mb-1">Gestión de Andenes</h1>
+            <div className="flex items-center gap-2 flex-wrap">
+              <p className="text-gray-600">Administra los andenes de tu organización</p>
+              {activeWarehouse && (
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-teal-50 text-teal-700 rounded-full text-xs font-medium">
+                  <i className="ri-building-2-line"></i>
+                  {activeWarehouse.name}
+                </span>
+              )}
+            </div>
+            {hasMultipleWarehouses && (
+              <div className="mt-2">
+                <WarehouseSelector variant="chips" />
+              </div>
+            )}
           </div>
           {can('docks.create') && (
             <button

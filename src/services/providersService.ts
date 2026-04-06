@@ -148,5 +148,92 @@ export const providersService = {
     }
 
     //console.log('[providersService] ✅ Provider soft deleted:', { id });
-  }
+  },
+
+  /**
+   * Obtener proveedores filtrados por almacén activo.
+   * Si warehouseId es null → devuelve todos los de la org (acceso global).
+   */
+  async getByWarehouse(orgId: string, warehouseId: string | null, activeOnly = false): Promise<Provider[]> {
+    if (!warehouseId) {
+      // Acceso global: devolver todos
+      return activeOnly ? this.getActive(orgId) : this.getAll(orgId);
+    }
+
+    // Obtener IDs de proveedores asignados a este almacén
+    const { data: pwRows, error: pwErr } = await supabase
+      .from('provider_warehouses')
+      .select('provider_id')
+      .eq('org_id', orgId)
+      .eq('warehouse_id', warehouseId);
+
+    if (pwErr) throw pwErr;
+
+    const providerIds = (pwRows ?? []).map((r: any) => r.provider_id as string);
+
+    if (providerIds.length === 0) return [];
+
+    let query = supabase
+      .from('providers')
+      .select('id, org_id, name, active, created_at')
+      .eq('org_id', orgId)
+      .in('id', providerIds)
+      .order('name', { ascending: true });
+
+    if (activeOnly) {
+      query = query.eq('active', true);
+    }
+
+    const { data, error } = await query;
+    if (error) throw error;
+    return data || [];
+  },
+
+  /**
+   * Obtener los warehouse IDs asignados a un proveedor.
+   */
+  async getProviderWarehouses(orgId: string, providerId: string): Promise<string[]> {
+    const { data, error } = await supabase
+      .from('provider_warehouses')
+      .select('warehouse_id')
+      .eq('org_id', orgId)
+      .eq('provider_id', providerId);
+
+    if (error) throw error;
+    return (data ?? []).map((r: any) => r.warehouse_id as string);
+  },
+
+  /**
+   * Asignar un proveedor a uno o varios almacenes (reemplaza asignaciones previas).
+   */
+  async setProviderWarehouses(orgId: string, providerId: string, warehouseIds: string[]): Promise<void> {
+    // Eliminar asignaciones previas
+    const { error: delErr } = await supabase
+      .from('provider_warehouses')
+      .delete()
+      .eq('org_id', orgId)
+      .eq('provider_id', providerId);
+
+    if (delErr) throw delErr;
+
+    if (warehouseIds.length === 0) return;
+
+    const { error: insErr } = await supabase
+      .from('provider_warehouses')
+      .insert(warehouseIds.map(wid => ({ org_id: orgId, provider_id: providerId, warehouse_id: wid })));
+
+    if (insErr) throw insErr;
+  },
+
+  /**
+   * Agregar un proveedor a un almacén específico (sin reemplazar otros).
+   */
+  async addProviderToWarehouse(orgId: string, providerId: string, warehouseId: string): Promise<void> {
+    const { error } = await supabase
+      .from('provider_warehouses')
+      .upsert({ org_id: orgId, provider_id: providerId, warehouse_id: warehouseId }, {
+        onConflict: 'org_id,provider_id,warehouse_id'
+      });
+    if (error) throw error;
+  },
 };

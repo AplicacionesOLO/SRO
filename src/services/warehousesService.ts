@@ -15,7 +15,7 @@ export const warehousesService = {
 
     const { data, error } = await supabase
       .from('warehouses')
-      .select('id, org_id, name, location, country_id, business_start_time, business_end_time, slot_interval_minutes, created_at')
+      .select('id, org_id, name, location, country_id, business_start_time, business_end_time, slot_interval_minutes, timezone, created_at')
       .eq('org_id', orgId)
       .order('created_at', { ascending: false });
 
@@ -51,9 +51,10 @@ export const warehousesService = {
         country_id: formData.country_id,
         business_start_time: normalizeTime(formData.business_start_time, '06:00:00'),
         business_end_time: normalizeTime(formData.business_end_time, '17:00:00'),
-        slot_interval_minutes: formData.slot_interval_minutes || 60
+        slot_interval_minutes: formData.slot_interval_minutes || 60,
+        timezone: formData.timezone || 'America/Costa_Rica',
       })
-      .select('id, org_id, name, location, country_id, business_start_time, business_end_time, slot_interval_minutes, created_at')
+      .select('id, org_id, name, location, country_id, business_start_time, business_end_time, slot_interval_minutes, timezone, created_at')
       .single();
 
     if (error) {
@@ -83,11 +84,12 @@ export const warehousesService = {
         country_id: formData.country_id,
         business_start_time: normalizeTime(formData.business_start_time, '06:00:00'),
         business_end_time: normalizeTime(formData.business_end_time, '17:00:00'),
-        slot_interval_minutes: formData.slot_interval_minutes || 60
+        slot_interval_minutes: formData.slot_interval_minutes || 60,
+        timezone: formData.timezone || 'America/Costa_Rica',
       })
       .eq('id', id)
       .eq('org_id', orgId)
-      .select('id, org_id, name, location, country_id, business_start_time, business_end_time, slot_interval_minutes, created_at')
+      .select('id, org_id, name, location, country_id, business_start_time, business_end_time, slot_interval_minutes, timezone, created_at')
       .single();
 
     if (error) {

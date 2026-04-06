@@ -1,6 +1,10 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { usePermissions } from '../../hooks/usePermissions';
+import { useUserScope } from '../../hooks/useUserScope';
+import { useActiveWarehouse } from '../../contexts/ActiveWarehouseContext';
+import WarehousePageHeader from '../../components/feature/WarehousePageHeader';
+import WarehouseSelector from '../../components/feature/WarehouseSelector';
 import IngresoForm from './components/IngresoForm';
 import PendingReservationsGrid from './components/PendingReservationsGrid';
 import ExitReservationsGrid from './components/ExitReservationsGrid';
@@ -10,11 +14,8 @@ import { ConfirmModal } from '../../components/base/ConfirmModal';
 import { casetillaService } from '../../services/casetillaService';
 import type { PendingReservation, ExitEligibleReservation } from '../../types/casetilla';
 
-// ─── SESSION PERSISTENCE ──────────────────────────────────────────────────────
 const SESSION_KEY = 'casetilla_ui_state';
-/** Clave directa donde PhotoUploader escribe inmediatamente (sin esperar ciclos React) */
 const FOTOS_INGRESO_KEY = 'casetilla_fotos_ingreso';
-/** Clave directa donde PhotoUploader de SALIDA escribe inmediatamente */
 const FOTOS_SALIDA_KEY  = 'casetilla_fotos_salida';
 
 type ViewMode = 'HOME' | 'INGRESO' | 'PENDIENTES' | 'SALIDA' | 'DURACION';
@@ -28,16 +29,11 @@ interface PersistedUIState {
 }
 
 const readSession = (): Partial<PersistedUIState> => {
-  try {
-    const raw = sessionStorage.getItem(SESSION_KEY);
-    return raw ? JSON.parse(raw) : {};
-  } catch { return {}; }
+  try { const raw = sessionStorage.getItem(SESSION_KEY); return raw ? JSON.parse(raw) : {}; } catch { return {}; }
 };
-
 const writeSession = (state: PersistedUIState) => {
   try { sessionStorage.setItem(SESSION_KEY, JSON.stringify(state)); } catch { /* noop */ }
 };
-
 const clearSession = () => {
   try {
     sessionStorage.removeItem(SESSION_KEY);
@@ -45,169 +41,117 @@ const clearSession = () => {
     sessionStorage.removeItem(FOTOS_SALIDA_KEY);
   } catch { /* noop */ }
 };
-// ─────────────────────────────────────────────────────────────────────────────
 
 export default function CasetillaPage() {
   const { user } = useAuth();
   const { can, orgId: currentOrgId } = usePermissions();
 
-  // ── ESTADO HIDRATADO DESDE SESSION ───────────────────────────────────────
-  const [viewMode, setViewModeRaw] = useState<ViewMode>(() => {
-    const s = readSession();
-    return s.viewMode || 'HOME';
-  });
+  // ── SCOPE CENTRALIZADO — usa user_warehouse_access (tabla real) ──────────
+  const {
+    allowedWarehouseIds: scopeWarehouseIds,
+    availableClients: scopeClients,
+    loading: scopeLoading,
+  } = useUserScope();
 
+  const {
+    activeWarehouse,
+    allowedWarehouses,
+    hasMultipleWarehouses,
+    effectiveWarehouseIds,
+    setActiveWarehouseId,
+    loading: activeWhLoading,
+  } = useActiveWarehouse();
+
+  const [viewMode, setViewModeRaw] = useState<ViewMode>(() => readSession().viewMode || 'HOME');
   const [fotosIngreso, setFotosIngresoRaw] = useState<string[]>(() => {
     const s = readSession();
     if (s.fotosIngreso?.length) return s.fotosIngreso;
-    try {
-      const raw = sessionStorage.getItem(FOTOS_INGRESO_KEY);
-      if (raw) {
-        const urls = JSON.parse(raw) as string[];
-        if (urls.length) return urls;
-      }
-    } catch { /* noop */ }
+    try { const r = sessionStorage.getItem(FOTOS_INGRESO_KEY); if (r) { const u = JSON.parse(r) as string[]; if (u.length) return u; } } catch { /* noop */ }
     return [];
   });
-
   const [fotosSalida, setFotosSalidaRaw] = useState<string[]>(() => {
     const s = readSession();
     if (s.fotosSalida?.length) return s.fotosSalida;
-    try {
-      const raw = sessionStorage.getItem(FOTOS_SALIDA_KEY);
-      if (raw) {
-        const urls = JSON.parse(raw) as string[];
-        if (urls.length) return urls;
-      }
-    } catch { /* noop */ }
+    try { const r = sessionStorage.getItem(FOTOS_SALIDA_KEY); if (r) { const u = JSON.parse(r) as string[]; if (u.length) return u; } } catch { /* noop */ }
     return [];
   });
-
-  const [selectedReservation, setSelectedReservationRaw] = useState<PendingReservation | null>(() => {
-    const s = readSession();
-    return s.selectedReservation || null;
-  });
-
-  const [selectedExitReservation, setSelectedExitReservationRaw] = useState<ExitEligibleReservation | null>(() => {
-    const s = readSession();
-    return s.selectedExitReservation || null;
-  });
-  // ─────────────────────────────────────────────────────────────────────────
+  const [selectedReservation, setSelectedReservationRaw] = useState<PendingReservation | null>(() => readSession().selectedReservation || null);
+  const [selectedExitReservation, setSelectedExitReservationRaw] = useState<ExitEligibleReservation | null>(() => readSession().selectedExitReservation || null);
 
   const [pendingReservations, setPendingReservations] = useState<PendingReservation[]>([]);
   const [exitEligibleReservations, setExitEligibleReservations] = useState<ExitEligibleReservation[]>([]);
   const [isLoadingReservations, setIsLoadingReservations] = useState(false);
   const [isLoadingExitReservations, setIsLoadingExitReservations] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
-
-  // ── SINCRONIZACIÓN sessionStorage ─────────────────────────────────────────
-  useEffect(() => {
-    writeSession({ viewMode, fotosIngreso, fotosSalida, selectedReservation, selectedExitReservation });
-  }, [viewMode, fotosIngreso, fotosSalida, selectedReservation, selectedExitReservation]);
-  // ─────────────────────────────────────────────────────────────────────────
-
-  // ── WRAPPERS CON DOBLE PERSISTENCIA ──────────────────────────────────────
-  // Además de actualizar el state de React, escribe inmediatamente en
-  // sessionStorage para sobrevivir al race condition de Android.
-  const setViewMode = useCallback((vm: ViewMode) => {
-    setViewModeRaw(vm);
-  }, []);
-
-  const setFotosIngreso = useCallback((urls: string[]) => {
-    setFotosIngresoRaw(urls);
-    try {
-      const current = readSession();
-      sessionStorage.setItem(SESSION_KEY, JSON.stringify({ ...current, fotosIngreso: urls }));
-    } catch { /* noop */ }
-  }, []);
-
-  const setFotosSalida = useCallback((urls: string[]) => {
-    setFotosSalidaRaw(urls);
-    try {
-      const current = readSession();
-      sessionStorage.setItem(SESSION_KEY, JSON.stringify({ ...current, fotosSalida: urls }));
-    } catch { /* noop */ }
-  }, []);
-
-  const setSelectedReservation = useCallback((r: PendingReservation | null) => {
-    setSelectedReservationRaw(r);
-  }, []);
-
-  const setSelectedExitReservation = useCallback((r: ExitEligibleReservation | null) => {
-    setSelectedExitReservationRaw(r);
-  }, []);
-  // ─────────────────────────────────────────────────────────────────────────
+  const [selectedClientId, setSelectedClientId] = useState<string | null>(null);
 
   const [modal, setModal] = useState<{
-    isOpen: boolean;
-    type: 'success' | 'warning' | 'error' | 'info';
-    title: string;
-    message: string;
-    showCancel: boolean;
-    onConfirm: () => void;
-    onCancel?: () => void;
-  }>({
-    isOpen: false,
-    type: 'success',
-    title: '',
-    message: '',
-    showCancel: false,
-    onConfirm: () => {},
-    onCancel: undefined
-  });
+    isOpen: boolean; type: 'success' | 'warning' | 'error' | 'info';
+    title: string; message: string; showCancel: boolean;
+    onConfirm: () => void; onCancel?: () => void;
+  }>({ isOpen: false, type: 'success', title: '', message: '', showCancel: false, onConfirm: () => {}, onCancel: undefined });
 
   const orgId = currentOrgId || user?.orgId || null;
   const canView = can('casetilla.view');
   const canCreate = can('casetilla.create') || can('casetilla.manage');
+  void canCreate;
 
   useEffect(() => {
-    if (viewMode === 'PENDIENTES' && orgId && canView) {
+    writeSession({ viewMode, fotosIngreso, fotosSalida, selectedReservation, selectedExitReservation });
+  }, [viewMode, fotosIngreso, fotosSalida, selectedReservation, selectedExitReservation]);
+
+  const setViewMode = useCallback((vm: ViewMode) => setViewModeRaw(vm), []);
+  const setFotosIngreso = useCallback((urls: string[]) => {
+    setFotosIngresoRaw(urls);
+    try { const c = readSession(); sessionStorage.setItem(SESSION_KEY, JSON.stringify({ ...c, fotosIngreso: urls })); } catch { /* noop */ }
+  }, []);
+  const setFotosSalida = useCallback((urls: string[]) => {
+    setFotosSalidaRaw(urls);
+    try { const c = readSession(); sessionStorage.setItem(SESSION_KEY, JSON.stringify({ ...c, fotosSalida: urls })); } catch { /* noop */ }
+  }, []);
+  const setSelectedReservation = useCallback((r: PendingReservation | null) => setSelectedReservationRaw(r), []);
+  const setSelectedExitReservation = useCallback((r: ExitEligibleReservation | null) => setSelectedExitReservationRaw(r), []);
+
+  // ── Cargar datos SOLO cuando scope esté resuelto ─────────────────────────
+  useEffect(() => {
+    if (viewMode === 'PENDIENTES' && orgId && canView && !scopeLoading && !activeWhLoading) {
       loadPendingReservations();
     }
-  }, [viewMode, orgId, canView]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [viewMode, orgId, canView, scopeLoading, activeWhLoading, selectedClientId, effectiveWarehouseIds]);
 
   useEffect(() => {
-    if (viewMode === 'SALIDA' && orgId && canView) {
+    if (viewMode === 'SALIDA' && orgId && canView && !scopeLoading && !activeWhLoading) {
       loadExitEligibleReservations();
     }
-  }, [viewMode, orgId, canView]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [viewMode, orgId, canView, scopeLoading, activeWhLoading, selectedClientId, effectiveWarehouseIds]);
 
   const loadPendingReservations = async () => {
     if (!orgId) return;
     setIsLoadingReservations(true);
     try {
-      const data = await casetillaService.getPendingReservations(orgId);
+      const data = await casetillaService.getPendingReservations(orgId, effectiveWarehouseIds, selectedClientId);
       setPendingReservations(data);
-    } catch {
-      showModal('error', 'Error', 'No se pudieron cargar las reservas pendientes');
-    } finally {
-      setIsLoadingReservations(false);
-    }
+    } catch { showModal('error', 'Error', 'No se pudieron cargar las reservas pendientes'); }
+    finally { setIsLoadingReservations(false); }
   };
 
   const loadExitEligibleReservations = async () => {
     if (!orgId) return;
     setIsLoadingExitReservations(true);
     try {
-      const data = await casetillaService.getExitEligibleReservations(orgId);
+      const data = await casetillaService.getExitEligibleReservations(orgId, effectiveWarehouseIds, selectedClientId);
       setExitEligibleReservations(data);
-    } catch {
-      showModal('error', 'Error', 'No se pudieron cargar las reservas elegibles para salida');
-    } finally {
-      setIsLoadingExitReservations(false);
-    }
+    } catch { showModal('error', 'Error', 'No se pudieron cargar las reservas elegibles para salida'); }
+    finally { setIsLoadingExitReservations(false); }
   };
 
   const handleOpenIngresoFromPending = (reservation: PendingReservation) => {
-    setFotosIngresoRaw([]);
-    setSelectedReservation(reservation);
-    setViewMode('INGRESO');
+    setFotosIngresoRaw([]); setSelectedReservation(reservation); setViewMode('INGRESO');
   };
-
   const handleOpenExitForm = (reservation: ExitEligibleReservation) => {
-    setFotosSalidaRaw([]);
-    setSelectedExitReservation(reservation);
-    setViewMode('SALIDA');
+    setFotosSalidaRaw([]); setSelectedExitReservation(reservation); setViewMode('SALIDA');
   };
 
   const handleSubmitIngreso = async (data: any) => {
@@ -215,23 +159,10 @@ export default function CasetillaPage() {
     setIsSubmitting(true);
     try {
       await casetillaService.createIngreso(orgId, user.id, { ...data, fotos: fotosIngreso });
-      setModal({
-        isOpen: true, type: 'success', title: 'Éxito', message: 'Ingreso registrado correctamente',
-        showCancel: false,
-        onConfirm: () => {
-          setModal(prev => ({ ...prev, isOpen: false }));
-          setSelectedReservation(null);
-          setFotosIngresoRaw([]);
-          clearSession();
-          setViewModeRaw('HOME');
-        },
-        onCancel: undefined
-      });
-    } catch (error: any) {
-      showModal('error', 'Error', error.message || 'No se pudo registrar el ingreso');
-    } finally {
-      setIsSubmitting(false);
-    }
+      setModal({ isOpen: true, type: 'success', title: 'Éxito', message: 'Ingreso registrado correctamente', showCancel: false,
+        onConfirm: () => { setModal(prev => ({ ...prev, isOpen: false })); setSelectedReservation(null); setFotosIngresoRaw([]); clearSession(); setViewModeRaw('HOME'); }, onCancel: undefined });
+    } catch (error: any) { showModal('error', 'Error', error.message || 'No se pudo registrar el ingreso'); }
+    finally { setIsSubmitting(false); }
   };
 
   const handleSubmitSalida = async () => {
@@ -239,37 +170,16 @@ export default function CasetillaPage() {
     setIsSubmitting(true);
     try {
       await casetillaService.createSalida(orgId, user.id, selectedExitReservation.id, fotosSalida);
-      setModal({
-        isOpen: true, type: 'success', title: 'Éxito', message: 'Salida registrada correctamente',
-        showCancel: false,
-        onConfirm: () => {
-          setModal(prev => ({ ...prev, isOpen: false }));
-          setSelectedExitReservation(null);
-          setFotosSalidaRaw([]);
-          clearSession();
-          setViewModeRaw('HOME');
-        },
-        onCancel: undefined
-      });
-    } catch (error: any) {
-      showModal('error', 'Error', error.message || 'No se pudo registrar la salida');
-    } finally {
-      setIsSubmitting(false);
-    }
+      setModal({ isOpen: true, type: 'success', title: 'Éxito', message: 'Salida registrada correctamente', showCancel: false,
+        onConfirm: () => { setModal(prev => ({ ...prev, isOpen: false })); setSelectedExitReservation(null); setFotosSalidaRaw([]); clearSession(); setViewModeRaw('HOME'); }, onCancel: undefined });
+    } catch (error: any) { showModal('error', 'Error', error.message || 'No se pudo registrar la salida'); }
+    finally { setIsSubmitting(false); }
   };
 
-  const showModal = (
-    type: 'success' | 'warning' | 'error' | 'info',
-    title: string,
-    message: string,
-    onConfirm?: () => void
-  ) => {
+  const showModal = (type: 'success' | 'warning' | 'error' | 'info', title: string, message: string, onConfirm?: () => void) => {
     const closeModal = () => setModal(prev => ({ ...prev, isOpen: false }));
     setModal({ isOpen: true, type, title, message, showCancel: false, onConfirm: onConfirm || closeModal, onCancel: undefined });
   };
-
-  // Suppress unused variable warning for canCreate
-  void canCreate;
 
   if (!canView) {
     return (
@@ -286,9 +196,52 @@ export default function CasetillaPage() {
   return (
     <div className="min-h-screen bg-gray-50 p-4 sm:p-6 lg:p-8">
       <div className="max-w-7xl mx-auto">
+        <WarehousePageHeader
+          title="Punto Control IN/OUT"
+          subtitle="Gestión de ingresos, salidas y reportes"
+          activeWarehouse={activeWarehouse}
+          allowedWarehouses={allowedWarehouses}
+          hasMultipleWarehouses={hasMultipleWarehouses}
+          onWarehouseChange={setActiveWarehouseId}
+          loading={activeWhLoading}
+        />
+
         <div className="mb-6 sm:mb-8">
-          <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">Punto Control IN/OUT</h1>
-          <p className="text-sm sm:text-base text-gray-600 mt-1">Gestión de ingresos, salidas y reportes</p>
+          <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4">
+            <div>
+              {hasMultipleWarehouses && (
+                <div className="mt-2">
+                  <WarehouseSelector variant="chips" />
+                </div>
+              )}
+            </div>
+            {scopeClients.length > 0 && (
+              <div className="flex items-center gap-2">
+                <label className="text-sm font-medium text-gray-700 whitespace-nowrap">
+                  <i className="ri-user-line mr-1"></i>Cliente:
+                </label>
+                <select
+                  value={selectedClientId ?? ''}
+                  onChange={(e) => { setSelectedClientId(e.target.value || null); setViewModeRaw('HOME'); }}
+                  className="text-sm border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-teal-500 focus:border-transparent bg-white cursor-pointer min-w-[180px]"
+                >
+                  <option value="">Todos los clientes</option>
+                  {scopeClients.map((c) => (<option key={c.id} value={c.id}>{c.name}</option>))}
+                </select>
+                {selectedClientId && (
+                  <button onClick={() => { setSelectedClientId(null); setViewModeRaw('HOME'); }} className="p-2 text-gray-400 hover:text-gray-600 cursor-pointer" title="Quitar filtro">
+                    <i className="ri-close-circle-line text-lg"></i>
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+          {selectedClientId && scopeClients.length > 0 && (
+            <div className="mt-2 inline-flex items-center gap-1.5 px-3 py-1 bg-teal-50 border border-teal-200 rounded-full text-xs text-teal-700 font-medium">
+              <i className="ri-filter-line"></i>
+              Filtrando por: {scopeClients.find(c => c.id === selectedClientId)?.name}
+            </div>
+          )}
         </div>
 
         {viewMode === 'HOME' && (
@@ -307,7 +260,6 @@ export default function CasetillaPage() {
                 </div>
               </div>
             </div>
-
             <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 hover:shadow-md transition-shadow">
               <div className="flex items-start gap-4">
                 <div className="flex-shrink-0 w-12 h-12 sm:w-14 sm:h-14 bg-emerald-100 rounded-lg flex items-center justify-center">
@@ -322,7 +274,6 @@ export default function CasetillaPage() {
                 </div>
               </div>
             </div>
-
             <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 hover:shadow-md transition-shadow">
               <div className="flex items-start gap-4">
                 <div className="flex-shrink-0 w-12 h-12 sm:w-14 sm:h-14 bg-blue-100 rounded-lg flex items-center justify-center">
@@ -344,25 +295,10 @@ export default function CasetillaPage() {
           <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-4 sm:p-6 lg:p-8">
             <IngresoForm
               orgId={orgId!}
-              initialData={{
-                chofer: selectedReservation?.chofer || '',
-                matricula: selectedReservation?.placa || '',
-                dua: selectedReservation?.dua || '',
-                factura: '',
-                orden_compra: selectedReservation?.orden_compra || '',
-                numero_pedido: selectedReservation?.numero_pedido || '',
-                reservation_id: selectedReservation?.id || undefined
-              }}
-              initialFotos={fotosIngreso}
-              onFotosChange={setFotosIngreso}
-              photoSessionKey={FOTOS_INGRESO_KEY}
+              initialData={{ chofer: selectedReservation?.chofer || '', matricula: selectedReservation?.placa || '', dua: selectedReservation?.dua || '', factura: '', orden_compra: selectedReservation?.orden_compra || '', numero_pedido: selectedReservation?.numero_pedido || '', reservation_id: selectedReservation?.id || undefined }}
+              initialFotos={fotosIngreso} onFotosChange={setFotosIngreso} photoSessionKey={FOTOS_INGRESO_KEY}
               onSubmit={handleSubmitIngreso}
-              onCancel={() => {
-                setSelectedReservation(null);
-                setFotosIngresoRaw([]);
-                clearSession();
-                setViewModeRaw('HOME');
-              }}
+              onCancel={() => { setSelectedReservation(null); setFotosIngresoRaw([]); clearSession(); setViewModeRaw('HOME'); }}
               isSubmitting={isSubmitting}
             />
           </div>
@@ -405,18 +341,10 @@ export default function CasetillaPage() {
         {viewMode === 'SALIDA' && selectedExitReservation && (
           <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-4 sm:p-6 lg:p-8">
             <ExitForm
-              orgId={orgId!}
-              reservation={selectedExitReservation}
-              initialFotos={fotosSalida}
-              onFotosChange={setFotosSalida}
-              photoSessionKey={FOTOS_SALIDA_KEY}
+              orgId={orgId!} reservation={selectedExitReservation}
+              initialFotos={fotosSalida} onFotosChange={setFotosSalida} photoSessionKey={FOTOS_SALIDA_KEY}
               onSubmit={handleSubmitSalida}
-              onCancel={() => {
-                setSelectedExitReservation(null);
-                setFotosSalidaRaw([]);
-                clearSession();
-                setViewModeRaw('SALIDA');
-              }}
+              onCancel={() => { setSelectedExitReservation(null); setFotosSalidaRaw([]); clearSession(); setViewModeRaw('SALIDA'); }}
               isSubmitting={isSubmitting}
             />
           </div>
@@ -435,20 +363,12 @@ export default function CasetillaPage() {
                 </button>
               </div>
             </div>
-            <DurationReportGrid orgId={orgId!} />
+            <DurationReportGrid orgId={orgId!} allowedWarehouseIds={effectiveWarehouseIds} clientId={selectedClientId} />
           </div>
         )}
       </div>
 
-      <ConfirmModal
-        isOpen={modal.isOpen}
-        type={modal.type}
-        title={modal.title}
-        message={modal.message}
-        showCancel={modal.showCancel}
-        onConfirm={modal.onConfirm}
-        onCancel={modal.onCancel}
-      />
+      <ConfirmModal isOpen={modal.isOpen} type={modal.type} title={modal.title} message={modal.message} showCancel={modal.showCancel} onConfirm={modal.onConfirm} onCancel={modal.onCancel} />
     </div>
   );
 }

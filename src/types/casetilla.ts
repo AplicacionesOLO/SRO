@@ -49,6 +49,11 @@ export interface ExitEligibleReservation {
   almacen?: string | null;
   orden_compra?: string | null;
   fecha_ingreso?: string | null;
+  warehouse_id?: string | null;
+  warehouse_timezone?: string;
+  provider_id?: string | null;
+  provider_name?: string | null;
+  warehouse_name?: string | null;
 }
 
 // Fila del reporte de duración

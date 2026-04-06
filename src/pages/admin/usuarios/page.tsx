@@ -2,12 +2,14 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { supabase } from '../../../lib/supabase';
 import { usePermissions } from '../../../hooks/usePermissions';
+import { useActiveWarehouse } from '../../../contexts/ActiveWarehouseContext';
 import { countriesService } from '../../../services/countriesService';
 import { warehousesService } from '../../../services/warehousesService';
 import { userAccessService } from '../../../services/userAccessService';
 import { providersService } from '../../../services/providersService';
 import { userProvidersService } from '../../../services/userProvidersService';
 import { ConfirmModal } from '../../../components/base/ConfirmModal';
+import WarehousePageHeader from '../../../components/feature/WarehousePageHeader';
 import type { Provider } from '../../../types/catalog';
 
 interface User {
@@ -40,8 +42,18 @@ interface Warehouse {
 
 export default function UsuariosPage() {
   const { can, loading: permissionsLoading, orgId, userId, permissionsSet } = usePermissions();
+  const {
+    activeWarehouseId,
+    activeWarehouse,
+    allowedWarehouses,
+    hasMultipleWarehouses,
+    setActiveWarehouseId,
+    loading: warehouseLoading,
+  } = useActiveWarehouse();
 
   const [users, setUsers] = useState<User[]>([]);
+  const [allUsers, setAllUsers] = useState<User[]>([]);
+  const [warehouseUserIds, setWarehouseUserIds] = useState<Set<string> | null>(null);
   const [roles, setRoles] = useState<Role[]>([]);
   const [countries, setCountries] = useState<Country[]>([]);
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
@@ -141,54 +153,33 @@ export default function UsuariosPage() {
   }, []);
 
   const loadUsers = useCallback(async () => {
-    if (loadUsersRunningRef.current) {
-      return;
-    }
-
-    if (!orgId) {
-      return;
-    }
-
+    if (loadUsersRunningRef.current) return;
+    if (!orgId) return;
     loadUsersRunningRef.current = true;
-
     try {
       setLoading(true);
       setLoadError(null);
-
       await ensureSession();
-
       const { data, error } = await supabase.functions.invoke('admin-users', {
         body: { action: 'list', orgId, debug: true },
       });
-
       if (error) {
         const msg = (error as any)?.message ?? '';
-        const is401 =
-          msg.includes('401') ||
-          msg.toLowerCase().includes('unauthorized') ||
-          msg.toLowerCase().includes('jwt') ||
-          msg.toLowerCase().includes('api key');
-
+        const is401 = msg.includes('401') || msg.toLowerCase().includes('unauthorized') || msg.toLowerCase().includes('jwt') || msg.toLowerCase().includes('api key');
         if (is401 && !loadUsers401RetryRef.current) {
           loadUsers401RetryRef.current = true;
-
           await supabase.auth.refreshSession();
           await ensureSession();
-
-          const retry = await supabase.functions.invoke('admin-users', {
-            body: { action: 'list', orgId, debug: true },
-          });
-
+          const retry = await supabase.functions.invoke('admin-users', { body: { action: 'list', orgId, debug: true } });
           if (retry.error) throw retry.error;
-
-          setUsers((retry.data as any)?.users || []);
+          const fetched = (retry.data as any)?.users || [];
+          setAllUsers(fetched);
           return;
         }
-
         throw error;
       }
-
-      setUsers((data as any)?.users || []);
+      const fetched = (data as any)?.users || [];
+      setAllUsers(fetched);
     } catch (err: any) {
       setLoadError('Error al cargar usuarios');
     } finally {
@@ -196,6 +187,53 @@ export default function UsuariosPage() {
       loadUsersRunningRef.current = false;
     }
   }, [orgId, ensureSession]);
+
+  // Cargar IDs de usuarios del almacén activo
+  const loadWarehouseUsers = useCallback(async () => {
+    if (!orgId || !activeWarehouseId) {
+      setWarehouseUserIds(null);
+      return;
+    }
+    try {
+      const { data, error } = await supabase
+        .from('user_warehouse_access')
+        .select('user_id')
+        .eq('org_id', orgId)
+        .eq('warehouse_id', activeWarehouseId);
+
+      if (error) {
+        setWarehouseUserIds(null);
+        return;
+      }
+
+      const ids = (data || []).map((r: any) => r.user_id as string);
+      setWarehouseUserIds(new Set(ids));
+    } catch {
+      setWarehouseUserIds(null);
+    }
+  }, [orgId, activeWarehouseId]);
+
+  // Filtrar usuarios según almacén activo — HARDENING ESTRICTO:
+  // Nunca mostrar todos por fallback cuando hay almacén activo
+  useEffect(() => {
+    if (!activeWarehouseId) {
+      if (hasMultipleWarehouses) {
+        setUsers([]);
+      } else {
+        setUsers(allUsers);
+      }
+    } else if (warehouseUserIds === null) {
+      setUsers([]);
+    } else {
+      // user_warehouse_access.user_id == profiles.id == auth.users.id (mismo UUID)
+      const filtered = allUsers.filter(u => warehouseUserIds.has(u.id));
+      setUsers(filtered);
+    }
+  }, [allUsers, activeWarehouseId, warehouseUserIds, hasMultipleWarehouses]);
+
+  useEffect(() => {
+    loadWarehouseUsers();
+  }, [loadWarehouseUsers]);
 
   const loadRoles = useCallback(async () => {
     try {
@@ -477,17 +515,26 @@ export default function UsuariosPage() {
             });
           }
 
-          // Guardar almacenes si hay restricción activa
+          // Guardar almacenes:
+          // - Si hay restricción activa y almacenes seleccionados → guardar esos almacenes
+          // - Si hay almacén activo pero no hay restricción explícita → asignar el almacén activo de todas formas
+          // - Si no hay restricción ni almacén activo → guardar sin restricción
           if (restrictedByWarehouse && selectedWarehouseIds.length > 0) {
-            // console.log('[UsersPage] 🏢 Asignando almacenes al nuevo usuario...');
             await userAccessService.setWarehouses({
               orgId,
               targetUserId: createdUserId,
               restricted: true,
               warehouseIds: selectedWarehouseIds,
             });
-          } else if (!restrictedByWarehouse) {
-            // Asegurar que no hay restricción
+          } else if (!restrictedByWarehouse && activeWarehouseId) {
+            // Sin restricción explícita pero hay almacén activo → asignar igualmente
+            await userAccessService.setWarehouses({
+              orgId,
+              targetUserId: createdUserId,
+              restricted: true,
+              warehouseIds: [activeWarehouseId],
+            });
+          } else {
             await userAccessService.setWarehouses({
               orgId,
               targetUserId: createdUserId,
@@ -659,21 +706,25 @@ export default function UsuariosPage() {
     try {
       await ensureSession();
 
-      // console.log('[UsersPage] sending set_warehouses', {
-      //   orgId,
-      //   targetUserId: editingUser.id,
-      //   restricted: restrictedByWarehouse,
-      //   warehouseIds: restrictedByWarehouse ? selectedWarehouseIds : [],
-      // });
+      // INTERSECCIÓN: solo guardar warehouses que pertenezcan a los países seleccionados
+      // Esto evita guardar OLO (Costa Rica) si el usuario solo tiene Venezuela asignado
+      const validWarehouseIds = restrictedByWarehouse
+        ? selectedWarehouseIds.filter(wid => {
+            const wh = warehouses.find(w => w.id === wid);
+            return wh && selectedCountryIds.includes(wh.country_id);
+          })
+        : [];
 
       await userAccessService.setWarehouses({
         orgId,
         targetUserId: editingUser.id,
         restricted: restrictedByWarehouse,
-        warehouseIds: restrictedByWarehouse ? selectedWarehouseIds : []
+        warehouseIds: validWarehouseIds,
       });
 
-      // ✅ Popup de éxito
+      // Refrescar la lista de IDs del almacén activo para que la tabla se actualice
+      await loadWarehouseUsers();
+
       setPopup({
         isOpen: true,
         type: 'success',
@@ -682,7 +733,6 @@ export default function UsuariosPage() {
         showCancel: false,
         onConfirm: () => setPopup(prev => ({ ...prev, isOpen: false }))
       });
-      // console.log('[UsersPage] ✅ Warehouses saved successfully');
     } catch (error: any) {
       setAccessError(error?.message || 'Error al guardar almacenes');
     } finally {
@@ -796,7 +846,7 @@ export default function UsuariosPage() {
 
   return (
     <div className="p-6">
-      {/* ✅ Popup general para mensajes */}
+      {/* Popups */}
       <ConfirmModal
         isOpen={popup.isOpen}
         type={popup.type}
@@ -806,8 +856,6 @@ export default function UsuariosPage() {
         onConfirm={popup.onConfirm || (() => setPopup(prev => ({ ...prev, isOpen: false })))}
         onCancel={() => setPopup(prev => ({ ...prev, isOpen: false }))}
       />
-
-      {/* ✅ Popup de confirmación de eliminación */}
       <ConfirmModal
         isOpen={deleteConfirm.isOpen}
         type="warning"
@@ -820,19 +868,59 @@ export default function UsuariosPage() {
         onCancel={() => setDeleteConfirm({ isOpen: false, userId: '', userName: '' })}
       />
 
+      {/* Header con almacén activo */}
+      <WarehousePageHeader
+        title="Gestión de Usuarios"
+        subtitle="Administra los usuarios del sistema"
+        activeWarehouse={activeWarehouse}
+        allowedWarehouses={allowedWarehouses}
+        hasMultipleWarehouses={hasMultipleWarehouses}
+        onWarehouseChange={setActiveWarehouseId}
+        loading={warehouseLoading}
+      />
+
+      {/* Botón nuevo usuario */}
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Gestión de Usuarios</h1>
-          <p className="text-sm text-gray-600 mt-1">Administra los usuarios del sistema</p>
+          {activeWarehouseId && activeWarehouse ? (
+            <div className="flex items-center gap-2">
+              <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-teal-50 border border-teal-200 rounded-full text-xs font-medium text-teal-700">
+                <i className="ri-store-2-line text-xs w-3 h-3 flex items-center justify-center"></i>
+                {users.length} usuario(s) en {activeWarehouse.name}
+              </span>
+            </div>
+          ) : (
+            <span className="text-sm text-gray-500">{allUsers.length} usuario(s) en total</span>
+          )}
         </div>
         {canCreate && (
           <button
             onClick={() => {
               setEditingUser(null);
               setFormData({ email: '', full_name: '', role_id: '', password: '', phone_e164: '' });
-              setSelectedCountryIds([]);
-              setRestrictedByWarehouse(false);
-              setSelectedWarehouseIds([]);
+              setSelectedProviderIds([]);
+              setProviderSearchTerm('');
+              setNewlyCreatedUserId(null);
+              setAccessError(null);
+
+              // Pre-cargar almacén activo si existe
+              if (activeWarehouseId) {
+                // Activar restricción por almacén y pre-seleccionar el almacén activo
+                setRestrictedByWarehouse(true);
+                setSelectedWarehouseIds([activeWarehouseId]);
+                // Pre-seleccionar el país del almacén activo
+                const activeWh = warehouses.find(w => w.id === activeWarehouseId);
+                if (activeWh?.country_id) {
+                  setSelectedCountryIds([activeWh.country_id]);
+                } else {
+                  setSelectedCountryIds([]);
+                }
+              } else {
+                setSelectedCountryIds([]);
+                setRestrictedByWarehouse(false);
+                setSelectedWarehouseIds([]);
+              }
+
               setShowModal(true);
             }}
             className="flex items-center gap-2 px-4 py-2 bg-teal-600 text-white rounded-lg hover:bg-teal-700 transition-colors whitespace-nowrap"
@@ -933,18 +1021,55 @@ export default function UsuariosPage() {
           </table>
         </div>
 
-        {users.length === 0 && !loadError && (
+        {/* Empty state: múltiples almacenes sin selección */}
+        {users.length === 0 && !loadError && !activeWarehouseId && hasMultipleWarehouses && (
+          <div className="text-center py-16">
+            <div className="w-14 h-14 flex items-center justify-center rounded-full bg-amber-50 mx-auto mb-4">
+              <i className="ri-store-2-line text-3xl text-amber-500"></i>
+            </div>
+            <p className="text-gray-700 font-medium mb-1">Seleccioná un almacén</p>
+            <p className="text-sm text-gray-500">Para ver los usuarios, seleccioná un almacén activo en el selector de arriba.</p>
+          </div>
+        )}
+
+        {/* Empty state: almacén activo pero sin usuarios asignados */}
+        {users.length === 0 && !loadError && activeWarehouseId && warehouseUserIds !== null && (
+          <div className="text-center py-12">
+            <div className="w-12 h-12 flex items-center justify-center rounded-full bg-gray-50 mx-auto mb-3">
+              <i className="ri-user-line text-2xl text-gray-300"></i>
+            </div>
+            <p className="text-gray-600 font-medium">No hay usuarios en {activeWarehouse?.name}</p>
+            <p className="text-sm text-gray-400 mt-1">
+              Creá un usuario nuevo o asignale acceso a este almacén desde el modal de edición.
+            </p>
+          </div>
+        )}
+
+        {/* Empty state: error al cargar IDs del almacén */}
+        {users.length === 0 && !loadError && activeWarehouseId && warehouseUserIds === null && (
+          <div className="text-center py-12">
+            <div className="w-12 h-12 flex items-center justify-center rounded-full bg-amber-50 mx-auto mb-3">
+              <i className="ri-error-warning-line text-2xl text-amber-400"></i>
+            </div>
+            <p className="text-gray-600 font-medium">No se pudo verificar el acceso al almacén</p>
+            <p className="text-sm text-gray-400 mt-1">Intentá recargar la página.</p>
+          </div>
+        )}
+
+        {/* Empty state: sin almacén activo, 1 solo almacén, sin usuarios */}
+        {users.length === 0 && !loadError && !activeWarehouseId && !hasMultipleWarehouses && (
           <div className="text-center py-12">
             <i className="ri-user-line text-4xl text-gray-300 mb-3"></i>
             <p className="text-gray-500">No hay usuarios registrados</p>
           </div>
         )}
 
+        {/* Error de carga general */}
         {users.length === 0 && loadError && (
           <div className="text-center py-12">
             <i className="ri-error-warning-line text-4xl text-yellow-400 mb-3"></i>
             <p className="text-gray-500">No se pudieron cargar los usuarios</p>
-            <p className="text-sm text-gray-400 mt-1">Pero puedes crear nuevos usuarios usando el botón de arriba</p>
+            <p className="text-sm text-gray-400 mt-1">Podés crear nuevos usuarios usando el botón de arriba</p>
           </div>
         )}
       </div>
@@ -953,9 +1078,17 @@ export default function UsuariosPage() {
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between p-6 border-b border-gray-200 sticky top-0 bg-white z-10">
-              <h2 className="text-xl font-bold text-gray-900">
-                {editingUser ? 'Editar Usuario' : 'Nuevo Usuario'}
-              </h2>
+              <div>
+                <h2 className="text-xl font-bold text-gray-900">
+                  {editingUser ? 'Editar Usuario' : 'Nuevo Usuario'}
+                </h2>
+                {!editingUser && activeWarehouseId && activeWarehouse && (
+                  <span className="inline-flex items-center gap-1.5 mt-1 px-2.5 py-0.5 bg-teal-50 border border-teal-200 rounded-full text-xs font-medium text-teal-700">
+                    <i className="ri-store-2-line text-xs w-3 h-3 flex items-center justify-center"></i>
+                    Se asignará a {activeWarehouse.name}
+                  </span>
+                )}
+              </div>
               <button
                 onClick={() => setShowModal(false)}
                 className="w-8 h-8 flex items-center justify-center text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100 transition-colors"

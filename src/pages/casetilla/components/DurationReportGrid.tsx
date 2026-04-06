@@ -1,6 +1,29 @@
 import { useState, useMemo, useEffect, useCallback } from 'react';
 import { casetillaService } from '../../../services/casetillaService';
 import PhotoViewer from '../../../components/base/PhotoViewer';
+import { formatInWarehouseTimezone } from '../../../utils/timezoneUtils';
+
+/**
+ * Calcula el offset UTC dinámico de un timezone IANA en el instante actual.
+ * Ej: 'America/Caracas' → 'UTC-4', 'America/Costa_Rica' → 'UTC-6'
+ */
+function getUtcOffsetLabel(timezone: string): string {
+  try {
+    const now = new Date();
+    const utcMs = now.getTime();
+    const localMs = new Date(
+      now.toLocaleString('en-US', { timeZone: timezone })
+    ).getTime();
+    const offsetMinutes = Math.round((localMs - utcMs) / 60000);
+    const sign = offsetMinutes >= 0 ? '+' : '-';
+    const absMin = Math.abs(offsetMinutes);
+    const h = Math.floor(absMin / 60);
+    const m = absMin % 60;
+    return m === 0 ? `UTC${sign}${h}` : `UTC${sign}${h}:${String(m).padStart(2, '0')}`;
+  } catch {
+    return 'UTC';
+  }
+}
 
 interface DurationReportRow {
   reservation_id: string;
@@ -13,10 +36,13 @@ interface DurationReportRow {
   duracion_formato: string;
   fotos_ingreso?: string[] | null;
   fotos_salida?: string[] | null;
+  warehouse_timezone?: string;
 }
 
 interface DurationReportGridProps {
   orgId: string;
+  allowedWarehouseIds?: string[] | null;
+  clientId?: string | null;
 }
 
 type PageSize = 10 | 30 | 50 | 100 | 'all';
@@ -122,7 +148,7 @@ function PhotoBadge({
   );
 }
 
-export default function DurationReportGrid({ orgId }: DurationReportGridProps) {
+export default function DurationReportGrid({ orgId, allowedWarehouseIds, clientId }: DurationReportGridProps) {
   const [data, setData] = useState<DurationReportRow[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
@@ -148,12 +174,12 @@ export default function DurationReportGrid({ orgId }: DurationReportGridProps) {
 
   useEffect(() => {
     loadDurationReport();
-  }, [orgId]);
+  }, [orgId, allowedWarehouseIds, clientId]);
 
   const loadDurationReport = async () => {
     setIsLoading(true);
     try {
-      const report = await casetillaService.getDurationReport(orgId);
+      const report = await casetillaService.getDurationReport(orgId, undefined, allowedWarehouseIds, clientId);
       setData(report);
     } catch {
       setData([]);
@@ -209,6 +235,22 @@ export default function DurationReportGrid({ orgId }: DurationReportGridProps) {
     return Math.ceil(filteredData.length / pageSize);
   }, [filteredData.length, pageSize]);
 
+  /**
+   * Detecta el/los timezone(s) presentes en los datos filtrados.
+   * Si todos son iguales → muestra uno solo con su offset.
+   * Si hay mezcla → muestra "Múltiples zonas horarias".
+   */
+  const timezoneLabel = useMemo(() => {
+    if (filteredData.length === 0) return null;
+    const tzSet = new Set(filteredData.map((r) => r.warehouse_timezone || 'America/Costa_Rica'));
+    if (tzSet.size === 1) {
+      const tz = [...tzSet][0];
+      const offset = getUtcOffsetLabel(tz);
+      return `${tz} (${offset})`;
+    }
+    return 'Múltiples zonas horarias';
+  }, [filteredData]);
+
   const summary = useMemo(() => {
     if (filteredData.length === 0) {
       return { total: 0, promedioFormato: '00:00', maximoFormato: '00:00', minimoFormato: '00:00', promedio: 0, maximo: 0, minimo: 0 };
@@ -230,10 +272,21 @@ export default function DurationReportGrid({ orgId }: DurationReportGridProps) {
     return { total, promedio, maximo, minimo, promedioFormato: fmt(promedio), maximoFormato: fmt(maximo), minimoFormato: fmt(minimo) };
   }, [filteredData]);
 
-  const formatDateTime = (isoString: string) =>
-    new Date(isoString).toLocaleString('es-ES', {
-      day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit',
+  /**
+   * Formatea un timestamp UTC en la zona horaria del almacén asociado a la fila.
+   * Si no viene warehouse_timezone, usa America/Costa_Rica como fallback.
+   */
+  const formatDateTime = (isoString: string, timezone?: string) => {
+    const tz = timezone || 'America/Costa_Rica';
+    return formatInWarehouseTimezone(new Date(isoString), tz, {
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
     });
+  };
 
   const handleClearFilters = () => { setSearchTerm(''); setDateFrom(''); setDateTo(''); setCurrentPage(1); };
   const handlePageSizeChange = (newSize: PageSize) => { setPageSize(newSize); setCurrentPage(1); };
@@ -342,7 +395,7 @@ export default function DurationReportGrid({ orgId }: DurationReportGridProps) {
             </div>
           </div>
 
-          <div className="flex flex-wrap gap-2 mt-4">
+          <div className="flex flex-wrap items-center gap-2 mt-4">
             <button
               onClick={handleClearFilters}
               className="inline-flex items-center gap-2 px-4 py-2 text-sm bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors whitespace-nowrap cursor-pointer"
@@ -351,12 +404,18 @@ export default function DurationReportGrid({ orgId }: DurationReportGridProps) {
               Limpiar Filtros
             </button>
             <button
-              onClick={loadDurationReport}
+              onClick={() => loadDurationReport()}
               className="inline-flex items-center gap-2 px-4 py-2 text-sm bg-teal-600 text-white rounded-lg hover:bg-teal-700 transition-colors whitespace-nowrap cursor-pointer"
             >
               <i className="ri-refresh-line"></i>
               Actualizar
             </button>
+            {timezoneLabel && (
+              <span className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-gray-50 border border-gray-200 rounded-lg text-xs text-gray-500 whitespace-nowrap">
+                <i className="ri-time-zone-line text-gray-400"></i>
+                Timezone: <span className="font-medium text-gray-700">{timezoneLabel}</span>
+              </span>
+            )}
           </div>
         </div>
 
@@ -379,6 +438,14 @@ export default function DurationReportGrid({ orgId }: DurationReportGridProps) {
           <>
             {/* Vista Desktop - Tabla */}
             <div className="hidden lg:block bg-white rounded-lg border border-gray-200 overflow-hidden">
+              {timezoneLabel && (
+                <div className="px-4 py-2 bg-gray-50 border-b border-gray-100 flex items-center gap-1.5">
+                  <i className="ri-time-zone-line text-gray-400 text-xs"></i>
+                  <span className="text-xs text-gray-500">
+                    Horas mostradas en: <span className="font-medium text-gray-700">{timezoneLabel}</span>
+                  </span>
+                </div>
+              )}
               <div className="overflow-x-auto">
                 <table className="w-full">
                   <thead className="bg-gray-50 border-b border-gray-200">
@@ -401,8 +468,8 @@ export default function DurationReportGrid({ orgId }: DurationReportGridProps) {
                           <td className="px-4 py-3 text-sm text-gray-900">{row.chofer}</td>
                           <td className="px-4 py-3 text-sm font-medium text-gray-900">{row.matricula}</td>
                           <td className="px-4 py-3 text-sm text-gray-600">{row.dua || '-'}</td>
-                          <td className="px-4 py-3 text-sm text-gray-600">{formatDateTime(row.ingreso_at)}</td>
-                          <td className="px-4 py-3 text-sm text-gray-600">{formatDateTime(row.salida_at)}</td>
+                          <td className="px-4 py-3 text-sm text-gray-600">{formatDateTime(row.ingreso_at, row.warehouse_timezone)}</td>
+                          <td className="px-4 py-3 text-sm text-gray-600">{formatDateTime(row.salida_at, row.warehouse_timezone)}</td>
                           <td className="px-4 py-3">
                             <div className="flex flex-col">
                               <span className="text-sm font-semibold text-teal-700">{row.duracion_formato}</span>
@@ -441,6 +508,14 @@ export default function DurationReportGrid({ orgId }: DurationReportGridProps) {
 
             {/* Vista Mobile - Cards */}
             <div className="lg:hidden space-y-4">
+              {timezoneLabel && (
+                <div className="flex items-center gap-1.5 px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg">
+                  <i className="ri-time-zone-line text-gray-400 text-xs"></i>
+                  <span className="text-xs text-gray-500">
+                    Horas en: <span className="font-medium text-gray-700">{timezoneLabel}</span>
+                  </span>
+                </div>
+              )}
               {paginatedData.map((row) => (
                 <div
                   key={row.reservation_id}
@@ -475,14 +550,14 @@ export default function DurationReportGrid({ orgId }: DurationReportGridProps) {
                       <i className="ri-login-box-line text-teal-600 mt-0.5"></i>
                       <div className="flex-1">
                         <span className="text-gray-500">Ingreso:</span>
-                        <span className="ml-2 text-gray-900">{formatDateTime(row.ingreso_at)}</span>
+                        <span className="ml-2 text-gray-900">{formatDateTime(row.ingreso_at, row.warehouse_timezone)}</span>
                       </div>
                     </div>
                     <div className="flex items-start gap-2">
                       <i className="ri-logout-box-line text-emerald-600 mt-0.5"></i>
                       <div className="flex-1">
                         <span className="text-gray-500">Salida:</span>
-                        <span className="ml-2 text-gray-900">{formatDateTime(row.salida_at)}</span>
+                        <span className="ml-2 text-gray-900">{formatDateTime(row.salida_at, row.warehouse_timezone)}</span>
                       </div>
                     </div>
                   </div>

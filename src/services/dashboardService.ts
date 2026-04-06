@@ -33,7 +33,7 @@ export interface DashboardStats {
 }
 
 export const dashboardService = {
-  async getStats(orgId: string): Promise<DashboardStats> {
+  async getStats(orgId: string, warehouseId?: string | null): Promise<DashboardStats> {
     const now = new Date();
     const todayStart = startOfDay(now);
     const todayEnd = endOfDay(now);
@@ -58,15 +58,34 @@ export const dashboardService = {
     const trendStart = startOfDay(subDays(now, 6));
     const trendEnd = endOfDay(now);
 
-    // ── Query 1: TODAS las reservas activas de la org (para distribución por estado) ──
-    const { data: allOrgReservations } = await supabase
+    // ── Query 1: Reservas activas de la org (para distribución por estado) ──
+    // Si hay warehouseId, filtrar por docks de ese almacén
+    let allOrgQuery = supabase
       .from('reservations')
-      .select('id, status_id')
+      .select('id, status_id, dock_id')
       .eq('org_id', orgId)
       .eq('is_cancelled', false);
 
+    if (warehouseId) {
+      // Obtener docks del almacén
+      const { data: whDocks } = await supabase
+        .from('docks')
+        .select('id')
+        .eq('org_id', orgId)
+        .eq('warehouse_id', warehouseId);
+      const dockIds = (whDocks ?? []).map((d: any) => d.id);
+      if (dockIds.length > 0) {
+        allOrgQuery = allOrgQuery.in('dock_id', dockIds);
+      } else {
+        // Almacén sin docks → sin reservas
+        allOrgQuery = allOrgQuery.in('dock_id', ['__NO_DOCKS__']);
+      }
+    }
+
+    const { data: allOrgReservations } = await allOrgQuery;
+
     // ── Query 2: Reservas del mes actual (para KPIs y análisis temporales) ──
-    const { data: monthReservations } = await supabase
+    let monthQuery = supabase
       .from('reservations')
       .select('id, start_datetime, status_id, dock_id, shipper_provider')
       .eq('org_id', orgId)
@@ -74,50 +93,146 @@ export const dashboardService = {
       .gte('start_datetime', thisMonthStart.toISOString())
       .lte('start_datetime', thisMonthEnd.toISOString());
 
-    // ── Query 3: Reservas semana actual (query independiente, no filtrada por mes) ──
-    const { data: weekReservationsRaw } = await supabase
+    if (warehouseId) {
+      const { data: whDocks } = await supabase
+        .from('docks')
+        .select('id')
+        .eq('org_id', orgId)
+        .eq('warehouse_id', warehouseId);
+      const dockIds = (whDocks ?? []).map((d: any) => d.id);
+      if (dockIds.length > 0) {
+        monthQuery = monthQuery.in('dock_id', dockIds);
+      } else {
+        monthQuery = monthQuery.in('dock_id', ['__NO_DOCKS__']);
+      }
+    }
+
+    const { data: monthReservations } = await monthQuery;
+
+    // ── Query 3: Reservas semana actual ──
+    let weekQuery = supabase
       .from('reservations')
-      .select('id')
+      .select('id, dock_id')
       .eq('org_id', orgId)
       .eq('is_cancelled', false)
       .gte('start_datetime', thisWeekStart.toISOString())
       .lte('start_datetime', thisWeekEnd.toISOString());
 
-    // ── Query 4: Reservas de hoy (query independiente) ────────────────────────
-    const { data: todayReservationsRaw } = await supabase
+    if (warehouseId) {
+      const { data: whDocks } = await supabase
+        .from('docks')
+        .select('id')
+        .eq('org_id', orgId)
+        .eq('warehouse_id', warehouseId);
+      const dockIds = (whDocks ?? []).map((d: any) => d.id);
+      if (dockIds.length > 0) {
+        weekQuery = weekQuery.in('dock_id', dockIds);
+      } else {
+        weekQuery = weekQuery.in('dock_id', ['__NO_DOCKS__']);
+      }
+    }
+
+    const { data: weekReservationsRaw } = await weekQuery;
+
+    // ── Query 4: Reservas de hoy ────────────────────────────────────────────
+    let todayQuery = supabase
       .from('reservations')
-      .select('id')
+      .select('id, dock_id')
       .eq('org_id', orgId)
       .eq('is_cancelled', false)
       .gte('start_datetime', todayStart.toISOString())
       .lte('start_datetime', todayEnd.toISOString());
 
+    if (warehouseId) {
+      const { data: whDocks } = await supabase
+        .from('docks')
+        .select('id')
+        .eq('org_id', orgId)
+        .eq('warehouse_id', warehouseId);
+      const dockIds = (whDocks ?? []).map((d: any) => d.id);
+      if (dockIds.length > 0) {
+        todayQuery = todayQuery.in('dock_id', dockIds);
+      } else {
+        todayQuery = todayQuery.in('dock_id', ['__NO_DOCKS__']);
+      }
+    }
+
+    const { data: todayReservationsRaw } = await todayQuery;
+
     // ── Query 5: Tendencia últimos 7 días (query independiente) ───────────────
-    const { data: trendReservations } = await supabase
+    let trendQuery = supabase
       .from('reservations')
-      .select('id, start_datetime')
+      .select('id, start_datetime, dock_id')
       .eq('org_id', orgId)
       .eq('is_cancelled', false)
       .gte('start_datetime', trendStart.toISOString())
       .lte('start_datetime', trendEnd.toISOString());
 
+    if (warehouseId) {
+      const { data: whDocks } = await supabase
+        .from('docks')
+        .select('id')
+        .eq('org_id', orgId)
+        .eq('warehouse_id', warehouseId);
+      const dockIds = (whDocks ?? []).map((d: any) => d.id);
+      if (dockIds.length > 0) {
+        trendQuery = trendQuery.in('dock_id', dockIds);
+      } else {
+        trendQuery = trendQuery.in('dock_id', ['__NO_DOCKS__']);
+      }
+    }
+
+    const { data: trendReservations } = await trendQuery;
+
     // ── Query 6: Mes pasado ───────────────────────────────────────────────────
-    const { data: lastMonthReservations } = await supabase
+    let lastMonthQuery = supabase
       .from('reservations')
-      .select('id')
+      .select('id, dock_id')
       .eq('org_id', orgId)
       .eq('is_cancelled', false)
       .gte('start_datetime', lastMonthStart.toISOString())
       .lte('start_datetime', lastMonthEnd.toISOString());
 
+    if (warehouseId) {
+      const { data: whDocks } = await supabase
+        .from('docks')
+        .select('id')
+        .eq('org_id', orgId)
+        .eq('warehouse_id', warehouseId);
+      const dockIds = (whDocks ?? []).map((d: any) => d.id);
+      if (dockIds.length > 0) {
+        lastMonthQuery = lastMonthQuery.in('dock_id', dockIds);
+      } else {
+        lastMonthQuery = lastMonthQuery.in('dock_id', ['__NO_DOCKS__']);
+      }
+    }
+
+    const { data: lastMonthReservations } = await lastMonthQuery;
+
     // ── Query 7: Semana pasada ────────────────────────────────────────────────
-    const { data: lastWeekReservations } = await supabase
+    let lastWeekQuery = supabase
       .from('reservations')
-      .select('id')
+      .select('id, dock_id')
       .eq('org_id', orgId)
       .eq('is_cancelled', false)
       .gte('start_datetime', lastWeekStart.toISOString())
       .lte('start_datetime', lastWeekEnd.toISOString());
+
+    if (warehouseId) {
+      const { data: whDocks } = await supabase
+        .from('docks')
+        .select('id')
+        .eq('org_id', orgId)
+        .eq('warehouse_id', warehouseId);
+      const dockIds = (whDocks ?? []).map((d: any) => d.id);
+      if (dockIds.length > 0) {
+        lastWeekQuery = lastWeekQuery.in('dock_id', dockIds);
+      } else {
+        lastWeekQuery = lastWeekQuery.in('dock_id', ['__NO_DOCKS__']);
+      }
+    }
+
+    const { data: lastWeekReservations } = await lastWeekQuery;
 
     // ── Catálogos ─────────────────────────────────────────────────────────────
     // ✅ FIX: Traer solo estados activos, ordenados por order_index
@@ -129,21 +244,36 @@ export const dashboardService = {
       .order('order_index', { ascending: true, nullsLast: true })
       .order('name', { ascending: true });
 
-    const { data: docks } = await supabase
+    // ── Catálogos ─────────────────────────────────────────────────────────────
+    let docksQuery = supabase
       .from('docks')
       .select('id, name, is_active, warehouse_id')
       .eq('org_id', orgId);
 
-    const { data: warehouses } = await supabase
+    if (warehouseId) {
+      docksQuery = docksQuery.eq('warehouse_id', warehouseId);
+    }
+    const { data: docks } = await docksQuery;
+
+    let warehousesQuery = supabase
       .from('warehouses')
       .select('id, name')
       .eq('org_id', orgId);
+    if (warehouseId) {
+      warehousesQuery = warehousesQuery.eq('id', warehouseId);
+    }
+    const { data: warehouses } = await warehousesQuery;
 
-    const { data: collaborators } = await supabase
+    let collaboratorsQuery = supabase
       .from('collaborators')
-      .select('id')
+      .select('id, warehouse_id')
       .eq('org_id', orgId)
       .eq('is_active', true);
+    if (warehouseId) {
+      // Filtrar colaboradores del almacén (si hay relación warehouse_id)
+      collaboratorsQuery = collaboratorsQuery.eq('warehouse_id', warehouseId);
+    }
+    const { data: collaborators } = await collaboratorsQuery;
 
     const { data: providers } = await supabase
       .from('providers')

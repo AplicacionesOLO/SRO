@@ -7,6 +7,7 @@ import { userProvidersService } from '../../../services/userProvidersService';
 import { timeProfilesService } from '../../../services/timeProfilesService';
 import { dockAllocationService } from '../../../services/dockAllocationService';
 import { useAuth } from '../../../contexts/AuthContext';
+import SearchSelect from '../../../components/base/SearchSelect';
 
 interface PreReservationMiniModalProps {
   isOpen: boolean;
@@ -413,21 +414,15 @@ export default function PreReservationMiniModal({
                   </div>
                 )}
 
-                <select
+                <SearchSelect
+                  options={providers.map(p => ({ id: p.id, label: p.name }))}
                   value={selectedProviderId}
-                  onChange={e => setSelectedProviderId(e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent disabled:bg-gray-100 disabled:cursor-not-allowed"
+                  onChange={setSelectedProviderId}
+                  placeholder={
+                    providers.length === 0 ? 'Sin proveedores asignados' : 'Buscar proveedor...'
+                  }
                   disabled={isProviderDisabled || providers.length === 0}
-                >
-                  <option value="">
-                    {providers.length === 0 ? 'Sin proveedores asignados' : 'Seleccionar proveedor'}
-                  </option>
-                  {providers.map(p => (
-                    <option key={p.id} value={p.id}>
-                      {p.name}
-                    </option>
-                  ))}
-                </select>
+                />
 
                 {/* Indicador de resolución de cliente */}
                 {selectedProviderId && loadingClient && (

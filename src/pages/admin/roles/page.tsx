@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '../../../lib/supabase';
 import { usePermissions } from '../../../hooks/usePermissions';
+import { useActiveWarehouse } from '../../../contexts/ActiveWarehouseContext';
 import { ConfirmModal } from '../../../components/base/ConfirmModal';
 
 interface Role {
@@ -32,6 +33,7 @@ interface PopupState {
 
 export default function RolesPage() {
   const { can, loading: permissionsLoading, orgId } = usePermissions();
+  const { activeWarehouse } = useActiveWarehouse();
   const [roles, setRoles] = useState<Role[]>([]);
   const [permissions, setPermissions] = useState<Permission[]>([]);
   const [loading, setLoading] = useState(true);
@@ -349,7 +351,14 @@ export default function RolesPage() {
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Gestión de Roles</h1>
-          <p className="text-sm text-gray-600 mt-1">Administra los roles y sus permisos</p>
+          <p className="text-sm text-gray-600 mt-1">Administra los roles y sus permisos — Los roles son globales de la organización</p>
+          {activeWarehouse && (
+            <div className="flex items-center gap-1.5 mt-2">
+              <i className="ri-store-2-line text-teal-600 text-xs w-4 h-4 flex items-center justify-center"></i>
+              <span className="text-xs text-teal-700 font-medium">Almacén activo: {activeWarehouse.name}</span>
+              <span className="text-xs text-gray-400">(los roles aplican a toda la organización)</span>
+            </div>
+          )}
         </div>
         {canCreate && (
           <button

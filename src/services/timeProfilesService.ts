@@ -4,25 +4,33 @@ import type { ProviderCargoTimeProfile } from '../types/catalog';
 
 export const timeProfilesService = {
   async getAll(orgId: string): Promise<ProviderCargoTimeProfile[]> {
-    //console.log('[TimeProfiles] Fetching time profiles', { orgId });
-
     const { data, error } = await supabase
       .from('provider_cargo_time_profiles')
       .select('*')
       .eq('org_id', orgId)
       .order('created_at', { ascending: false });
 
-    if (error) {
-      // console.error('[TimeProfiles] Error fetching time profiles', {
-      //   error,
-      //   message: (error as any)?.message,
-      //   details: (error as any)?.details,
-      //   hint: (error as any)?.hint,
-      // });
-      throw error;
+    if (error) throw error;
+    return data || [];
+  },
+
+  /**
+   * Obtener perfiles de tiempo filtrados por almacén activo.
+   * Si warehouseId es null → devuelve todos los de la org.
+   */
+  async getByWarehouse(orgId: string, warehouseId: string | null): Promise<ProviderCargoTimeProfile[]> {
+    let query = supabase
+      .from('provider_cargo_time_profiles')
+      .select('*')
+      .eq('org_id', orgId)
+      .order('created_at', { ascending: false });
+
+    if (warehouseId) {
+      query = query.eq('warehouse_id', warehouseId);
     }
 
-    //console.log('[TimeProfiles] Fetched', { count: data?.length || 0 });
+    const { data, error } = await query;
+    if (error) throw error;
     return data || [];
   },
 
@@ -31,40 +39,30 @@ export const timeProfilesService = {
     orgId: string,
     providerId: string,
     cargoTypeId: string,
-    avgMinutes: number
+    avgMinutes: number,
+    warehouseId?: string | null
   ): Promise<ProviderCargoTimeProfile> {
-    //console.log('[TimeProfiles] Upserting(create)', { orgId, providerId, cargoTypeId, avgMinutes });
-
     const avg = Number(avgMinutes);
+
+    const payload: any = {
+      org_id: orgId,
+      provider_id: providerId,
+      cargo_type_id: cargoTypeId,
+      avg_minutes: avg,
+      source: 'manual',
+    };
+
+    if (warehouseId) {
+      payload.warehouse_id = warehouseId;
+    }
 
     const { data, error } = await supabase
       .from('provider_cargo_time_profiles')
-      .upsert(
-        {
-          org_id: orgId,
-          provider_id: providerId,
-          cargo_type_id: cargoTypeId,
-          avg_minutes: avg,
-          source: 'manual',
-        },
-        {
-          onConflict: 'org_id,provider_id,cargo_type_id',
-        }
-      )
+      .upsert(payload, { onConflict: 'org_id,provider_id,cargo_type_id' })
       .select('*')
       .single();
 
-    if (error) {
-      // console.error('[TimeProfiles] Error upserting(create)', {
-      //   error,
-      //   message: (error as any)?.message,
-      //   details: (error as any)?.details,
-      //   hint: (error as any)?.hint,
-      // });
-      throw error;
-    }
-
-    //console.log('[TimeProfiles] Upserted(create)', { id: data.id });
+    if (error) throw error;
     return data;
   },
 
@@ -80,8 +78,6 @@ export const timeProfilesService = {
       safeUpdates.avg_minutes = Number(safeUpdates.avg_minutes);
     }
 
-    //console.log('[TimeProfiles] Updating', { orgId, id, updates: safeUpdates });
-
     const { data, error } = await supabase
       .from('provider_cargo_time_profiles')
       .update(safeUpdates)
@@ -90,50 +86,25 @@ export const timeProfilesService = {
       .select('*')
       .single();
 
-    if (error) {
-      // console.error('[TimeProfiles] Error updating', {
-      //   error,
-      //   message: (error as any)?.message,
-      //   details: (error as any)?.details,
-      //   hint: (error as any)?.hint,
-      // });
-      throw error;
-    }
-
-    //console.log('[TimeProfiles] Updated', { id: data.id });
+    if (error) throw error;
     return data;
   },
 
   async delete(orgId: string, id: string): Promise<void> {
-    //console.log('[TimeProfiles] Deleting', { orgId, id });
-
     const { error } = await supabase
       .from('provider_cargo_time_profiles')
       .delete()
       .eq('id', id)
       .eq('org_id', orgId);
 
-    if (error) {
-      // console.error('[TimeProfiles] Error deleting', {
-      //   error,
-      //   message: (error as any)?.message,
-      //   details: (error as any)?.details,
-      //   hint: (error as any)?.hint,
-      // });
-      throw error;
-    }
-
-    //console.log('[TimeProfiles] Deleted', { id });
+    if (error) throw error;
   },
 
-  // ✅ Nombre alineado con tu ReservationModal: getMatchingProfile(...)
   async getMatchingProfile(
     orgId: string,
     providerId: string,
     cargoTypeId: string
   ): Promise<ProviderCargoTimeProfile | null> {
-    //console.log('[TimeProfiles] getMatchingProfile', { orgId, providerId, cargoTypeId });
-
     const { data, error } = await supabase
       .from('provider_cargo_time_profiles')
       .select('*')
@@ -144,21 +115,10 @@ export const timeProfilesService = {
       .limit(1)
       .maybeSingle();
 
-    if (error) {
-      // console.error('[TimeProfiles] Error getMatchingProfile', {
-      //   error,
-      //   message: (error as any)?.message,
-      //   details: (error as any)?.details,
-      //   hint: (error as any)?.hint,
-      // });
-      throw error;
-    }
-
-    //console.log('[TimeProfiles] getMatchingProfile result', { found: !!data, avgMinutes: data?.avg_minutes });
+    if (error) throw error;
     return data;
   },
 
-  // (Opcional) alias por compatibilidad si en algún lado llamás findMatchingProfile
   async findMatchingProfile(
     orgId: string,
     providerId: string,

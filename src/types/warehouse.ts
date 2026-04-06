@@ -7,6 +7,7 @@ export interface Warehouse {
   business_start_time?: string | null;
   business_end_time?: string | null;
   slot_interval_minutes?: number | null;
+  timezone: string; // IANA timezone, e.g. 'America/Costa_Rica'
   created_at: string;
 }
 
@@ -17,4 +18,5 @@ export interface WarehouseFormData {
   business_start_time: string;
   business_end_time: string;
   slot_interval_minutes: number;
+  timezone: string; // IANA timezone
 }

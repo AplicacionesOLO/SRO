@@ -1,17 +1,19 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { usePermissions } from '../../../hooks/usePermissions';
+import { useUserScope } from '../../../hooks/useUserScope';
 import { calendarService, type DockTimeBlock, type Dock } from '../../../services/calendarService';
 import { ConfirmModal } from '../../../components/base/ConfirmModal';
 import BlockModal from './BlockModal';
+import { formatInWarehouseTimezone } from '../../../utils/timezoneUtils';
 
 type FilterType = 'all' | 'manual' | 'client';
 type FilterStatus = 'all' | 'active' | 'past';
 
 const isClientPickupBlock = (reason: string) => reason?.startsWith('CLIENT_PICKUP:');
 
-const formatDateTime = (dt: string) => {
-  const d = new Date(dt);
-  return d.toLocaleString('es-CR', {
+const formatDateTime = (dt: string, timezone?: string) => {
+  const tz = timezone || 'America/Costa_Rica';
+  return formatInWarehouseTimezone(new Date(dt), tz, {
     day: '2-digit',
     month: '2-digit',
     year: 'numeric',
@@ -20,13 +22,18 @@ const formatDateTime = (dt: string) => {
   });
 };
 
-const formatDateShort = (dt: string) => {
-  const d = new Date(dt);
-  return d.toLocaleDateString('es-CR', { day: '2-digit', month: '2-digit', year: 'numeric' });
+const formatDateShort = (dt: string, timezone?: string) => {
+  const tz = timezone || 'America/Costa_Rica';
+  return formatInWarehouseTimezone(new Date(dt), tz, {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+  });
 };
 
 export default function BlocksManagementTab() {
   const { can, orgId } = usePermissions();
+  const { allowedWarehouseIds, loading: scopeLoading } = useUserScope();
 
   const [blocks, setBlocks] = useState<DockTimeBlock[]>([]);
   const [docks, setDocks] = useState<Dock[]>([]);
@@ -63,21 +70,33 @@ export default function BlocksManagementTab() {
   const hasFullAccess = can('admin.matrix.update');
 
   const loadData = useCallback(async () => {
-    if (!orgId) return;
+    if (!orgId || scopeLoading) return;
     try {
       setLoading(true);
       const [blocksData, docksData] = await Promise.all([
         calendarService.getAllDockTimeBlocksForManagement(orgId),
-        calendarService.getDocks(orgId),
+        calendarService.getDocks(orgId, null, allowedWarehouseIds),
       ]);
-      setBlocks(blocksData);
+
+      // Filtrar bloques por warehouses permitidos
+      let filteredBlocks = blocksData;
+      if (allowedWarehouseIds !== null && allowedWarehouseIds.length >= 0) {
+        const allowedDockIds = new Set(docksData.map((d) => d.id));
+        if (allowedWarehouseIds.length === 0) {
+          filteredBlocks = [];
+        } else {
+          filteredBlocks = blocksData.filter((b) => allowedDockIds.has(b.dock_id));
+        }
+      }
+
+      setBlocks(filteredBlocks);
       setDocks(docksData);
     } catch {
       // silently fail
     } finally {
       setLoading(false);
     }
-  }, [orgId]);
+  }, [orgId, scopeLoading, allowedWarehouseIds]);
 
   useEffect(() => {
     loadData();
@@ -383,10 +402,10 @@ export default function BlocksManagementTab() {
                         </div>
                       </td>
                       <td className="px-4 py-3 text-sm text-gray-700 whitespace-nowrap">
-                        {formatDateTime(block.start_datetime)}
+                        {formatDateTime(block.start_datetime, block.warehouse_timezone)}
                       </td>
                       <td className="px-4 py-3 text-sm text-gray-700 whitespace-nowrap">
-                        {formatDateTime(block.end_datetime)}
+                        {formatDateTime(block.end_datetime, block.warehouse_timezone)}
                       </td>
                       <td className="px-4 py-3 text-sm text-gray-600 max-w-[240px]">
                         <span className="block truncate" title={getReasonDisplay(block.reason)}>
@@ -395,7 +414,7 @@ export default function BlocksManagementTab() {
                       </td>
                       <td className="px-4 py-3 text-sm text-gray-600 whitespace-nowrap">
                         {block.creator?.name || 'Sistema'}
-                        <div className="text-xs text-gray-400">{formatDateShort(block.created_at)}</div>
+                        <div className="text-xs text-gray-400">{formatDateShort(block.created_at, block.warehouse_timezone)}</div>
                       </td>
                       <td className="px-4 py-3">{getStatusBadge(block)}</td>
                       <td className="px-4 py-3">

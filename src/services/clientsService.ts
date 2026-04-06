@@ -147,7 +147,7 @@ export const clientsService = {
           client_id: clientId,
           edit_cutoff_hours: 0,
           allow_all_docks: false,
-          dock_allocation_mode: 'NONE'
+          dock_allocation_mode: 'SEQUENTIAL'
         })
         .select('*')
         .single();
@@ -224,7 +224,7 @@ export const clientsService = {
 
     const { data, error } = await supabase
       .from('docks')
-      .select('*')
+      .select('id, name, reference, header_color, warehouse_id, warehouses(name, location)')
       .eq('org_id', orgId)
       .order('name', { ascending: true });
 
@@ -233,7 +233,18 @@ export const clientsService = {
       throw error;
     }
 
-    return (data || []) as Dock[];
+    return ((data || []) as any[]).map((d) => ({
+      id: d.id,
+      name: d.name,
+      reference: d.reference ?? null,
+      header_color: d.header_color ?? null,
+      warehouse_id: d.warehouse_id ?? null,
+      warehouse_name: (d.warehouses as any)?.name ?? null,
+      location: (d.warehouses as any)?.location ?? null,
+      category: 'recepcion' as const,
+      status: 'disponible' as const,
+      order: 0,
+    }));
   },
 
   async getClientDocks(orgId: string, clientId: string): Promise<string[]> {

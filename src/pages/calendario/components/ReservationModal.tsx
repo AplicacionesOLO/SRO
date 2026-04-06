@@ -22,6 +22,12 @@ import {
   hasMeaningfulDraftData,
   getDraftAge,
 } from '../../../hooks/useReservationDraft';
+import {
+  toWarehouseDateString,
+  toWarehouseTimeString,
+  fromWarehouseLocalToUtc,
+  DEFAULT_TIMEZONE,
+} from '../../../utils/timezoneUtils';
 
 interface ReservationModalProps {
   isOpen: boolean;
@@ -32,6 +38,8 @@ interface ReservationModalProps {
   statuses: any[];
   defaults?: any;
   orgId: string;
+  /** Timezone del almacén activo — si no se pasa, usa America/Costa_Rica */
+  warehouseTimezone?: string;
 }
 
 interface FileItem {
@@ -59,9 +67,12 @@ export default function ReservationModal({
   docks,
   statuses,
   defaults,
-  orgId
+  orgId,
+  warehouseTimezone = DEFAULT_TIMEZONE,
 }: ReservationModalProps) {
   const { user, canLocal } = useAuth();
+  // Timezone activo del almacén — fuente de verdad para mostrar y guardar fechas
+  const tz = warehouseTimezone || DEFAULT_TIMEZONE;
 
   // ✅ Niveles de permisos: owner, privilegiado, o mismo proveedor asignado
   const isOwner = reservation ? reservation.created_by === user?.id : true;
@@ -163,17 +174,17 @@ export default function ReservationModal({
   // ── Helper: inicializa el formulario limpio para nueva reserva ───────────
   const initNewForm = useCallback(() => {
     const now = defaults?.start_datetime ? new Date(defaults.start_datetime) : new Date();
-    const endTime = defaults?.end_datetime
+    const endDt = defaults?.end_datetime
       ? new Date(defaults.end_datetime)
       : new Date(now.getTime() + 2 * 60 * 60 * 1000);
 
     setRecurrenceConfig(DEFAULT_RECURRENCE_CONFIG);
     setFormData({
       dockId: defaults?.dock_id || '',
-      startDate: now.toISOString().split('T')[0],
-      startTime: now.toTimeString().slice(0, 5),
-      endDate: endTime.toISOString().split('T')[0],
-      endTime: endTime.toTimeString().slice(0, 5),
+      startDate: toWarehouseDateString(now, tz),
+      startTime: toWarehouseTimeString(now, tz),
+      endDate: toWarehouseDateString(endDt, tz),
+      endTime: toWarehouseTimeString(endDt, tz),
       purchaseOrder: '',
       truckPlate: '',
       orderRequestNumber: '',
@@ -284,10 +295,10 @@ export default function ReservationModal({
 
       setFormData({
         dockId: reservation.dock_id,
-        startDate: start.toISOString().split('T')[0],
-        startTime: start.toTimeString().slice(0, 5),
-        endDate: end.toISOString().split('T')[0],
-        endTime: end.toTimeString().slice(0, 5),
+        startDate: toWarehouseDateString(start, tz),
+        startTime: toWarehouseTimeString(start, tz),
+        endDate: toWarehouseDateString(end, tz),
+        endTime: toWarehouseTimeString(end, tz),
         purchaseOrder: reservation.purchase_order || '',
         truckPlate: reservation.truck_plate || '',
         orderRequestNumber: reservation.order_request_number || '',
@@ -382,23 +393,23 @@ export default function ReservationModal({
 
       if (profile) {
         setSuggestedMinutes(profile.avg_minutes);
-        const startDate = new Date(startDatetime);
+        const startDate = fromWarehouseLocalToUtc(formData.startDate, formData.startTime, tz);
         const endDate = new Date(startDate.getTime() + profile.avg_minutes * 60 * 1000);
 
         setFormData(prev => ({
           ...prev,
-          endDate: endDate.toISOString().split('T')[0],
-          endTime: endDate.toTimeString().slice(0, 5)
+          endDate: toWarehouseDateString(endDate, tz),
+          endTime: toWarehouseTimeString(endDate, tz),
         }));
       } else if (cargoType.default_minutes) {
         setSuggestedMinutes(cargoType.default_minutes);
-        const startDate = new Date(startDatetime);
+        const startDate = fromWarehouseLocalToUtc(formData.startDate, formData.startTime, tz);
         const endDate = new Date(startDate.getTime() + cargoType.default_minutes * 60 * 1000);
 
         setFormData(prev => ({
           ...prev,
-          endDate: endDate.toISOString().split('T')[0],
-          endTime: endDate.toTimeString().slice(0, 5)
+          endDate: toWarehouseDateString(endDate, tz),
+          endTime: toWarehouseTimeString(endDate, tz),
         }));
       } else {
         setSuggestedMinutes(null);
@@ -523,8 +534,9 @@ export default function ReservationModal({
       return;
     }
 
-    const startDateTime = new Date(`${formData.startDate}T${formData.startTime}`);
-    const endDateTime = new Date(`${formData.endDate}T${formData.endTime}`);
+    // ✅ Convertir hora local del almacén → UTC para persistir correctamente
+    const startDateTime = fromWarehouseLocalToUtc(formData.startDate, formData.startTime, tz);
+    const endDateTime = fromWarehouseLocalToUtc(formData.endDate, formData.endTime, tz);
 
     if (endDateTime <= startDateTime) {
       setNotifyModal({
@@ -1722,8 +1734,8 @@ export default function ReservationModal({
                       <i className="ri-close-circle-line text-amber-600 text-sm w-4 h-4 flex items-center justify-center flex-shrink-0 mt-0.5"></i>
                       <div className="min-w-0">
                         <p className="text-xs text-amber-800 font-medium">
-                          {new Date(s.startDatetime).toLocaleString('es-CR', {
-                            timeZone: 'America/Costa_Rica',
+                          {new Date(s.startDatetime).toLocaleString('es-ES', {
+                            timeZone: tz,
                             weekday: 'short',
                             day: '2-digit',
                             month: 'short',

@@ -493,6 +493,12 @@ export default function AlmacenesPage() {
                     {warehouse.slot_interval_minutes || 60} min
                   </p>
                 )}
+                {warehouse.timezone && (
+                  <p className="text-xs text-gray-500 mt-0.5">
+                    <i className="ri-global-line mr-1 w-3 h-3 inline-flex items-center justify-center"></i>
+                    Zona horaria: {warehouse.timezone}
+                  </p>
+                )}
 
                 <p className="text-xs text-gray-400 mt-2">
                   Creado: {new Date(warehouse.created_at).toLocaleDateString('es-ES')}

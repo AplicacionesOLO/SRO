@@ -5,11 +5,21 @@ import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
 import { useAuth } from '../../contexts/AuthContext';
 import { usePermissions } from '../../hooks/usePermissions';
+import { useActiveWarehouse } from '../../contexts/ActiveWarehouseContext';
 import { dashboardService, DashboardStats } from '../../services/dashboardService';
+import WarehousePageHeader from '../../components/feature/WarehousePageHeader';
 
 export default function Dashboard() {
   const { user, loading: authLoading, pendingAccess } = useAuth();
   const { orgId, loading: permissionsLoading } = usePermissions();
+  const {
+    activeWarehouseId,
+    activeWarehouse,
+    allowedWarehouses,
+    hasMultipleWarehouses,
+    setActiveWarehouseId,
+    loading: warehouseLoading,
+  } = useActiveWarehouse();
   const navigate = useNavigate();
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [loading, setLoading] = useState(true);
@@ -27,16 +37,17 @@ export default function Dashboard() {
   }, [authLoading, user, pendingAccess, navigate]);
 
   useEffect(() => {
-    if (orgId) {
+    if (orgId && !warehouseLoading) {
       loadDashboardData();
     }
-  }, [orgId]);
+  }, [orgId, activeWarehouseId, warehouseLoading]);
 
   const loadDashboardData = async () => {
     if (!orgId) return;
     setLoading(true);
     try {
-      const data = await dashboardService.getStats(orgId);
+      // Pasar warehouseId para filtrar métricas por almacén activo
+      const data = await dashboardService.getStats(orgId, activeWarehouseId);
       setStats(data);
     } catch (error) {
       // silenced
@@ -103,24 +114,26 @@ export default function Dashboard() {
     <div className="min-h-screen bg-gray-50">
       <div className="px-6 py-6">
         <div className="max-w-7xl mx-auto">
-          {/* Header */}
-          <div className="mb-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <h1 className="text-2xl font-bold text-gray-900">Dashboard</h1>
-                <p className="text-gray-500 text-sm mt-1">
-                  {format(new Date(), "EEEE, d 'de' MMMM yyyy", { locale: es })}
-                </p>
-              </div>
-              <button
-                onClick={loadDashboardData}
-                disabled={loading}
-                className="flex items-center gap-2 px-4 py-2 bg-white border border-gray-200 rounded-lg text-sm text-gray-700 hover:bg-gray-50 transition-colors whitespace-nowrap cursor-pointer disabled:opacity-50"
-              >
-                <i className={`ri-refresh-line ${loading ? 'animate-spin' : ''}`}></i>
-                Actualizar
-              </button>
-            </div>
+          {/* Header con almacén activo */}
+          <WarehousePageHeader
+            title="Dashboard"
+            subtitle={format(new Date(), "EEEE, d 'de' MMMM yyyy", { locale: es })}
+            activeWarehouse={activeWarehouse}
+            allowedWarehouses={allowedWarehouses}
+            hasMultipleWarehouses={hasMultipleWarehouses}
+            onWarehouseChange={setActiveWarehouseId}
+            loading={warehouseLoading}
+          />
+
+          <div className="mb-6 flex justify-end">
+            <button
+              onClick={loadDashboardData}
+              disabled={loading}
+              className="flex items-center gap-2 px-4 py-2 bg-white border border-gray-200 rounded-lg text-sm text-gray-700 hover:bg-gray-50 transition-colors whitespace-nowrap cursor-pointer disabled:opacity-50"
+            >
+              <i className={`ri-refresh-line ${loading ? 'animate-spin' : ''}`}></i>
+              Actualizar
+            </button>
           </div>
 
           {loading && !stats ? (

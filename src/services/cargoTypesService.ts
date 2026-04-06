@@ -39,6 +39,90 @@ export const cargoTypesService = {
     return data || [];
   },
 
+  /**
+   * Obtener tipos de carga filtrados por almacén activo.
+   * Si warehouseId es null → devuelve todos los de la org (acceso global).
+   */
+  async getByWarehouse(orgId: string, warehouseId: string | null, activeOnly = false): Promise<CargoType[]> {
+    if (!warehouseId) {
+      return activeOnly ? this.getActive(orgId) : this.getAll(orgId);
+    }
+
+    const { data: ctwRows, error: ctwErr } = await supabase
+      .from('cargo_type_warehouses')
+      .select('cargo_type_id')
+      .eq('org_id', orgId)
+      .eq('warehouse_id', warehouseId);
+
+    if (ctwErr) throw ctwErr;
+
+    const cargoTypeIds = (ctwRows ?? []).map((r: any) => r.cargo_type_id as string);
+
+    if (cargoTypeIds.length === 0) return [];
+
+    let query = supabase
+      .from('cargo_types')
+      .select('*')
+      .eq('org_id', orgId)
+      .in('id', cargoTypeIds)
+      .order('name', { ascending: true });
+
+    if (activeOnly) {
+      query = query.eq('active', true);
+    }
+
+    const { data, error } = await query;
+    if (error) throw error;
+    return data || [];
+  },
+
+  /**
+   * Obtener los warehouse IDs asignados a un tipo de carga.
+   */
+  async getCargoTypeWarehouses(orgId: string, cargoTypeId: string): Promise<string[]> {
+    const { data, error } = await supabase
+      .from('cargo_type_warehouses')
+      .select('warehouse_id')
+      .eq('org_id', orgId)
+      .eq('cargo_type_id', cargoTypeId);
+
+    if (error) throw error;
+    return (data ?? []).map((r: any) => r.warehouse_id as string);
+  },
+
+  /**
+   * Asignar un tipo de carga a uno o varios almacenes (reemplaza asignaciones previas).
+   */
+  async setCargoTypeWarehouses(orgId: string, cargoTypeId: string, warehouseIds: string[]): Promise<void> {
+    const { error: delErr } = await supabase
+      .from('cargo_type_warehouses')
+      .delete()
+      .eq('org_id', orgId)
+      .eq('cargo_type_id', cargoTypeId);
+
+    if (delErr) throw delErr;
+
+    if (warehouseIds.length === 0) return;
+
+    const { error: insErr } = await supabase
+      .from('cargo_type_warehouses')
+      .insert(warehouseIds.map(wid => ({ org_id: orgId, cargo_type_id: cargoTypeId, warehouse_id: wid })));
+
+    if (insErr) throw insErr;
+  },
+
+  /**
+   * Agregar un tipo de carga a un almacén específico.
+   */
+  async addCargoTypeToWarehouse(orgId: string, cargoTypeId: string, warehouseId: string): Promise<void> {
+    const { error } = await supabase
+      .from('cargo_type_warehouses')
+      .upsert({ org_id: orgId, cargo_type_id: cargoTypeId, warehouse_id: warehouseId }, {
+        onConflict: 'org_id,cargo_type_id,warehouse_id'
+      });
+    if (error) throw error;
+  },
+
   async create(orgId: string, name: string, defaultMinutes?: number): Promise<CargoType> {
     //console.log('[CargoTypes] Creating', { orgId, name, defaultMinutes });
     
@@ -182,6 +266,14 @@ export const cargoTypesService = {
     }
 
     //console.log('[CargoTypes] Deleted', { id });
+  },
+
+  async deleteCargoType(id: string): Promise<void> {
+    const { error } = await supabase
+      .from('cargo_types')
+      .update({ active: false })
+      .eq('id', id);
+    if (error) throw error;
   }
 };
 

@@ -4,6 +4,7 @@ import type { Country } from '../../../../types/catalog';
 import type { Client } from '../../../../types/client';
 import { useFormDraft, getDraftAge } from '../../../../hooks/useReservationDraft';
 import { ConfirmModal } from '../../../../components/base/ConfirmModal';
+import { SUPPORTED_TIMEZONES } from '../../../../utils/timezoneUtils';
 
 interface WarehouseModalProps {
   orgId: string;
@@ -32,6 +33,7 @@ export default function WarehouseModal({
     business_start_time: '06:00',
     business_end_time: '17:00',
     slot_interval_minutes: 60,
+    timezone: 'America/Costa_Rica',
   });
 
   const [selectedClientIds, setSelectedClientIds] = useState<string[]>([]);
@@ -58,6 +60,7 @@ export default function WarehouseModal({
         business_start_time: (warehouse as any).business_start_time || '06:00',
         business_end_time: (warehouse as any).business_end_time || '17:00',
         slot_interval_minutes: (warehouse as any).slot_interval_minutes || 60,
+        timezone: warehouse.timezone || 'America/Costa_Rica',
       });
       setSelectedClientIds(assignedClientIds || []);
       setShowDraftBanner(false);
@@ -69,7 +72,7 @@ export default function WarehouseModal({
         setDraftAgeLabel(getDraftAge(draft.savedAt));
         setShowDraftBanner(true);
       } else {
-        setFormData({ name: '', location: '', country_id: '', business_start_time: '06:00', business_end_time: '17:00', slot_interval_minutes: 60 });
+        setFormData({ name: '', location: '', country_id: '', business_start_time: '06:00', business_end_time: '17:00', slot_interval_minutes: 60, timezone: 'America/Costa_Rica' });
         setSelectedClientIds([]);
         setShowDraftBanner(false);
       }
@@ -186,7 +189,7 @@ export default function WarehouseModal({
                       className="px-3 py-1.5 text-xs font-semibold bg-teal-600 text-white rounded-lg hover:bg-teal-700 transition-colors whitespace-nowrap">
                       Continuar con el borrador
                     </button>
-                    <button type="button" onClick={() => { clearDraft(); setFormData({ name: '', location: '', country_id: '', business_start_time: '06:00', business_end_time: '17:00', slot_interval_minutes: 60 }); setSelectedClientIds([]); setShowDraftBanner(false); }}
+                    <button type="button" onClick={() => { clearDraft(); setFormData({ name: '', location: '', country_id: '', business_start_time: '06:00', business_end_time: '17:00', slot_interval_minutes: 60, timezone: 'America/Costa_Rica' }); setSelectedClientIds([]); setShowDraftBanner(false); }}
                       className="px-3 py-1.5 text-xs font-medium border border-gray-300 bg-white text-gray-700 rounded-lg hover:bg-gray-50 transition-colors whitespace-nowrap">
                       Descartar y empezar nuevo
                     </button>
@@ -296,6 +299,23 @@ export default function WarehouseModal({
                 {errors.business_end_time && (
                   <p className="mt-1 text-sm text-red-500">{errors.business_end_time}</p>
                 )}
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Zona Horaria <span className="text-red-500">*</span>
+                </label>
+                <select
+                  value={formData.timezone}
+                  onChange={(e) => setFormData({ ...formData, timezone: e.target.value })}
+                  className="w-full px-4 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent"
+                  disabled={saving}
+                >
+                  {SUPPORTED_TIMEZONES.map((tz) => (
+                    <option key={tz.value} value={tz.value}>{tz.label}</option>
+                  ))}
+                </select>
+                <p className="mt-1 text-xs text-gray-500">Define la zona horaria para el calendario de este almacén</p>
               </div>
 
               <div>

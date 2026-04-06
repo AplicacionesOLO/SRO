@@ -1,21 +1,24 @@
 import { useState, useEffect, useCallback } from 'react';
 import { cargoTypesService } from '../../../../services/cargoTypesService';
+import { warehousesService } from '../../../../services/warehousesService';
 import type { CargoType } from '../../../../types/catalog';
 import { useFormDraft, getDraftAge } from '../../../../hooks/useReservationDraft';
 import { ConfirmModal } from '../../../../components/base/ConfirmModal';
 
 interface CargoTypeModalProps {
   orgId: string;
+  warehouseId?: string | null;
   cargoType: CargoType | null;
   onClose: () => void;
   onSave: () => void;
 }
 
-export default function CargoTypeModal({ orgId, cargoType, onClose, onSave }: CargoTypeModalProps) {
-  // Log del service al cargar el componente
-  //console.log('[CargoTypeModal] using service', cargoTypesService);
-  //console.log('[CargoTypeModal] service methods', Object.keys(cargoTypesService));
+interface WarehouseOption {
+  id: string;
+  name: string;
+}
 
+export default function CargoTypeModal({ orgId, warehouseId, cargoType, onClose, onSave }: CargoTypeModalProps) {
   const [name, setName] = useState('');
   const [defaultMinutes, setDefaultMinutes] = useState<string>('');
   const [isDynamic, setIsDynamic] = useState(false);
@@ -23,11 +26,10 @@ export default function CargoTypeModal({ orgId, cargoType, onClose, onSave }: Ca
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const [formData, setFormData] = useState({
-    name: cargoType?.name || '',
-    defaultMinutes: cargoType?.default_minutes || undefined,
-    active: cargoType?.active ?? true
-  });
+  // Almacenes
+  const [warehouses, setWarehouses] = useState<WarehouseOption[]>([]);
+  const [selectedWarehouseIds, setSelectedWarehouseIds] = useState<string[]>([]);
+  const [warehousesLoading, setWarehousesLoading] = useState(false);
 
   // ── Draft persistence ─────────────────────────────────────────────────────
   const isNewRecord = !cargoType;
@@ -39,6 +41,16 @@ export default function CargoTypeModal({ orgId, cargoType, onClose, onSave }: Ca
   interface CargoTypeDraft { name: string; defaultMinutes: string; isDynamic: boolean }
   const { saveDraft, clearDraft, readDraft } = useFormDraft<CargoTypeDraft>({ storageKey: DRAFT_KEY, isNewRecord });
 
+  // Cargar almacenes disponibles
+  useEffect(() => {
+    if (!orgId) return;
+    setWarehousesLoading(true);
+    warehousesService.getAll(orgId)
+      .then(data => setWarehouses(data.map(w => ({ id: w.id, name: w.name }))))
+      .catch(() => setWarehouses([]))
+      .finally(() => setWarehousesLoading(false));
+  }, [orgId]);
+
   useEffect(() => {
     if (cargoType) {
       setName(cargoType.name);
@@ -46,6 +58,10 @@ export default function CargoTypeModal({ orgId, cargoType, onClose, onSave }: Ca
       setIsDynamic(cargoType.is_dynamic);
       setIsActive(cargoType.is_active);
       setShowDraftBanner(false);
+      // Cargar warehouses asignados
+      cargoTypesService.getCargoTypeWarehouses(orgId, cargoType.id)
+        .then(ids => setSelectedWarehouseIds(ids))
+        .catch(() => setSelectedWarehouseIds([]));
     } else {
       const draft = readDraft();
       if (draft) {
@@ -60,8 +76,14 @@ export default function CargoTypeModal({ orgId, cargoType, onClose, onSave }: Ca
         setIsDynamic(false);
         setShowDraftBanner(false);
       }
+      // Pre-seleccionar almacén activo
+      if (warehouseId) {
+        setSelectedWarehouseIds([warehouseId]);
+      } else {
+        setSelectedWarehouseIds([]);
+      }
     }
-  }, [cargoType]);
+  }, [cargoType, warehouseId]);
 
   // Auto-save borrador
   useEffect(() => {
@@ -89,21 +111,21 @@ export default function CargoTypeModal({ orgId, cargoType, onClose, onSave }: Ca
     onClose();
   }, [onClose]);
 
+  const handleToggleWarehouse = (wid: string) => {
+    setSelectedWarehouseIds(prev =>
+      prev.includes(wid) ? prev.filter(id => id !== wid) : [...prev, wid]
+    );
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
-    if (!name.trim()) {
-      setError('El nombre es requerido');
-      return;
-    }
+    if (!name.trim()) { setError('El nombre es requerido'); return; }
 
     try {
       setSaving(true);
       setError(null);
-
       const minutes = defaultMinutes ? parseInt(defaultMinutes) : null;
-
-      //console.log('[CargoTypeModal] Saving', { cargoType: !!cargoType, name, minutes, isDynamic, isActive });
+      let savedId: string;
 
       if (cargoType) {
         await cargoTypesService.updateCargoType(cargoType.id, {
@@ -112,12 +134,16 @@ export default function CargoTypeModal({ orgId, cargoType, onClose, onSave }: Ca
           is_dynamic: isDynamic,
           is_active: isActive,
         });
+        savedId = cargoType.id;
       } else {
-        await cargoTypesService.createCargoType(orgId, name.trim(), minutes, isDynamic);
+        const created = await cargoTypesService.createCargoType(orgId, name.trim(), minutes, isDynamic);
+        savedId = created.id;
       }
 
+      // Guardar relación con almacenes
+      await cargoTypesService.setCargoTypeWarehouses(orgId, savedId, selectedWarehouseIds);
+
       clearDraft();
-      //console.log('[CargoTypeModal] Saved successfully');
       onSave();
     } catch (err: any) {
       setError(err?.message || 'Error al guardar');
@@ -128,23 +154,20 @@ export default function CargoTypeModal({ orgId, cargoType, onClose, onSave }: Ca
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-lg shadow-xl max-w-md w-full">
+      <div className="bg-white rounded-lg shadow-xl max-w-md w-full max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between p-6 border-b border-gray-200">
           <h2 className="text-xl font-bold text-gray-900">
             {cargoType ? 'Editar Tipo de Carga' : 'Nuevo Tipo de Carga'}
           </h2>
-          <button
-            onClick={handleClose}
-            className="text-gray-400 hover:text-gray-600 transition-colors cursor-pointer"
-          >
+          <button onClick={handleClose} className="text-gray-400 hover:text-gray-600 transition-colors cursor-pointer">
             <i className="ri-close-line text-2xl w-6 h-6 flex items-center justify-center"></i>
           </button>
         </div>
 
-        <form onSubmit={handleSubmit} className="p-6">
+        <form onSubmit={handleSubmit} className="p-6 space-y-5">
           {/* Banner de borrador */}
           {showDraftBanner && (
-            <div className="mb-4 bg-teal-50 border border-teal-200 rounded-xl p-4">
+            <div className="bg-teal-50 border border-teal-200 rounded-xl p-4">
               <div className="flex items-start gap-3">
                 <i className="ri-save-line text-teal-600 text-lg w-5 h-5 flex items-center justify-center flex-shrink-0 mt-0.5"></i>
                 <div className="flex-1 min-w-0">
@@ -165,78 +188,99 @@ export default function CargoTypeModal({ orgId, cargoType, onClose, onSave }: Ca
           )}
 
           {error && (
-            <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-600">
-              {error}
-            </div>
+            <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-600">{error}</div>
           )}
 
-          <div className="mb-4">
+          {/* Nombre */}
+          <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
               Nombre <span className="text-red-500">*</span>
             </label>
-            <input
-              type="text"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
+            <input type="text" value={name} onChange={(e) => setName(e.target.value)}
               className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent text-sm"
-              placeholder="Nombre del tipo de carga"
-              required
-            />
+              placeholder="Nombre del tipo de carga" required />
           </div>
 
-          <div className="mb-4">
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Minutos por defecto
-            </label>
-            <input
-              type="number"
-              value={defaultMinutes}
-              onChange={(e) => setDefaultMinutes(e.target.value)}
+          {/* Minutos */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">Minutos por defecto</label>
+            <input type="number" value={defaultMinutes} onChange={(e) => setDefaultMinutes(e.target.value)}
               className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent text-sm"
-              placeholder="Ej: 60"
-              min="1"
-            />
+              placeholder="Ej: 60" min="1" />
           </div>
 
-          <div className="mb-4">
+          {/* Dinámico */}
+          <div>
             <label className="flex items-center gap-2 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={isDynamic}
-                onChange={(e) => setIsDynamic(e.target.checked)}
-                className="w-4 h-4 text-teal-600 border-gray-300 rounded focus:ring-teal-500 cursor-pointer"
-              />
+              <input type="checkbox" checked={isDynamic} onChange={(e) => setIsDynamic(e.target.checked)}
+                className="w-4 h-4 text-teal-600 border-gray-300 rounded focus:ring-teal-500 cursor-pointer" />
               <span className="text-sm text-gray-700">Dinámico</span>
             </label>
           </div>
 
+          {/* Activo (solo al editar) */}
           {cargoType && (
-            <div className="mb-6">
-              <label className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  checked={formData.active}
-                  onChange={(e) => setFormData({ ...formData, active: e.target.checked })}
-                  className="rounded border-gray-300"
-                />
+            <div>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" checked={isActive} onChange={(e) => setIsActive(e.target.checked)}
+                  className="rounded border-gray-300" />
                 <span className="text-sm font-medium text-gray-700">Activo</span>
               </label>
             </div>
           )}
 
-          <div className="flex items-center justify-end gap-3">
-            <button
-              type="button"
-              onClick={handleClose}
-              className="px-4 py-2 text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors whitespace-nowrap cursor-pointer"
-            >
+          {/* Selector de almacenes */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">Almacenes asignados</label>
+            <p className="text-xs text-gray-500 mb-3">
+              Seleccioná los almacenes donde este tipo de carga aplica.
+            </p>
+
+            {warehousesLoading ? (
+              <div className="flex items-center gap-2 py-3 text-sm text-gray-500">
+                <i className="ri-loader-4-line animate-spin"></i>
+                Cargando almacenes...
+              </div>
+            ) : warehouses.length === 0 ? (
+              <div className="p-3 bg-gray-50 border border-gray-200 rounded-lg text-sm text-gray-500">
+                No hay almacenes disponibles
+              </div>
+            ) : (
+              <div className="border border-gray-200 rounded-lg divide-y divide-gray-100 max-h-48 overflow-y-auto">
+                {warehouses.map(w => (
+                  <label key={w.id} className="flex items-center gap-3 px-4 py-2.5 hover:bg-gray-50 cursor-pointer transition-colors">
+                    <input
+                      type="checkbox"
+                      checked={selectedWarehouseIds.includes(w.id)}
+                      onChange={() => handleToggleWarehouse(w.id)}
+                      className="w-4 h-4 text-teal-600 border-gray-300 rounded focus:ring-teal-500"
+                    />
+                    <div className="flex items-center gap-2 flex-1">
+                      <i className="ri-store-2-line text-gray-400 text-sm w-4 h-4 flex items-center justify-center"></i>
+                      <span className="text-sm text-gray-800">{w.name}</span>
+                    </div>
+                    {warehouseId === w.id && (
+                      <span className="text-xs text-teal-600 font-medium">Activo</span>
+                    )}
+                  </label>
+                ))}
+              </div>
+            )}
+
+            {selectedWarehouseIds.length > 0 && (
+              <p className="mt-2 text-xs text-teal-700">
+                {selectedWarehouseIds.length} almacén(es) seleccionado(s)
+              </p>
+            )}
+          </div>
+
+          <div className="flex items-center justify-end gap-3 pt-2">
+            <button type="button" onClick={handleClose}
+              className="px-4 py-2 text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors whitespace-nowrap cursor-pointer">
               Cancelar
             </button>
-            <button
-              type="submit"
-              disabled={saving}
-              className="px-4 py-2 bg-teal-600 text-white rounded-lg hover:bg-teal-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap cursor-pointer"
-            >
+            <button type="submit" disabled={saving}
+              className="px-4 py-2 bg-teal-600 text-white rounded-lg hover:bg-teal-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap cursor-pointer">
               {saving ? 'Guardando...' : 'Guardar'}
             </button>
           </div>

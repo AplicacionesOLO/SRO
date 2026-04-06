@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import type { Client, ClientRules, ClientRulesFormData, ClientProviderPayload } from '../../../../types/client';
 import type { Dock } from '../../../../types/dock';
 import type { Provider } from '../../../../types/catalog';
@@ -70,6 +70,7 @@ export default function ClientDetailDrawer({
   // Form data para docks
   const [selectedDockIds, setSelectedDockIds] = useState<string[]>([]);
   const [dockSearch, setDockSearch] = useState('');
+  const [expandedWarehouses, setExpandedWarehouses] = useState<Set<string>>(new Set());
 
   // Form data para providers
   const [selectedProviders, setSelectedProviders] = useState<Map<string, boolean>>(new Map());
@@ -102,6 +103,12 @@ export default function ClientDetailDrawer({
   useEffect(() => {
     setSelectedDockIds(clientDockIds);
   }, [clientDockIds]);
+
+  // Expandir todos los grupos al cargar docks o al buscar
+  useEffect(() => {
+    const keys = new Set(docks.map(d => d.warehouse_id ?? '__no_warehouse__'));
+    setExpandedWarehouses(keys);
+  }, [docks, dockSearch]);
 
   useEffect(() => {
     const map = new Map<string, boolean>();
@@ -233,6 +240,20 @@ export default function ClientDetailDrawer({
   const filteredDocks = docks.filter(dock =>
     dock.name.toLowerCase().includes(dockSearch.toLowerCase())
   );
+
+  // Agrupar andenes por almacén
+  const docksGroupedByWarehouse = useMemo(() => {
+    const groups = new Map<string, { warehouseName: string; warehouseId: string | null; docks: typeof filteredDocks }>();
+    filteredDocks.forEach(dock => {
+      const key = dock.warehouse_id ?? '__no_warehouse__';
+      const label = dock.warehouse_name ?? 'Sin almacén';
+      if (!groups.has(key)) {
+        groups.set(key, { warehouseName: label, warehouseId: dock.warehouse_id ?? null, docks: [] });
+      }
+      groups.get(key)!.docks.push(dock);
+    });
+    return Array.from(groups.values()).sort((a, b) => a.warehouseName.localeCompare(b.warehouseName));
+  }, [filteredDocks]);
 
   const filteredProviders = providers.filter(provider =>
     provider.name.toLowerCase().includes(providerSearch.toLowerCase())
@@ -512,37 +533,101 @@ export default function ClientDetailDrawer({
                 </div>
               )}
 
-              <div className="space-y-2 max-h-96 overflow-y-auto">
+              <div className="space-y-2 max-h-[480px] overflow-y-auto pr-0.5">
                 {filteredDocks.length === 0 ? (
                   <div className="text-center py-8 text-gray-500">
                     <i className="ri-inbox-line text-4xl mb-2"></i>
                     <p className="text-sm">No hay andenes disponibles</p>
                   </div>
                 ) : (
-                  filteredDocks.map((dock) => (
-                    <label
-                      key={dock.id}
-                      className={`flex items-center gap-3 p-3 border rounded-lg cursor-pointer transition-colors ${
-                        selectedDockIds.includes(dock.id)
-                          ? 'bg-teal-50 border-teal-300'
-                          : 'bg-white border-gray-200 hover:bg-gray-50'
-                      } ${!canAssignDocks || rules?.allow_all_docks ? 'opacity-50 cursor-not-allowed' : ''}`}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={selectedDockIds.includes(dock.id)}
-                        onChange={() => toggleDock(dock.id)}
-                        disabled={!canAssignDocks || saving || rules?.allow_all_docks}
-                        className="w-4 h-4 text-teal-600 border-gray-300 rounded focus:ring-teal-500"
-                      />
-                      <div className="flex-1">
-                        <p className="text-sm font-medium text-gray-900">{dock.name}</p>
-                        {dock.location && (
-                          <p className="text-xs text-gray-500">{dock.location}</p>
+                  docksGroupedByWarehouse.map((group) => {
+                    const groupKey = group.warehouseId ?? '__no_warehouse__';
+                    const isExpanded = expandedWarehouses.has(groupKey);
+                    const selectedInGroup = group.docks.filter(d => selectedDockIds.includes(d.id)).length;
+                    const allInGroupSelected = group.docks.every(d => selectedDockIds.includes(d.id));
+
+                    return (
+                      <div key={groupKey} className="border border-gray-200 rounded-lg overflow-hidden">
+                        {/* Header del grupo / almacén */}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const next = new Set(expandedWarehouses);
+                            if (next.has(groupKey)) next.delete(groupKey);
+                            else next.add(groupKey);
+                            setExpandedWarehouses(next);
+                          }}
+                          className="w-full flex items-center justify-between px-3 py-2.5 bg-gray-50 hover:bg-gray-100 transition-colors text-left"
+                        >
+                          <div className="flex items-center gap-2">
+                            <i className="ri-building-2-line text-gray-500 text-sm w-4 h-4 flex items-center justify-center"></i>
+                            <span className="text-sm font-semibold text-gray-800">{group.warehouseName}</span>
+                            <span className="text-xs text-gray-500 bg-white border border-gray-200 rounded-full px-2 py-0.5">
+                              {selectedInGroup}/{group.docks.length}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            {canAssignDocks && !rules?.allow_all_docks && (
+                              <span
+                                role="button"
+                                tabIndex={0}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  if (allInGroupSelected) {
+                                    setSelectedDockIds(prev => prev.filter(id => !group.docks.some(d => d.id === id)));
+                                  } else {
+                                    const toAdd = group.docks.map(d => d.id).filter(id => !selectedDockIds.includes(id));
+                                    setSelectedDockIds(prev => [...prev, ...toAdd]);
+                                  }
+                                }}
+                                onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.click()}
+                                className="text-xs text-teal-600 hover:text-teal-800 font-medium px-2 py-0.5 rounded hover:bg-teal-50 transition-colors whitespace-nowrap"
+                              >
+                                {allInGroupSelected ? 'Quitar todos' : 'Seleccionar todos'}
+                              </span>
+                            )}
+                            {isExpanded
+                              ? <i className="ri-arrow-up-s-line text-gray-400 text-base w-4 h-4 flex items-center justify-center"></i>
+                              : <i className="ri-arrow-down-s-line text-gray-400 text-base w-4 h-4 flex items-center justify-center"></i>
+                            }
+                          </div>
+                        </button>
+
+                        {/* Andenes del grupo */}
+                        {isExpanded && (
+                          <div className="divide-y divide-gray-100">
+                            {group.docks.map((dock) => (
+                              <label
+                                key={dock.id}
+                                className={`flex items-center gap-3 px-3 py-2.5 cursor-pointer transition-colors ${
+                                  selectedDockIds.includes(dock.id)
+                                    ? 'bg-teal-50'
+                                    : 'bg-white hover:bg-gray-50'
+                                } ${!canAssignDocks || rules?.allow_all_docks ? 'opacity-50 cursor-not-allowed' : ''}`}
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={selectedDockIds.includes(dock.id)}
+                                  onChange={() => toggleDock(dock.id)}
+                                  disabled={!canAssignDocks || saving || rules?.allow_all_docks}
+                                  className="w-4 h-4 text-teal-600 border-gray-300 rounded focus:ring-teal-500 flex-shrink-0"
+                                />
+                                <div className="flex-1 min-w-0">
+                                  <p className="text-sm font-medium text-gray-900 truncate">{dock.name}</p>
+                                  {dock.reference && (
+                                    <p className="text-xs text-gray-400 truncate">{dock.reference}</p>
+                                  )}
+                                </div>
+                                {selectedDockIds.includes(dock.id) && (
+                                  <i className="ri-checkbox-circle-fill text-teal-500 text-base w-4 h-4 flex items-center justify-center flex-shrink-0"></i>
+                                )}
+                              </label>
+                            ))}
+                          </div>
                         )}
                       </div>
-                    </label>
-                  ))
+                    );
+                  })
                 )}
               </div>
 

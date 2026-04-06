@@ -21,13 +21,15 @@ interface RuleModalProps {
   onSave: (data: CorrespondenceRuleFormData) => Promise<void>;
   rule?: CorrespondenceRule | null;
   orgId: string;
+  activeWarehouseId?: string | null;
+  activeWarehouseName?: string;
 }
 
 type UserRow = { id: string; name: string; email: string; has_gmail: boolean };
 type RoleRow = { id: string; name: string };
 type StatusRow = { id: string; name: string; color: string };
 
-export default function RuleModal({ isOpen, onClose, onSave, rule, orgId }: RuleModalProps) {
+export default function RuleModal({ isOpen, onClose, onSave, rule, orgId, activeWarehouseId, activeWarehouseName }: RuleModalProps) {
   const [loading, setLoading] = useState(false);
   const [users, setUsers] = useState<UserRow[]>([]);
   const [roles, setRoles] = useState<RoleRow[]>([]);
@@ -45,6 +47,8 @@ export default function RuleModal({ isOpen, onClose, onSave, rule, orgId }: Rule
     title: '',
     message: ''
   });
+
+  const [warehouses, setWarehouses] = useState<{ id: string; name: string }[]>([]);
 
   const [formData, setFormData] = useState<CorrespondenceRuleFormData>({
     name: "",
@@ -66,7 +70,8 @@ export default function RuleModal({ isOpen, onClose, onSave, rule, orgId }: Rule
     body_template: "",
     is_active: true,
     include_casetilla_photos: false,
-  });
+    warehouse_id: activeWarehouseId ?? null,
+  } as any);
 
   const [recipientEmailInput, setRecipientEmailInput] = useState("");
 
@@ -74,6 +79,11 @@ export default function RuleModal({ isOpen, onClose, onSave, rule, orgId }: Rule
     if (!isOpen) return;
 
     let cancelled = false;
+
+    // Cargar almacenes disponibles para el selector de migración
+    supabase.from('warehouses').select('id, name').eq('org_id', orgId).order('name')
+      .then(({ data }) => { if (!cancelled && data) setWarehouses(data.map((w: any) => ({ id: w.id, name: w.name }))); })
+      .catch(() => {});
 
     (async () => {
       await loadData(() => cancelled);
@@ -101,7 +111,8 @@ export default function RuleModal({ isOpen, onClose, onSave, rule, orgId }: Rule
           body_template: rule.body_template,
           is_active: rule.is_active,
           include_casetilla_photos: rule.include_casetilla_photos ?? false,
-        });
+          warehouse_id: (rule as any).warehouse_id ?? activeWarehouseId ?? null,
+        } as any);
         setRecipientEmailInput("");
       } else {
         resetForm();
@@ -132,12 +143,7 @@ export default function RuleModal({ isOpen, onClose, onSave, rule, orgId }: Rule
         .eq("org_id", orgId);
 
       if (userOrgErr) {
-        console.error("[RuleModal] load user_org_roles error:", {
-          code: userOrgErr.code,
-          message: userOrgErr.message,
-          details: userOrgErr.details,
-          hint: userOrgErr.hint,
-        });
+        // non-blocking
       }
 
       const userIds = userOrgData?.map((item: any) => item.user_id) || [];
@@ -280,7 +286,8 @@ export default function RuleModal({ isOpen, onClose, onSave, rule, orgId }: Rule
       body_template: "",
       is_active: true,
       include_casetilla_photos: false,
-    });
+      warehouse_id: activeWarehouseId ?? null,
+    } as any);
     setRecipientEmailInput("");
   };
 
@@ -449,9 +456,27 @@ export default function RuleModal({ isOpen, onClose, onSave, rule, orgId }: Rule
 
       <div className="bg-white rounded-lg shadow-xl w-full max-w-4xl max-h-[90vh] overflow-y-auto">
         <div className="sticky top-0 bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between">
-          <h2 className="text-xl font-bold text-gray-900">
-            {rule ? "Editar Regla" : "Nueva Regla de Correspondencia"}
-          </h2>
+          <div>
+            <h2 className="text-xl font-bold text-gray-900">
+              {rule ? "Editar Regla" : "Nueva Regla de Correspondencia"}
+            </h2>
+            {activeWarehouseId && activeWarehouseName && (
+              <div className="flex items-center gap-1.5 mt-1">
+                <i className="ri-store-2-line text-teal-600 text-xs w-4 h-4 flex items-center justify-center"></i>
+                <span className="text-xs text-teal-700 font-medium">
+                  {rule ? 'Editando regla de' : 'Creando regla para'}: {activeWarehouseName}
+                </span>
+              </div>
+            )}
+            {!activeWarehouseId && (
+              <div className="flex items-center gap-1.5 mt-1">
+                <i className="ri-global-line text-gray-400 text-xs w-4 h-4 flex items-center justify-center"></i>
+                <span className="text-xs text-gray-500">
+                  Sin almacén activo — esta regla quedará como global (legacy)
+                </span>
+              </div>
+            )}
+          </div>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 transition-colors">
             <i className="ri-close-line text-2xl w-6 h-6 flex items-center justify-center"></i>
           </button>
@@ -823,6 +848,33 @@ export default function RuleModal({ isOpen, onClose, onSave, rule, orgId }: Rule
             <p className="text-xs text-gray-500 mt-1">
               Puedes usar HTML básico para formato. Las variables serán reemplazadas automáticamente.
             </p>
+          </div>
+
+          {/* Almacén de la regla — selector para migrar legacy o asignar al crear */}
+          <div className="border border-gray-200 rounded-lg p-4 space-y-3">
+            <h3 className="font-medium text-gray-900 flex items-center gap-2">
+              <i className="ri-store-2-line text-teal-600 w-4 h-4 flex items-center justify-center"></i>
+              Almacén de la regla
+            </h3>
+            <p className="text-xs text-gray-500">
+              Asigná esta regla a un almacén específico. Las reglas sin almacén son globales y se aplican a todos.
+            </p>
+            <select
+              value={(formData as any).warehouse_id || ""}
+              onChange={(e) => setFormData((prev) => ({ ...prev, warehouse_id: e.target.value || null } as any))}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-teal-500 focus:border-transparent"
+            >
+              <option value="">Global (sin almacén específico)</option>
+              {warehouses.map((w) => (
+                <option key={w.id} value={w.id}>{w.name}</option>
+              ))}
+            </select>
+            {!(formData as any).warehouse_id && rule && !(rule as any).warehouse_id && (
+              <p className="text-xs text-amber-600 flex items-center gap-1">
+                <i className="ri-information-line w-3 h-3 flex items-center justify-center"></i>
+                Esta es una regla legacy global. Podés migrarla a un almacén seleccionándolo arriba.
+              </p>
+            )}
           </div>
 
           {/* Botones */}

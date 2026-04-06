@@ -1,12 +1,23 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import * as XLSX from 'xlsx';
 import { usePermissions } from '../../hooks/usePermissions';
+import { useUserScope } from '../../hooks/useUserScope';
+import { useActiveWarehouse } from '../../contexts/ActiveWarehouseContext';
 import { calendarService, type Reservation } from '../../services/calendarService';
 import { providersService } from '../../services/providersService';
 import ReservationModal from '../calendario/components/ReservationModal';
+import WarehouseSelector from '../../components/feature/WarehouseSelector';
 
 export default function ReservasPage() {
   const { can, orgId, loading: permLoading } = usePermissions();
+  const { allowedWarehouseIds, loading: scopeLoading } = useUserScope();
+  const {
+    activeWarehouseId,
+    activeWarehouse,
+    hasMultipleWarehouses,
+    effectiveWarehouseIds,
+    loading: activeWhLoading,
+  } = useActiveWarehouse();
   const [reservations, setReservations] = useState<Reservation[]>([]);
   const [docks, setDocks] = useState<any[]>([]);
   const [statuses, setStatuses] = useState<any[]>([]);
@@ -54,8 +65,8 @@ export default function ReservasPage() {
       endDate.setMonth(endDate.getMonth() + 3);
 
       const [reservationsData, docksData, statusesData, providersData] = await Promise.all([
-        calendarService.getAllReservations(orgId, startDate.toISOString(), endDate.toISOString()),
-        calendarService.getDocks(orgId),
+        calendarService.getAllReservations(orgId, startDate.toISOString(), endDate.toISOString(), effectiveWarehouseIds),
+        calendarService.getDocks(orgId, null, effectiveWarehouseIds),
         calendarService.getReservationStatuses(orgId),
         providersService.getActive(orgId),
       ]);
@@ -70,9 +81,9 @@ export default function ReservasPage() {
     } finally {
       setLoading(false);
     }
-  }, [orgId]);
+  }, [orgId, effectiveWarehouseIds]);
 
-  const ready = useMemo(() => !!orgId && !permLoading, [orgId, permLoading]);
+  const ready = useMemo(() => !!orgId && !permLoading && !scopeLoading && !activeWhLoading, [orgId, permLoading, scopeLoading, activeWhLoading]);
 
   useEffect(() => {
     if (!ready) return;
@@ -288,9 +299,19 @@ export default function ReservasPage() {
             <h1 className="text-2xl font-bold text-gray-900">Reservas</h1>
             <p className="text-sm text-gray-600 mt-1">
               Gestión completa de reservas de andenes
+              {activeWarehouse && (
+                <span className="ml-2 inline-flex items-center gap-1 px-2 py-0.5 bg-teal-50 text-teal-700 rounded-full text-xs font-medium">
+                  <i className="ri-building-2-line"></i>
+                  {activeWarehouse.name}
+                </span>
+              )}
             </p>
           </div>
           <div className="flex items-center gap-3">
+            {/* Selector de almacén */}
+            {hasMultipleWarehouses && (
+              <WarehouseSelector variant="dropdown" />
+            )}
             <button
               onClick={handleExport}
               disabled={filteredReservations.length === 0}
@@ -311,6 +332,13 @@ export default function ReservasPage() {
             )}
           </div>
         </div>
+
+        {/* Chips de almacén si tiene múltiples */}
+        {hasMultipleWarehouses && (
+          <div className="mb-3">
+            <WarehouseSelector variant="chips" />
+          </div>
+        )}
 
         {/* Filtros */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 gap-3">
