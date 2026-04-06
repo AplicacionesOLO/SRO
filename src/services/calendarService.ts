@@ -516,6 +516,7 @@ export const calendarService = {
 
     // ✅ Obtener estado anterior si se está cambiando el status
     let oldStatusId: string | null = null;
+    let oldOrgId: string | null = null;
     if (updates.status_id !== undefined) {
       const { data: oldReservation } = await supabase
         .from('reservations')
@@ -524,46 +525,80 @@ export const calendarService = {
         .maybeSingle();
       
       oldStatusId = oldReservation?.status_id || null;
+      oldOrgId = oldReservation?.org_id || null;
     }
 
-    const { data, error } = await supabase
+    // ✅ PASO 1: Solo actualizar, sin pedir SELECT en el mismo query
+    // Esto evita el error 406 cuando RLS no permite leer la fila después del UPDATE
+    const { error } = await supabase
       .from('reservations')
       .update({
         ...updates,
         updated_by: user.id,
         updated_at: new Date().toISOString(),
       })
-      .eq('id', id)
+      .eq('id', id);
+
+    if (error) {
+      throw error;
+    }
+
+    // ✅ PASO 2: Leer el resultado en una query separada
+    const { data: full, error: fetchErr } = await supabase
+      .from('reservations')
       .select(`
         *,
         status:reservation_statuses(name, code, color)
       `)
-      .single();
+      .eq('id', id)
+      .maybeSingle();
 
-    if (error) {
-      // console.error('[Calendar] updateReservationError', {
-      //   code: error.code,
-      //   message: error.message,
-      //   details: error.details,
-      //   hint: error.hint,
-      //   payload: updates,
-      // });
-      throw error;
+    // Si RLS no permite leer (ej. usuario sin acceso directo), devolver objeto mínimo
+    if (fetchErr || !full) {
+      const fallback: Reservation = {
+        id,
+        org_id: updates.org_id || oldOrgId || '',
+        dock_id: updates.dock_id || '',
+        start_datetime: updates.start_datetime || '',
+        end_datetime: updates.end_datetime || '',
+        dua: updates.dua || '',
+        invoice: updates.invoice || '',
+        driver: updates.driver || '',
+        status_id: updates.status_id || null,
+        notes: updates.notes || null,
+        transport_type: updates.transport_type || null,
+        cargo_type: updates.cargo_type || null,
+        is_cancelled: updates.is_cancelled ?? false,
+        cancel_reason: updates.cancel_reason || null,
+        cancelled_by: null,
+        cancelled_at: null,
+        created_by: '',
+        created_at: '',
+        updated_by: user.id,
+        updated_at: new Date().toISOString(),
+        purchase_order: updates.purchase_order || null,
+        truck_plate: updates.truck_plate || null,
+        order_request_number: updates.order_request_number || null,
+        shipper_provider: updates.shipper_provider || null,
+        recurrence: updates.recurrence || null,
+      };
+
+      return fallback;
     }
 
     // ✅ Disparar evento de cambio de estado si cambió
-    if (data && updates.status_id !== undefined && oldStatusId !== updates.status_id) {
+    if (updates.status_id !== undefined && oldStatusId !== updates.status_id) {
       emailTriggerService.onReservationStatusChanged(
-        data.org_id,
-        data,
+        full.org_id,
+        full,
         oldStatusId,
         updates.status_id || null
-      ).catch(err => {
-        // console.error('[Calendar] Error al disparar correos de cambio de estado:', err);
+      ).catch(() => {
+        // non-blocking
       });
     }
 
-    return data;
+    return full;
   },
 
   async cancelReservation(id: string, reason: string): Promise<void> {

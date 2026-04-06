@@ -94,12 +94,17 @@ export default function ReservasPage() {
     if (searchTerm) {
       const term = searchTerm.toLowerCase();
       filtered = filtered.filter((r) =>
+        r.id?.toLowerCase().includes(term) ||
         r.dua?.toLowerCase().includes(term) ||
         r.invoice?.toLowerCase().includes(term) ||
         r.driver?.toLowerCase().includes(term) ||
         r.purchase_order?.toLowerCase().includes(term) ||
         r.shipper_provider?.toLowerCase().includes(term) ||
-        r.truck_plate?.toLowerCase().includes(term)
+        r.truck_plate?.toLowerCase().includes(term) ||
+        r.notes?.toLowerCase().includes(term) ||
+        r.order_request_number?.toLowerCase().includes(term) ||
+        r.transport_type?.toLowerCase().includes(term) ||
+        r.cargo_type?.toLowerCase().includes(term)
       );
     }
 
@@ -312,7 +317,7 @@ export default function ReservasPage() {
           <div className="lg:col-span-2">
             <input
               type="text"
-              placeholder="Buscar por DUA, Factura, Chofer, OC, Proveedor, Placa..."
+              placeholder="Buscar por ID, DUA, Factura, Chofer, OC, Proveedor, Placa, Notas..."
               value={searchTerm}
               onChange={(e) => { setSearchTerm(e.target.value); setCurrentPage(1); }}
               className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent text-sm"
@@ -391,7 +396,7 @@ export default function ReservasPage() {
                     <div className="flex items-center gap-1">
                       Fecha/Hora
                       {sortField === 'start_datetime' && (
-                        <i className={`ri-arrow-${sortOrder === 'asc' ? 'up' : 'down'}-s-line`}></i>
+                        <i className={sortOrder === 'asc' ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'}></i>
                       )}
                     </div>
                   </th>
