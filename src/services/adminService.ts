@@ -68,19 +68,21 @@ export const adminService = {
 
   async createRole(role: { name: string; description?: string }): Promise<Role> {
     const { data, error } = await supabase.from("roles").insert(role).select().single();
-    if (error) throw error;
+    if (error) throw new Error(error.message || "No se pudo crear el rol. Verificá tus permisos.");
+    if (!data) throw new Error("No se pudo crear el rol. La operación fue rechazada por el servidor.");
     return data;
   },
 
   async updateRole(id: string, updates: { name?: string; description?: string }): Promise<Role> {
     const { data, error } = await supabase.from("roles").update(updates).eq("id", id).select().single();
-    if (error) throw error;
+    if (error) throw new Error(error.message || "No se pudo actualizar el rol. Verificá tus permisos.");
+    if (!data) throw new Error("No se pudo actualizar el rol. La operación fue rechazada por el servidor.");
     return data;
   },
 
   async deleteRole(id: string): Promise<void> {
     const { error } = await supabase.from("roles").delete().eq("id", id);
-    if (error) throw error;
+    if (error) throw new Error(error.message || "No se pudo eliminar el rol. Verificá tus permisos.");
   },
 
   // =========================
@@ -99,19 +101,21 @@ export const adminService = {
 
   async createPermission(permission: { name: string; description?: string; category?: string }): Promise<Permission> {
     const { data, error } = await supabase.from("permissions").insert(permission).select().single();
-    if (error) throw error;
+    if (error) throw new Error(error.message || "No se pudo crear el permiso. Verificá tus permisos.");
+    if (!data) throw new Error("No se pudo crear el permiso. La operación fue rechazada por el servidor.");
     return data;
   },
 
   async updatePermission(id: string, updates: { name?: string; description?: string; category?: string }): Promise<Permission> {
     const { data, error } = await supabase.from("permissions").update(updates).eq("id", id).select().single();
-    if (error) throw error;
+    if (error) throw new Error(error.message || "No se pudo actualizar el permiso. Verificá tus permisos.");
+    if (!data) throw new Error("No se pudo actualizar el permiso. La operación fue rechazada por el servidor.");
     return data;
   },
 
   async deletePermission(id: string): Promise<void> {
     const { error } = await supabase.from("permissions").delete().eq("id", id);
-    if (error) throw error;
+    if (error) throw new Error(error.message || "No se pudo eliminar el permiso. Verificá tus permisos.");
   },
 
   // =========================
@@ -128,7 +132,7 @@ export const adminService = {
     if (!user) throw new Error("Usuario no autenticado");
 
     const { error } = await supabase.from("role_permissions").insert({ role_id: roleId, permission_id: permissionId });
-    if (error) throw error;
+    if (error) throw new Error(error.message || "No se pudo asignar el permiso. Verificá tus permisos.");
 
     await supabase.from("admin_audit_log").insert({
       org_id: orgId,
@@ -145,7 +149,7 @@ export const adminService = {
     if (!user) throw new Error("Usuario no autenticado");
 
     const { error } = await supabase.from("role_permissions").delete().eq("role_id", roleId).eq("permission_id", permissionId);
-    if (error) throw error;
+    if (error) throw new Error(error.message || "No se pudo quitar el permiso. Verificá tus permisos.");
 
     await supabase.from("admin_audit_log").insert({
       org_id: orgId,
@@ -161,13 +165,14 @@ export const adminService = {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) throw new Error("Usuario no autenticado");
 
-    await supabase.from("role_permissions").delete().eq("role_id", roleId);
+    const { error: delError } = await supabase.from("role_permissions").delete().eq("role_id", roleId);
+    if (delError) throw new Error(delError.message || "No se pudo limpiar los permisos anteriores.");
 
     if (permissionIds.length > 0) {
       const { error } = await supabase.from("role_permissions").insert(
         permissionIds.map((permissionId) => ({ role_id: roleId, permission_id: permissionId }))
       );
-      if (error) throw error;
+      if (error) throw new Error(error.message || "No se pudo asignar los permisos. Verificá tus permisos.");
     }
 
     await supabase.from("admin_audit_log").insert({

@@ -1,41 +1,80 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { clientBlockedStatusesService } from '../services/clientBlockedStatusesService';
 import { useAuth } from '../contexts/AuthContext';
+import { supabase } from '../lib/supabase';
+import type { ClientBlockedStatusConfig } from '../types/client';
 
 /**
  * Hook para verificar si una reserva está bloqueada según las reglas del CLIENTE.
  *
- * IMPORTANTE: Usa client_id DIRECTO de la reserva (columna real en BD).
- * No infiere el cliente desde shipper_provider.
+ * Evalúa la regla compuesta:
+ *   - blocked_status_ids: estados que bloquean
+ *   - bypass_role_ids:    roles que pueden saltarse el bloqueo
+ *   - bypass_user_ids:    usuarios específicos que pueden saltarse el bloqueo
+ *
+ * Prioridad:
+ *   1. ADMIN / Full Access → siempre pasan
+ *   2. user.id ∈ bypass_user_ids
+ *   3. user.role_id ∈ bypass_role_ids
  */
 export function useBlockedStatuses(orgId: string | null) {
-  const { canLocal } = useAuth();
+  const { canLocal, user } = useAuth();
 
   const isPrivileged =
     canLocal('admin.users.create') || canLocal('admin.matrix.update');
 
-  const cacheRef = useRef<Map<string, string[]>>(new Map());
+  // Caché de configuración completa por clientId
+  const configCacheRef = useRef<Map<string, ClientBlockedStatusConfig>>(new Map());
 
-  const getBlockedIdsForClient = useCallback(
-    async (clientId: string): Promise<string[]> => {
-      if (!orgId) return [];
-      if (cacheRef.current.has(clientId)) {
-        return cacheRef.current.get(clientId)!;
+  // role_id del usuario actual (cargado una vez)
+  const userRoleIdRef = useRef<string | null>(null);
+  const roleIdLoadedRef = useRef(false);
+
+  // Cargar role_id del usuario una sola vez
+  useEffect(() => {
+    if (!user?.id || !orgId || roleIdLoadedRef.current) return;
+    roleIdLoadedRef.current = true;
+
+    supabase
+      .from('user_org_roles')
+      .select('role_id')
+      .eq('user_id', user.id)
+      .eq('org_id', orgId)
+      .maybeSingle()
+      .then(({ data }) => {
+        userRoleIdRef.current = data?.role_id ?? null;
+      });
+  }, [user?.id, orgId]);
+
+  const getConfigForClient = useCallback(
+    async (clientId: string): Promise<ClientBlockedStatusConfig> => {
+      if (!orgId) return { blocked_status_ids: [], bypass_role_ids: [], bypass_user_ids: [] };
+      if (configCacheRef.current.has(clientId)) {
+        return configCacheRef.current.get(clientId)!;
       }
       try {
-        const ids = await clientBlockedStatusesService.getBlockedStatusIds(orgId, clientId);
-        cacheRef.current.set(clientId, ids);
-        return ids;
+        const config = await clientBlockedStatusesService.getConfig(orgId, clientId);
+        configCacheRef.current.set(clientId, config);
+        return config;
       } catch {
-        return [];
+        return { blocked_status_ids: [], bypass_role_ids: [], bypass_user_ids: [] };
       }
     },
     [orgId]
   );
 
+  // Mantener compatibilidad con código existente
+  const getBlockedIdsForClient = useCallback(
+    async (clientId: string): Promise<string[]> => {
+      const config = await getConfigForClient(clientId);
+      return config.blocked_status_ids;
+    },
+    [getConfigForClient]
+  );
+
   /**
-   * Verifica si una reserva está bloqueada usando client_id directo.
-   * Si no hay client_id, usa el servicio que hace fallback via shipper_provider.
+   * Verifica si una reserva está bloqueada para el usuario actual.
+   * Evalúa la regla compuesta (blocked_status_ids + bypass_role_ids + bypass_user_ids).
    */
   const isReservationBlockedAsync = useCallback(
     async (
@@ -47,18 +86,24 @@ export function useBlockedStatuses(orgId: string | null) {
       if (!statusId || !orgId) return false;
 
       try {
-        // ✅ Si tenemos client_id directo, usarlo sin fetch extra
-        if (clientId) {
-          const blockedIds = await getBlockedIdsForClient(clientId);
-          return blockedIds.includes(statusId);
-        }
-        // Fallback: el servicio busca client_id de la reserva
-        return await clientBlockedStatusesService.isReservationBlocked(orgId, reservationId, statusId);
+        const resolvedClientId = clientId
+          || await clientBlockedStatusesService.getClientIdForReservation(orgId, reservationId);
+
+        if (!resolvedClientId) return false;
+
+        return await clientBlockedStatusesService.isBlockedForUser(
+          orgId,
+          resolvedClientId,
+          statusId,
+          user?.id,
+          userRoleIdRef.current,
+          isPrivileged
+        );
       } catch {
         return false;
       }
     },
-    [isPrivileged, orgId, getBlockedIdsForClient]
+    [isPrivileged, orgId, user?.id]
   );
 
   /**
@@ -69,22 +114,27 @@ export function useBlockedStatuses(orgId: string | null) {
       if (isPrivileged) return false;
       if (!statusId || !clientId) return false;
 
-      const cached = cacheRef.current.get(clientId);
-      if (!cached) return false;
-      return cached.includes(statusId);
+      const config = configCacheRef.current.get(clientId);
+      return clientBlockedStatusesService.isBlockedForUserSync(
+        config,
+        statusId,
+        user?.id,
+        userRoleIdRef.current,
+        isPrivileged
+      );
     },
-    [isPrivileged]
+    [isPrivileged, user?.id]
   );
 
   const preloadClient = useCallback(
     async (clientId: string): Promise<void> => {
-      await getBlockedIdsForClient(clientId);
+      await getConfigForClient(clientId);
     },
-    [getBlockedIdsForClient]
+    [getConfigForClient]
   );
 
   const invalidateClient = useCallback((clientId: string) => {
-    cacheRef.current.delete(clientId);
+    configCacheRef.current.delete(clientId);
   }, []);
 
   return {
@@ -93,13 +143,15 @@ export function useBlockedStatuses(orgId: string | null) {
     preloadClient,
     invalidateClient,
     isPrivileged,
+    getBlockedIdsForClient,
+    // Compatibilidad legacy
     isReservationBlocked: (_statusId: string | null | undefined) => false,
   };
 }
 
 /**
  * Hook especializado para el ReservationModal.
- * Usa client_id DIRECTO de la reserva para evaluar el bloqueo.
+ * Evalúa la regla compuesta con bypass por rol y usuario.
  */
 export function useReservationBlockedStatus(
   orgId: string | null,
@@ -107,11 +159,30 @@ export function useReservationBlockedStatus(
   statusId: string | null | undefined,
   clientId?: string | null
 ) {
-  const { canLocal } = useAuth();
+  const { canLocal, user } = useAuth();
   const isPrivileged = canLocal('admin.users.create') || canLocal('admin.matrix.update');
 
   const [isBlocked, setIsBlocked] = useState(false);
   const [loading, setLoading] = useState(false);
+
+  // role_id del usuario actual
+  const userRoleIdRef = useRef<string | null>(null);
+  const roleIdLoadedRef = useRef(false);
+
+  useEffect(() => {
+    if (!user?.id || !orgId || roleIdLoadedRef.current) return;
+    roleIdLoadedRef.current = true;
+
+    supabase
+      .from('user_org_roles')
+      .select('role_id')
+      .eq('user_id', user.id)
+      .eq('org_id', orgId)
+      .maybeSingle()
+      .then(({ data }) => {
+        userRoleIdRef.current = data?.role_id ?? null;
+      });
+  }, [user?.id, orgId]);
 
   useEffect(() => {
     if (isPrivileged) {
@@ -128,15 +199,17 @@ export function useReservationBlockedStatus(
 
     const evaluate = async () => {
       try {
-        let blocked = false;
+        const resolvedClientId = clientId
+          || await clientBlockedStatusesService.getClientIdForReservation(orgId, reservationId);
 
-        // ✅ Si tenemos client_id directo, usarlo (más rápido, sin fetch extra)
-        if (clientId) {
-          blocked = await clientBlockedStatusesService.isBlockedByClientId(orgId, clientId, statusId);
-        } else {
-          // Fallback: el servicio busca client_id de la reserva
-          blocked = await clientBlockedStatusesService.isReservationBlocked(orgId, reservationId, statusId);
-        }
+        const blocked = await clientBlockedStatusesService.isBlockedForUser(
+          orgId,
+          resolvedClientId,
+          statusId,
+          user?.id,
+          userRoleIdRef.current,
+          isPrivileged
+        );
 
         if (!cancelled) setIsBlocked(blocked);
       } catch {
@@ -149,7 +222,7 @@ export function useReservationBlockedStatus(
     evaluate();
 
     return () => { cancelled = true; };
-  }, [orgId, reservationId, statusId, clientId, isPrivileged]);
+  }, [orgId, reservationId, statusId, clientId, isPrivileged, user?.id]);
 
   return { isBlocked, loading };
 }

@@ -10,6 +10,8 @@ export default function RolesTab() {
   const [showModal, setShowModal] = useState(false);
   const [editingRole, setEditingRole] = useState<Role | null>(null);
   const [formData, setFormData] = useState({ name: '', description: '' });
+  const [saving, setSaving] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
   
   // Modal de confirmación de eliminación
   const [deleteModal, setDeleteModal] = useState<{
@@ -49,6 +51,8 @@ export default function RolesTab() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setFormError(null);
+    setSaving(true);
     try {
       if (editingRole) {
         await adminService.updateRole(editingRole.id, formData);
@@ -60,10 +64,10 @@ export default function RolesTab() {
       setEditingRole(null);
       setFormData({ name: '', description: '' });
     } catch (error: any) {
-      setErrorModal({
-        isOpen: true,
-        message: error.message || 'No se pudo guardar el rol'
-      });
+      const msg = error.message || 'No se pudo guardar el rol';
+      setFormError(msg);
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -105,6 +109,7 @@ export default function RolesTab() {
     setShowModal(false);
     setEditingRole(null);
     setFormData({ name: '', description: '' });
+    setFormError(null);
   };
 
   if (loading) {
@@ -226,18 +231,28 @@ export default function RolesTab() {
                 />
               </div>
 
+              {formError && (
+                <div className="mb-4 flex items-start gap-2 p-3 bg-red-50 border border-red-200 rounded-lg">
+                  <i className="ri-error-warning-line text-red-500 mt-0.5 w-4 h-4 flex items-center justify-center flex-shrink-0"></i>
+                  <p className="text-sm text-red-700">{formError}</p>
+                </div>
+              )}
+
               <div className="flex gap-3">
                 <button
                   type="button"
                   onClick={handleCloseModal}
-                  className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors whitespace-nowrap"
+                  disabled={saving}
+                  className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors whitespace-nowrap disabled:opacity-50"
                 >
                   Cancelar
                 </button>
                 <button
                   type="submit"
-                  className="flex-1 px-4 py-2 bg-teal-600 text-white rounded-lg hover:bg-teal-700 transition-colors whitespace-nowrap"
+                  disabled={saving}
+                  className="flex-1 px-4 py-2 bg-teal-600 text-white rounded-lg hover:bg-teal-700 transition-colors whitespace-nowrap disabled:opacity-60 flex items-center justify-center gap-2"
                 >
+                  {saving && <span className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin"></span>}
                   {editingRole ? 'Guardar Cambios' : 'Crear Rol'}
                 </button>
               </div>

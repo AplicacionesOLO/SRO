@@ -78,7 +78,7 @@ function getUtcOffsetLabel(timezone: string): string {
 }
 
 type ViewMode = '1day' | '3days' | '7days';
-type TabMode = 'calendar' | 'statuses' | 'blocks' | 'rules';
+type TabMode = 'calendar' | 'statuses' | 'blocks';
 
 interface TimeSlot {
   hour: number;
@@ -1132,25 +1132,22 @@ export default function CalendarioPage() {
 
     const reservation = draggedEvent.data as Reservation;
 
-    // ── Bloqueo por estado (por cliente) — usa client_id directo ─────────
-    if (!isPrivilegedUser && reservation.status_id) {
-      const blocked = (reservation as any).client_id
-        ? await clientBlockedStatusesService.isBlockedByClientId(
-            orgId!,
-            (reservation as any).client_id,
-            reservation.status_id
-          )
-        : await clientBlockedStatusesService.isReservationBlocked(
-            orgId!,
-            reservation.id,
-            reservation.status_id
-          );
+    // ── Bloqueo por estado (regla compuesta con bypass) ──────────────────
+    if (reservation.status_id) {
+      const blocked = await clientBlockedStatusesService.isBlockedForUser(
+        orgId!,
+        (reservation as any).client_id ?? null,
+        reservation.status_id,
+        user?.id ?? null,
+        null, // role_id se evalúa en el servicio con caché del hook
+        isPrivilegedUser
+      );
       if (blocked) {
         setNotifyModal({
           isOpen: true,
           type: 'warning',
           title: 'Reserva bloqueada',
-          message: 'Esta reserva no puede modificarse en su estado actual. Solo un ADMIN o Full Access puede moverla.',
+          message: 'Esta reserva no puede modificarse en su estado actual. Tu rol no tiene permiso para moverla.',
         });
         setDraggedEvent(null);
         return;
@@ -1618,19 +1615,7 @@ export default function CalendarioPage() {
                 Bloqueos
               </button>
             )}
-            {isPrivilegedUser && (
-              <button
-                onClick={() => setTabMode('rules')}
-                className={`px-6 py-3 font-medium text-sm border-b-2 transition-colors whitespace-nowrap ${
-                  tabMode === 'rules'
-                    ? 'border-teal-600 text-teal-600'
-                    : 'border-transparent text-gray-600 hover:text-gray-900'
-                }`}
-              >
-                <i className="ri-settings-3-line mr-2 w-4 h-4 inline-flex items-center justify-center"></i>
-                Reglas Op.
-              </button>
-            )}
+
           </div>
         </div>
       </div>
@@ -1643,17 +1628,6 @@ export default function CalendarioPage() {
       ) : tabMode === 'blocks' && canViewBlocks ? (
         <div className="flex-1 overflow-auto">
           <BlocksManagementTab />
-        </div>
-      ) : tabMode === 'rules' && isPrivilegedUser ? (
-        <div className="flex-1 overflow-auto p-6">
-          <div className="max-w-xl mx-auto bg-amber-50 border border-amber-200 rounded-xl p-6 text-center">
-            <i className="ri-information-line text-amber-600 text-3xl w-8 h-8 flex items-center justify-center mx-auto mb-3"></i>
-            <h3 className="text-base font-semibold text-amber-900 mb-2">Regla de bloqueo por estados</h3>
-            <p className="text-sm text-amber-800">
-              La regla de bloqueo por estados ahora es <strong>por cliente</strong>. Configurala desde{' '}
-              <strong>Admin &gt; Clientes &gt; [Cliente] &gt; Reglas &gt; Bloqueo por estados</strong>.
-            </p>
-          </div>
         </div>
       ) : (
         <>

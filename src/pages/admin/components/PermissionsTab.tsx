@@ -9,6 +9,8 @@ export default function PermissionsTab() {
   const [showModal, setShowModal] = useState(false);
   const [editingPermission, setEditingPermission] = useState<Permission | null>(null);
   const [formData, setFormData] = useState({ name: '', description: '', category: '' });
+  const [saving, setSaving] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
 
   // Modal de confirmación de eliminación
   const [deleteModal, setDeleteModal] = useState<{
@@ -48,6 +50,8 @@ export default function PermissionsTab() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setFormError(null);
+    setSaving(true);
     try {
       if (editingPermission) {
         await adminService.updatePermission(editingPermission.id, formData);
@@ -59,10 +63,9 @@ export default function PermissionsTab() {
       setEditingPermission(null);
       setFormData({ name: '', description: '', category: '' });
     } catch (error: any) {
-      setErrorModal({
-        isOpen: true,
-        message: error.message || 'No se pudo guardar el permiso'
-      });
+      setFormError(error.message || 'No se pudo guardar el permiso');
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -73,6 +76,7 @@ export default function PermissionsTab() {
       description: permission.description || '', 
       category: permission.category || '' 
     });
+    setFormError(null);
     setShowModal(true);
   };
 
@@ -108,6 +112,7 @@ export default function PermissionsTab() {
     setShowModal(false);
     setEditingPermission(null);
     setFormData({ name: '', description: '', category: '' });
+    setFormError(null);
   };
 
   const categories = ['all', ...new Set(permissions.map(p => p.category).filter(Boolean))];
@@ -294,19 +299,29 @@ export default function PermissionsTab() {
                 />
               </div>
 
+              {formError && (
+                <div className="mb-4 flex items-start gap-2 p-3 bg-red-50 border border-red-200 rounded-lg">
+                  <i className="ri-error-warning-line text-red-500 mt-0.5 flex-shrink-0"></i>
+                  <p className="text-sm text-red-700">{formError}</p>
+                </div>
+              )}
+
               <div className="flex gap-3">
                 <button
                   type="button"
                   onClick={handleCloseModal}
-                  className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors whitespace-nowrap"
+                  disabled={saving}
+                  className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors whitespace-nowrap disabled:opacity-50"
                 >
                   Cancelar
                 </button>
                 <button
                   type="submit"
-                  className="flex-1 px-4 py-2 bg-teal-600 text-white rounded-lg hover:bg-teal-700 transition-colors whitespace-nowrap"
+                  disabled={saving}
+                  className="flex-1 px-4 py-2 bg-teal-600 text-white rounded-lg hover:bg-teal-700 transition-colors whitespace-nowrap disabled:opacity-60 flex items-center justify-center gap-2"
                 >
-                  {editingPermission ? 'Guardar Cambios' : 'Crear Permiso'}
+                  {saving && <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>}
+                  {saving ? 'Guardando...' : (editingPermission ? 'Guardar Cambios' : 'Crear Permiso')}
                 </button>
               </div>
             </form>

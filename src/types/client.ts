@@ -29,8 +29,18 @@ export interface ClientRules {
   edit_cutoff_hours: number;
   allow_all_docks: boolean;
   dock_allocation_mode: string;
+  blocked_status_ids: string[];
+  bypass_role_ids: string[];
+  bypass_user_ids: string[];
   created_at: string;
   updated_at: string;
+}
+
+/** Configuración compuesta de bloqueo por estados para un cliente */
+export interface ClientBlockedStatusConfig {
+  blocked_status_ids: string[];
+  bypass_role_ids: string[];
+  bypass_user_ids: string[];
 }
 
 export interface ClientRulesFormData {

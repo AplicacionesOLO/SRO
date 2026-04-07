@@ -1,52 +1,120 @@
 import { useState, useEffect, useCallback } from 'react';
 import { clientBlockedStatusesService } from '../../../services/clientBlockedStatusesService';
 import { calendarService } from '../../../services/calendarService';
+import { adminService } from '../../../services/adminService';
 import { useAuth } from '../../../contexts/AuthContext';
+import { supabase } from '../../../lib/supabase';
+import type { ClientBlockedStatusConfig } from '../../../types/client';
 
 interface BlockedStatusesConfigProps {
   orgId: string;
-  /**
-   * ID del cliente para el que se configura la regla.
-   * Si se pasa clientId, la regla se guarda en client_rules (por cliente).
-   * Si NO se pasa clientId, el componente muestra un mensaje de error.
-   */
   clientId?: string;
 }
 
-/**
- * Componente de configuración para la regla de bloqueo de edición por estado.
- *
- * La regla es POR CLIENTE: cada cliente tiene su propia lista de estados bloqueados.
- * Si Cofersa bloquea "Confirmada", solo las reservas de Cofersa quedan bloqueadas.
- */
+interface UserOption {
+  id: string;
+  name: string;
+  email: string;
+  roleId: string | null;
+  roleName: string | null;
+}
+
+interface StatusOption {
+  id: string;
+  name: string;
+  color: string;
+}
+
+interface RoleOption {
+  id: string;
+  name: string;
+  description: string | null;
+}
+
 export default function BlockedStatusesConfig({ orgId, clientId }: BlockedStatusesConfigProps) {
   const { canLocal } = useAuth();
   const isPrivileged = canLocal('admin.users.create') || canLocal('admin.matrix.update');
 
-  const [statuses, setStatuses] = useState<any[]>([]);
-  const [selectedIds, setSelectedIds] = useState<string[]>([]);
-  const [originalIds, setOriginalIds] = useState<string[]>([]);
+  // ── Datos disponibles ──────────────────────────────────────────────────
+  const [allStatuses, setAllStatuses] = useState<StatusOption[]>([]);
+  const [allRoles, setAllRoles] = useState<RoleOption[]>([]);
+  const [allUsers, setAllUsers] = useState<UserOption[]>([]);
+
+  // ── Configuración actual ───────────────────────────────────────────────
+  const [config, setConfig] = useState<ClientBlockedStatusConfig>({
+    blocked_status_ids: [],
+    bypass_role_ids: [],
+    bypass_user_ids: [],
+  });
+  const [originalConfig, setOriginalConfig] = useState<ClientBlockedStatusConfig>({
+    blocked_status_ids: [],
+    bypass_role_ids: [],
+    bypass_user_ids: [],
+  });
+
+  // ── Selectores desplegables ────────────────────────────────────────────
+  const [selectedStatusId, setSelectedStatusId] = useState('');
+  const [selectedRoleId, setSelectedRoleId] = useState('');
+  const [selectedUserId, setSelectedUserId] = useState('');
+  const [userSearch, setUserSearch] = useState('');
+
+  // ── UI state ───────────────────────────────────────────────────────────
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState('');
 
+  // ── Carga inicial ──────────────────────────────────────────────────────
   const load = useCallback(async () => {
     if (!orgId) return;
     try {
       setLoading(true);
       setError('');
 
-      const statusesData = await calendarService.getReservationStatuses(orgId);
-      setStatuses(statusesData);
+      const [statusesData, rolesData] = await Promise.all([
+        calendarService.getReservationStatuses(orgId),
+        adminService.getRoles(),
+      ]);
+
+      setAllStatuses(statusesData.map((s: any) => ({
+        id: s.id,
+        name: s.name,
+        color: s.color || '#6B7280',
+      })));
+      setAllRoles(rolesData);
+
+      // Cargar usuarios de la org
+      try {
+        const usersData = await adminService.getOrgUsers(orgId);
+        // Enriquecer con role_id desde user_org_roles
+        const { data: uorData } = await supabase
+          .from('user_org_roles')
+          .select('user_id, role_id, roles!user_org_roles_role_id_fkey(id, name)')
+          .eq('org_id', orgId);
+
+        const uorMap = new Map<string, { roleId: string; roleName: string }>();
+        (uorData || []).forEach((uor: any) => {
+          uorMap.set(uor.user_id, {
+            roleId: uor.role_id,
+            roleName: uor.roles?.name || '',
+          });
+        });
+
+        setAllUsers(usersData.map((u) => ({
+          id: u.id,
+          name: u.full_name || u.email || u.id,
+          email: u.email || '',
+          roleId: uorMap.get(u.id)?.roleId || null,
+          roleName: uorMap.get(u.id)?.roleName || null,
+        })));
+      } catch {
+        setAllUsers([]);
+      }
 
       if (clientId) {
-        const blockedIds = await clientBlockedStatusesService.getBlockedStatusIds(orgId, clientId);
-        setSelectedIds(blockedIds);
-        setOriginalIds(blockedIds);
-      } else {
-        setSelectedIds([]);
-        setOriginalIds([]);
+        const cfg = await clientBlockedStatusesService.getConfig(orgId, clientId);
+        setConfig(cfg);
+        setOriginalConfig(cfg);
       }
     } catch {
       setError('Error al cargar la configuración. Intentá de nuevo.');
@@ -55,15 +123,78 @@ export default function BlockedStatusesConfig({ orgId, clientId }: BlockedStatus
     }
   }, [orgId, clientId]);
 
-  useEffect(() => {
-    load();
-  }, [load]);
+  useEffect(() => { load(); }, [load]);
 
-  const toggleStatus = (statusId: string) => {
-    if (!isPrivileged) return;
-    setSelectedIds((prev) =>
-      prev.includes(statusId) ? prev.filter((id) => id !== statusId) : [...prev, statusId]
+  // ── Helpers ────────────────────────────────────────────────────────────
+  const getStatusById = (id: string) => allStatuses.find((s) => s.id === id);
+  const getRoleById = (id: string) => allRoles.find((r) => r.id === id);
+  const getUserById = (id: string) => allUsers.find((u) => u.id === id);
+
+  const availableStatuses = allStatuses.filter((s) => !config.blocked_status_ids.includes(s.id));
+  const availableRoles = allRoles.filter((r) => !config.bypass_role_ids.includes(r.id));
+  const filteredUsers = allUsers.filter((u) => {
+    if (config.bypass_user_ids.includes(u.id)) return false;
+    if (!userSearch.trim()) return true;
+    const term = userSearch.toLowerCase();
+    return (
+      u.name.toLowerCase().includes(term) ||
+      u.email.toLowerCase().includes(term)
     );
+  });
+
+  // ── Acciones ───────────────────────────────────────────────────────────
+  const addStatus = () => {
+    if (!selectedStatusId) return;
+    setConfig((prev) => ({
+      ...prev,
+      blocked_status_ids: [...prev.blocked_status_ids, selectedStatusId],
+    }));
+    setSelectedStatusId('');
+    setSaved(false);
+  };
+
+  const removeStatus = (id: string) => {
+    setConfig((prev) => ({
+      ...prev,
+      blocked_status_ids: prev.blocked_status_ids.filter((x) => x !== id),
+    }));
+    setSaved(false);
+  };
+
+  const addRole = () => {
+    if (!selectedRoleId) return;
+    setConfig((prev) => ({
+      ...prev,
+      bypass_role_ids: [...prev.bypass_role_ids, selectedRoleId],
+    }));
+    setSelectedRoleId('');
+    setSaved(false);
+  };
+
+  const removeRole = (id: string) => {
+    setConfig((prev) => ({
+      ...prev,
+      bypass_role_ids: prev.bypass_role_ids.filter((x) => x !== id),
+    }));
+    setSaved(false);
+  };
+
+  const addUser = () => {
+    if (!selectedUserId) return;
+    setConfig((prev) => ({
+      ...prev,
+      bypass_user_ids: [...prev.bypass_user_ids, selectedUserId],
+    }));
+    setSelectedUserId('');
+    setUserSearch('');
+    setSaved(false);
+  };
+
+  const removeUser = (id: string) => {
+    setConfig((prev) => ({
+      ...prev,
+      bypass_user_ids: prev.bypass_user_ids.filter((x) => x !== id),
+    }));
     setSaved(false);
   };
 
@@ -72,8 +203,8 @@ export default function BlockedStatusesConfig({ orgId, clientId }: BlockedStatus
     try {
       setSaving(true);
       setError('');
-      await clientBlockedStatusesService.setBlockedStatusIds(orgId, clientId, selectedIds);
-      setOriginalIds(selectedIds);
+      await clientBlockedStatusesService.setConfig(orgId, clientId, config);
+      setOriginalConfig(config);
       setSaved(true);
       setTimeout(() => setSaved(false), 3000);
     } catch {
@@ -84,7 +215,9 @@ export default function BlockedStatusesConfig({ orgId, clientId }: BlockedStatus
   };
 
   const hasChanges =
-    JSON.stringify([...selectedIds].sort()) !== JSON.stringify([...originalIds].sort());
+    JSON.stringify(config.blocked_status_ids.slice().sort()) !== JSON.stringify(originalConfig.blocked_status_ids.slice().sort()) ||
+    JSON.stringify(config.bypass_role_ids.slice().sort()) !== JSON.stringify(originalConfig.bypass_role_ids.slice().sort()) ||
+    JSON.stringify(config.bypass_user_ids.slice().sort()) !== JSON.stringify(originalConfig.bypass_user_ids.slice().sort());
 
   if (loading) {
     return (
@@ -95,107 +228,308 @@ export default function BlockedStatusesConfig({ orgId, clientId }: BlockedStatus
   }
 
   return (
-    <div className="w-full">
+    <div className="w-full space-y-5">
       {/* Info box */}
-      <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 mb-4">
+      <div className="bg-amber-50 border border-amber-200 rounded-xl p-4">
         <div className="flex items-start gap-3">
           <i className="ri-information-line text-amber-600 text-lg w-5 h-5 flex items-center justify-center flex-shrink-0 mt-0.5"></i>
           <div className="text-sm text-amber-800">
-            <p className="font-semibold mb-1">¿Qué se bloquea?</p>
-            <ul className="space-y-0.5 text-amber-700">
-              <li>• Edición de campos en el modal de reserva</li>
-              <li>• Cambio de estado</li>
-              <li>• Mover la reserva en el calendario (drag &amp; drop)</li>
-              <li>• Cancelar la reserva</li>
-              <li>• Cualquier actualización desde el servicio</li>
-            </ul>
-            <p className="mt-2 font-medium text-amber-900">
-              Esta regla aplica solo a las reservas de este cliente.
+            <p className="font-semibold mb-1">Regla compuesta de bloqueo</p>
+            <p className="text-amber-700 mb-1">
+              Si la reserva de este cliente tiene uno de los estados bloqueados, se bloquea toda edición
+              (modal, drag&amp;drop, cambio de estado, cancelar).
+            </p>
+            <p className="text-amber-700">
+              <strong>Excepción:</strong> ADMIN y Full Access siempre pueden editar. Además podés configurar
+              roles y usuarios específicos que también puedan saltarse el bloqueo.
             </p>
           </div>
         </div>
       </div>
 
-      {/* Lista de estados */}
-      {statuses.length === 0 ? (
-        <div className="text-center py-12 bg-gray-50 rounded-xl border border-gray-200">
-          <i className="ri-flag-line text-4xl text-gray-300 w-10 h-10 flex items-center justify-center mx-auto mb-3"></i>
-          <p className="text-sm text-gray-500">No hay estados configurados para esta organización.</p>
-          <p className="text-xs text-gray-400 mt-1">Creá estados en la pestaña "Estatus Op" primero.</p>
+      {/* ── BLOQUE 1: Estados bloqueados ─────────────────────────────────── */}
+      <div className="border border-gray-200 rounded-xl overflow-hidden">
+        <div className="flex items-center gap-3 px-4 py-3 bg-amber-50 border-b border-amber-200">
+          <div className="w-7 h-7 bg-amber-100 rounded-lg flex items-center justify-center flex-shrink-0">
+            <i className="ri-lock-2-line text-amber-600 text-sm w-4 h-4 flex items-center justify-center"></i>
+          </div>
+          <div>
+            <p className="text-sm font-semibold text-amber-900">Estados bloqueados</p>
+            <p className="text-xs text-amber-700">Las reservas en estos estados no podrán modificarse</p>
+          </div>
+          {config.blocked_status_ids.length > 0 && (
+            <span className="ml-auto px-2 py-0.5 bg-amber-200 text-amber-800 text-xs font-bold rounded-full">
+              {config.blocked_status_ids.length}
+            </span>
+          )}
         </div>
-      ) : (
-        <div className="space-y-2 mb-6">
-          {statuses.map((status) => {
-            const isSelected = selectedIds.includes(status.id);
-            return (
-              <button
-                key={status.id}
-                type="button"
-                onClick={() => toggleStatus(status.id)}
-                disabled={!isPrivileged || !clientId}
-                className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl border-2 transition-all text-left ${
-                  isSelected
-                    ? 'border-amber-400 bg-amber-50'
-                    : 'border-gray-200 bg-white hover:border-gray-300'
-                } ${!isPrivileged || !clientId ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'}`}
+
+        <div className="p-4 space-y-3">
+          {/* Selector + botón agregar */}
+          {isPrivileged && clientId && (
+            <div className="flex gap-2">
+              <select
+                value={selectedStatusId}
+                onChange={(e) => setSelectedStatusId(e.target.value)}
+                className="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent bg-white"
               >
-                {/* Color dot */}
-                <div
-                  className="w-3 h-3 rounded-full flex-shrink-0"
-                  style={{ backgroundColor: status.color || '#6B7280' }}
-                />
-
-                {/* Nombre */}
-                <span
-                  className={`flex-1 text-sm font-medium ${
-                    isSelected ? 'text-amber-900' : 'text-gray-800'
-                  }`}
-                >
-                  {status.name}
-                </span>
-
-                {/* Badge "Bloqueado" */}
-                {isSelected && (
-                  <span className="flex items-center gap-1 px-2 py-0.5 bg-amber-200 text-amber-800 text-xs font-semibold rounded-full">
-                    <i className="ri-lock-line w-3 h-3 flex items-center justify-center"></i>
-                    Bloqueado
-                  </span>
-                )}
-
-                {/* Checkbox visual */}
-                <div
-                  className={`w-5 h-5 rounded border-2 flex items-center justify-center flex-shrink-0 ${
-                    isSelected ? 'bg-amber-500 border-amber-500' : 'border-gray-300'
-                  }`}
-                >
-                  {isSelected && (
-                    <i className="ri-check-line text-white text-xs w-3 h-3 flex items-center justify-center"></i>
-                  )}
-                </div>
+                <option value="">Seleccionar estado...</option>
+                {availableStatuses.map((s) => (
+                  <option key={s.id} value={s.id}>{s.name}</option>
+                ))}
+              </select>
+              <button
+                type="button"
+                onClick={addStatus}
+                disabled={!selectedStatusId}
+                className="px-4 py-2 bg-amber-600 text-white text-sm font-semibold rounded-lg hover:bg-amber-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors whitespace-nowrap"
+              >
+                <i className="ri-add-line mr-1 w-4 h-4 inline-flex items-center justify-center"></i>
+                Agregar
               </button>
-            );
-          })}
-        </div>
-      )}
+            </div>
+          )}
 
-      {/* Resumen */}
-      {selectedIds.length > 0 && (
-        <div className="bg-gray-50 border border-gray-200 rounded-xl p-4 mb-6">
-          <p className="text-sm text-gray-700">
-            <span className="font-semibold">{selectedIds.length}</span> estado
-            {selectedIds.length !== 1 ? 's' : ''} bloqueado
-            {selectedIds.length !== 1 ? 's' : ''}:{' '}
-            {selectedIds
-              .map((id) => statuses.find((s) => s.id === id)?.name)
-              .filter(Boolean)
-              .join(', ')}
-          </p>
+          {/* Lista de estados bloqueados */}
+          {config.blocked_status_ids.length === 0 ? (
+            <div className="text-center py-6 bg-gray-50 rounded-lg border border-dashed border-gray-200">
+              <i className="ri-lock-unlock-line text-2xl text-gray-300 w-6 h-6 flex items-center justify-center mx-auto mb-1"></i>
+              <p className="text-xs text-gray-400">Ningún estado bloqueado — las reservas se pueden editar libremente</p>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {config.blocked_status_ids.map((id) => {
+                const status = getStatusById(id);
+                return (
+                  <div key={id} className="flex items-center gap-3 px-3 py-2.5 bg-amber-50 border border-amber-200 rounded-lg">
+                    <div
+                      className="w-3 h-3 rounded-full flex-shrink-0"
+                      style={{ backgroundColor: status?.color || '#6B7280' }}
+                    />
+                    <span className="flex-1 text-sm font-medium text-amber-900">
+                      {status?.name || id}
+                    </span>
+                    <span className="px-2 py-0.5 bg-amber-200 text-amber-800 text-xs font-semibold rounded-full">
+                      Bloqueado
+                    </span>
+                    {isPrivileged && clientId && (
+                      <button
+                        type="button"
+                        onClick={() => removeStatus(id)}
+                        className="w-6 h-6 flex items-center justify-center text-amber-600 hover:text-red-600 hover:bg-red-50 rounded transition-colors"
+                        title="Quitar estado"
+                      >
+                        <i className="ri-close-line text-sm w-4 h-4 flex items-center justify-center"></i>
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
-      )}
+      </div>
+
+      {/* ── BLOQUE 2: Roles exceptuados ──────────────────────────────────── */}
+      <div className="border border-gray-200 rounded-xl overflow-hidden">
+        <div className="flex items-center gap-3 px-4 py-3 bg-teal-50 border-b border-teal-200">
+          <div className="w-7 h-7 bg-teal-100 rounded-lg flex items-center justify-center flex-shrink-0">
+            <i className="ri-shield-check-line text-teal-600 text-sm w-4 h-4 flex items-center justify-center"></i>
+          </div>
+          <div>
+            <p className="text-sm font-semibold text-teal-900">Roles que pueden saltarse el bloqueo</p>
+            <p className="text-xs text-teal-700">Usuarios con estos roles podrán editar aunque la reserva esté bloqueada</p>
+          </div>
+          {config.bypass_role_ids.length > 0 && (
+            <span className="ml-auto px-2 py-0.5 bg-teal-200 text-teal-800 text-xs font-bold rounded-full">
+              {config.bypass_role_ids.length}
+            </span>
+          )}
+        </div>
+
+        <div className="p-4 space-y-3">
+          {isPrivileged && clientId && (
+            <div className="flex gap-2">
+              <select
+                value={selectedRoleId}
+                onChange={(e) => setSelectedRoleId(e.target.value)}
+                className="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent bg-white"
+              >
+                <option value="">Seleccionar rol...</option>
+                {availableRoles.map((r) => (
+                  <option key={r.id} value={r.id}>{r.name}</option>
+                ))}
+              </select>
+              <button
+                type="button"
+                onClick={addRole}
+                disabled={!selectedRoleId}
+                className="px-4 py-2 bg-teal-600 text-white text-sm font-semibold rounded-lg hover:bg-teal-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors whitespace-nowrap"
+              >
+                <i className="ri-add-line mr-1 w-4 h-4 inline-flex items-center justify-center"></i>
+                Agregar
+              </button>
+            </div>
+          )}
+
+          {config.bypass_role_ids.length === 0 ? (
+            <div className="text-center py-6 bg-gray-50 rounded-lg border border-dashed border-gray-200">
+              <i className="ri-shield-line text-2xl text-gray-300 w-6 h-6 flex items-center justify-center mx-auto mb-1"></i>
+              <p className="text-xs text-gray-400">Sin roles exceptuados — solo ADMIN y Full Access pueden editar reservas bloqueadas</p>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {config.bypass_role_ids.map((id) => {
+                const role = getRoleById(id);
+                return (
+                  <div key={id} className="flex items-center gap-3 px-3 py-2.5 bg-teal-50 border border-teal-200 rounded-lg">
+                    <div className="w-7 h-7 bg-teal-100 rounded-full flex items-center justify-center flex-shrink-0">
+                      <i className="ri-user-settings-line text-teal-600 text-xs w-4 h-4 flex items-center justify-center"></i>
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium text-teal-900 truncate">{role?.name || id}</p>
+                      {role?.description && (
+                        <p className="text-xs text-teal-600 truncate">{role.description}</p>
+                      )}
+                    </div>
+                    <span className="px-2 py-0.5 bg-teal-200 text-teal-800 text-xs font-semibold rounded-full whitespace-nowrap">
+                      Puede editar
+                    </span>
+                    {isPrivileged && clientId && (
+                      <button
+                        type="button"
+                        onClick={() => removeRole(id)}
+                        className="w-6 h-6 flex items-center justify-center text-teal-600 hover:text-red-600 hover:bg-red-50 rounded transition-colors"
+                        title="Quitar rol"
+                      >
+                        <i className="ri-close-line text-sm w-4 h-4 flex items-center justify-center"></i>
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* ── BLOQUE 3: Usuarios exceptuados ───────────────────────────────── */}
+      <div className="border border-gray-200 rounded-xl overflow-hidden">
+        <div className="flex items-center gap-3 px-4 py-3 bg-indigo-50 border-b border-indigo-200">
+          <div className="w-7 h-7 bg-indigo-100 rounded-lg flex items-center justify-center flex-shrink-0">
+            <i className="ri-user-star-line text-indigo-600 text-sm w-4 h-4 flex items-center justify-center"></i>
+          </div>
+          <div>
+            <p className="text-sm font-semibold text-indigo-900">Usuarios que pueden saltarse el bloqueo</p>
+            <p className="text-xs text-indigo-700">Usuarios específicos con acceso de edición aunque su rol no lo permita</p>
+          </div>
+          {config.bypass_user_ids.length > 0 && (
+            <span className="ml-auto px-2 py-0.5 bg-indigo-200 text-indigo-800 text-xs font-bold rounded-full">
+              {config.bypass_user_ids.length}
+            </span>
+          )}
+        </div>
+
+        <div className="p-4 space-y-3">
+          {isPrivileged && clientId && (
+            <div className="space-y-2">
+              {/* Búsqueda de usuario */}
+              <div className="relative">
+                <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm w-4 h-4 flex items-center justify-center"></i>
+                <input
+                  type="text"
+                  placeholder="Buscar usuario por nombre o email..."
+                  value={userSearch}
+                  onChange={(e) => { setUserSearch(e.target.value); setSelectedUserId(''); }}
+                  className="w-full pl-9 pr-4 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                />
+              </div>
+
+              {/* Dropdown de resultados */}
+              {userSearch.trim() && filteredUsers.length > 0 && (
+                <div className="border border-gray-200 rounded-lg overflow-hidden max-h-40 overflow-y-auto">
+                  {filteredUsers.slice(0, 8).map((u) => (
+                    <button
+                      key={u.id}
+                      type="button"
+                      onClick={() => { setSelectedUserId(u.id); setUserSearch(u.name || u.email); }}
+                      className={`w-full flex items-center gap-3 px-3 py-2.5 text-left hover:bg-indigo-50 transition-colors border-b border-gray-100 last:border-0 ${
+                        selectedUserId === u.id ? 'bg-indigo-50' : 'bg-white'
+                      }`}
+                    >
+                      <div className="w-7 h-7 bg-gray-100 rounded-full flex items-center justify-center flex-shrink-0">
+                        <i className="ri-user-line text-gray-500 text-xs w-4 h-4 flex items-center justify-center"></i>
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium text-gray-900 truncate">{u.name}</p>
+                        <p className="text-xs text-gray-500 truncate">{u.email}{u.roleName ? ` · ${u.roleName}` : ''}</p>
+                      </div>
+                      {selectedUserId === u.id && (
+                        <i className="ri-check-line text-indigo-600 w-4 h-4 flex items-center justify-center"></i>
+                      )}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {userSearch.trim() && filteredUsers.length === 0 && (
+                <p className="text-xs text-gray-400 text-center py-2">No se encontraron usuarios</p>
+              )}
+
+              <button
+                type="button"
+                onClick={addUser}
+                disabled={!selectedUserId}
+                className="w-full px-4 py-2 bg-indigo-600 text-white text-sm font-semibold rounded-lg hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors whitespace-nowrap"
+              >
+                <i className="ri-add-line mr-1 w-4 h-4 inline-flex items-center justify-center"></i>
+                Agregar usuario seleccionado
+              </button>
+            </div>
+          )}
+
+          {config.bypass_user_ids.length === 0 ? (
+            <div className="text-center py-6 bg-gray-50 rounded-lg border border-dashed border-gray-200">
+              <i className="ri-user-line text-2xl text-gray-300 w-6 h-6 flex items-center justify-center mx-auto mb-1"></i>
+              <p className="text-xs text-gray-400">Sin usuarios exceptuados individualmente</p>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {config.bypass_user_ids.map((id) => {
+                const u = getUserById(id);
+                return (
+                  <div key={id} className="flex items-center gap-3 px-3 py-2.5 bg-indigo-50 border border-indigo-200 rounded-lg">
+                    <div className="w-7 h-7 bg-indigo-100 rounded-full flex items-center justify-center flex-shrink-0">
+                      <i className="ri-user-star-line text-indigo-600 text-xs w-4 h-4 flex items-center justify-center"></i>
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium text-indigo-900 truncate">{u?.name || id}</p>
+                      {u?.email && <p className="text-xs text-indigo-600 truncate">{u.email}{u.roleName ? ` · ${u.roleName}` : ''}</p>}
+                    </div>
+                    <span className="px-2 py-0.5 bg-indigo-200 text-indigo-800 text-xs font-semibold rounded-full whitespace-nowrap">
+                      Puede editar
+                    </span>
+                    {isPrivileged && clientId && (
+                      <button
+                        type="button"
+                        onClick={() => removeUser(id)}
+                        className="w-6 h-6 flex items-center justify-center text-indigo-600 hover:text-red-600 hover:bg-red-50 rounded transition-colors"
+                        title="Quitar usuario"
+                      >
+                        <i className="ri-close-line text-sm w-4 h-4 flex items-center justify-center"></i>
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </div>
 
       {/* Error */}
       {error && (
-        <div className="mb-4 bg-red-50 border border-red-200 rounded-xl p-3 flex items-center gap-2">
+        <div className="bg-red-50 border border-red-200 rounded-xl p-3 flex items-center gap-2">
           <i className="ri-error-warning-line text-red-600 w-4 h-4 flex items-center justify-center"></i>
           <p className="text-sm text-red-700">{error}</p>
         </div>
@@ -203,7 +537,7 @@ export default function BlockedStatusesConfig({ orgId, clientId }: BlockedStatus
 
       {/* Sin permisos */}
       {!isPrivileged && (
-        <div className="bg-gray-50 border border-gray-200 rounded-xl p-4 mb-4">
+        <div className="bg-gray-50 border border-gray-200 rounded-xl p-4">
           <div className="flex items-center gap-2">
             <i className="ri-lock-line text-gray-500 w-4 h-4 flex items-center justify-center"></i>
             <p className="text-sm text-gray-600">
@@ -214,9 +548,9 @@ export default function BlockedStatusesConfig({ orgId, clientId }: BlockedStatus
         </div>
       )}
 
-      {/* Botón guardar */}
+      {/* Botones guardar / descartar */}
       {isPrivileged && clientId && (
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 pt-1">
           <button
             type="button"
             onClick={handleSave}
@@ -247,10 +581,7 @@ export default function BlockedStatusesConfig({ orgId, clientId }: BlockedStatus
           {hasChanges && !saving && (
             <button
               type="button"
-              onClick={() => {
-                setSelectedIds(originalIds);
-                setSaved(false);
-              }}
+              onClick={() => { setConfig(originalConfig); setSaved(false); }}
               className="px-4 py-2.5 text-sm font-medium text-gray-600 hover:text-gray-800 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors whitespace-nowrap"
             >
               Descartar cambios
