@@ -264,12 +264,18 @@ export const dockAllocationService = {
     slotStart: Date,
     slotEnd: Date
   ): Set<string> {
+    // ✅ FIX: Normalizar timestamps al minuto exacto para evitar off-by-one.
+    // Si una reserva tiene end_datetime con segundos residuales (ej: 09:00:30),
+    // sin normalización rEnd(09:00:30) > slotStart(09:00) = true → falso conflicto.
+    // Con normalización: rEnd(09:00) > slotStart(09:00) = false → correcto.
+    const truncMin = (d: Date) => new Date(Math.floor(d.getTime() / 60_000) * 60_000);
+
     // 1. Busy docks: non-cancelled reservations overlapping [slotStart, slotEnd)
     const busyDockIds = new Set<string>();
     for (const r of reservations) {
       if (r.is_cancelled) continue;
-      const rStart = new Date(r.start_datetime);
-      const rEnd = new Date(r.end_datetime);
+      const rStart = truncMin(new Date(r.start_datetime));
+      const rEnd = truncMin(new Date(r.end_datetime));
       if (rStart < slotEnd && rEnd > slotStart) {
         busyDockIds.add(r.dock_id);
       }

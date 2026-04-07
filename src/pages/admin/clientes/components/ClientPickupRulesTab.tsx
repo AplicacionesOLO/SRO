@@ -185,21 +185,7 @@ export default function ClientPickupRulesTab({
   }
 
   return (
-    <div className="space-y-6">
-      <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-        <div className="flex items-start gap-3">
-          <i className="ri-information-line text-blue-600 text-lg mt-0.5"></i>
-          <div className="flex-1">
-            <p className="text-sm text-blue-900 font-medium mb-1">
-              Cliente Retira
-            </p>
-            <p className="text-xs text-blue-800">
-              Configura bloqueos automáticos en andenes específicos para este cliente. Los bloques se crean desde el inicio del horario del almacén y se renuevan automáticamente.
-            </p>
-          </div>
-        </div>
-      </div>
-
+    <div className="space-y-4">
       {error && (
         <div className="bg-red-50 border border-red-200 rounded-lg p-4">
           <div className="flex items-start gap-3">
@@ -220,7 +206,7 @@ export default function ClientPickupRulesTab({
       {canManage && (
         <button
           onClick={openCreateModal}
-          className="w-full px-4 py-3 text-sm font-medium text-teal-600 bg-white border-2 border-dashed border-teal-300 rounded-lg hover:bg-teal-50 transition-colors flex items-center justify-center gap-2 whitespace-nowrap"
+          className="w-full px-4 py-2.5 text-sm font-medium text-teal-600 bg-white border-2 border-dashed border-teal-300 rounded-lg hover:bg-teal-50 transition-colors flex items-center justify-center gap-2 whitespace-nowrap"
         >
           <i className="ri-add-line text-lg"></i>
           Agregar otro andén

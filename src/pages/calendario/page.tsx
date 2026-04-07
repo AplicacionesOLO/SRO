@@ -23,6 +23,9 @@ import { providersService } from '../../services/providersService';
 import { useClientPickupRulesContext } from '../../contexts/ClientPickupRulesContext';
 import BlocksManagementTab from './components/BlocksManagementTab';
 import ReservationHoverCard from './components/ReservationHoverCard';
+import BlockedStatusesConfig from './components/BlockedStatusesConfig';
+import { useBlockedStatuses } from '../../hooks/useBlockedStatuses';
+import { clientBlockedStatusesService } from '../../services/clientBlockedStatusesService';
 import {
   getWarehouseTimezone,
   getStartOfDayInTimezone,
@@ -75,7 +78,7 @@ function getUtcOffsetLabel(timezone: string): string {
 }
 
 type ViewMode = '1day' | '3days' | '7days';
-type TabMode = 'calendar' | 'statuses' | 'blocks';
+type TabMode = 'calendar' | 'statuses' | 'blocks' | 'rules';
 
 interface TimeSlot {
   hour: number;
@@ -100,6 +103,7 @@ export default function CalendarioPage() {
   const { can, orgId, loading: permLoading } = usePermissions();
   const { user } = useAuth();
   const { lastRuleChange } = useClientPickupRulesContext();
+  const { isPrivileged: isPrivilegedUser } = useBlockedStatuses(orgId);
   const {
     allowedWarehouseIds,
     availableWarehouses: scopeWarehouses,
@@ -163,6 +167,10 @@ export default function CalendarioPage() {
   const [reserveModalOpen, setReserveModalOpen] = useState(false);
   const [reserveModalSlot, setReserveModalSlot] = useState<any>(null);
   const [selectedReservation, setSelectedReservation] = useState<Reservation | null>(null);
+  /** ID de la reserva original cuando se está creando una copia */
+  const [copyOfReservationId, setCopyOfReservationId] = useState<string | null>(null);
+  /** Datos del borrador de copia — se usa para pre-cargar el modal cuando el usuario elige un espacio */
+  const [copyDraft, setCopyDraft] = useState<any | null>(null);
 
   const [selectedBlock, setSelectedBlock] = useState<DockTimeBlock | null>(null);
   const [isBlockModalOpen, setIsBlockModalOpen] = useState(false);
@@ -377,15 +385,24 @@ export default function CalendarioPage() {
     [warehouseTimezone]
   );
 
-  // ✅ Calcula top desde la medianoche del almacén, NO desde browser getHours().
+  // ✅ Minuto real donde empieza el grid visual (incluye off-hours antes del horario hábil).
+  // El grid muestra hasta 2 slots antes del inicio del negocio, por eso el top de las
+  // reservas debe calcularse desde este punto, NO desde businessStartMinutes.
+  const gridStartMinutes = useMemo(
+    () => Math.max(0, businessStartMinutes - slotInterval * 2),
+    [businessStartMinutes, slotInterval]
+  );
+
+  // ✅ Calcula top desde el inicio REAL del grid (incluyendo off-hours), NO desde businessStart.
+  // Antes usaba businessStartMinutes → causaba desfase cuando hay slots off-hours arriba.
   const getTopFromBusinessStart = useCallback(
     (date: Date): number => {
       const dayStart = getStartOfDayInTimezone(date, warehouseTimezone);
       const minutesFromMidnight = (date.getTime() - dayStart.getTime()) / 60_000;
-      const minutesFromStart = minutesFromMidnight - businessStartMinutes;
-      return minutesFromStart * PX_PER_MINUTE_DYNAMIC;
+      const minutesFromGridStart = minutesFromMidnight - gridStartMinutes;
+      return minutesFromGridStart * PX_PER_MINUTE_DYNAMIC;
     },
-    [businessStartMinutes, PX_PER_MINUTE_DYNAMIC, warehouseTimezone]
+    [gridStartMinutes, PX_PER_MINUTE_DYNAMIC, warehouseTimezone]
   );
 
   const calculateEventHeightDynamic = useCallback(
@@ -813,10 +830,44 @@ export default function CalendarioPage() {
     return `${days[parts.weekday]}, ${parts.day} de ${months[parts.month - 1]} de ${parts.year}`;
   };
 
+  /**
+   * Normaliza un timestamp al minuto exacto (trunca segundos y milisegundos).
+   * Esto evita el bug de off-by-one cuando una reserva tiene end_datetime con
+   * segundos residuales (ej: 09:00:30), que haría que el slot de 09:00 se
+   * bloqueara incorrectamente porque 09:00 < 09:00:30 = true.
+   */
+  const truncateToMinute = useCallback((d: Date): Date => {
+    return new Date(Math.floor(d.getTime() / 60_000) * 60_000);
+  }, []);
+
   // ✅ Helper para validar si un slot es elegible (usa timezone del almacén)
+  // Acepta un flag `diagnose` para emitir un log detallado de la causa exacta del bloqueo.
   const isSlotEligible = useCallback(
-    (dockId: string, day: Date, timeSlot: TimeSlot): boolean => {
-      if (!selectionMode || requiredMinutes < 5) return false;
+    (dockId: string, day: Date, timeSlot: TimeSlot, diagnose = false): boolean => {
+      // diag: función de diagnóstico silenciada (solo activa en desarrollo si se necesita)
+      const diag = (_reason: string, _extra?: Record<string, unknown>) => {
+        void _reason; void _extra;
+        /* diagnóstico desactivado */
+        void ({
+          dockId,
+          slotLabel: `${timeSlot.hour.toString().padStart(2,'0')}:${timeSlot.minute.toString().padStart(2,'0')}`,
+          day: toWarehouseDateString(day, warehouseTimezone),
+          warehouseTimezone,
+          requiredMinutes,
+          businessStart: `${Math.floor(businessStartMinutes/60).toString().padStart(2,'0')}:${(businessStartMinutes%60).toString().padStart(2,'0')}`,
+          businessEnd: `${Math.floor(businessEndMinutes/60).toString().padStart(2,'0')}:${(businessEndMinutes%60).toString().padStart(2,'0')}`,
+          allocationMode: allocationRule?.dockAllocationMode ?? 'none',
+          allowAllDocks: allocationRule?.allowAllDocks ?? true,
+          enabledDockIdsCount: enabledDockIds.size,
+          allocationError: allocationError || null,
+          ..._extra,
+        });
+      };
+
+      if (!selectionMode || requiredMinutes < 5) {
+        diag('selectionMode off or requiredMinutes < 5', { selectionMode, requiredMinutes });
+        return false;
+      }
 
       // Calcular slotStart usando timezone del almacén
       const dayStartTz = getStartOfDayInTimezone(day, warehouseTimezone);
@@ -832,20 +883,52 @@ export default function CalendarioPage() {
           slotStart,
           slotEnd
         );
-        if (!enabledForSlot.has(dockId)) return false;
+        if (!enabledForSlot.has(dockId)) {
+          // Calcular qué andenes están ocupados en este slot para el diagnóstico
+          const busyInSlot = allocationRule.clientDocks
+            .filter(cd => {
+              const busy = reservations.some(r => {
+                if (r.dock_id !== cd.dockId) return false;
+                const rS = truncateToMinute(new Date(r.start_datetime));
+                const rE = truncateToMinute(new Date(r.end_datetime));
+                return rS < slotEnd && rE > slotStart;
+              });
+              return busy;
+            })
+            .map(cd => cd.dockId);
+          diag('allocation mode — dock not enabled for this slot', {
+            slotStart: slotStart.toISOString(),
+            slotEnd: slotEnd.toISOString(),
+            enabledForSlot: [...enabledForSlot],
+            busyDocksInSlot: busyInSlot,
+            clientDocks: allocationRule.clientDocks.map(cd => ({ id: cd.dockId, order: cd.dockOrder })),
+            mode: allocationRule.dockAllocationMode,
+          });
+          return false;
+        }
       } else {
-        if (enabledDockIds.size > 0 && !enabledDockIds.has(dockId)) return false;
-        if (enabledDockIds.size === 0 && allocationError) return false;
+        if (enabledDockIds.size > 0 && !enabledDockIds.has(dockId)) {
+          diag('dock not in enabledDockIds (global rule)', { enabledDockIds: [...enabledDockIds] });
+          return false;
+        }
+        if (enabledDockIds.size === 0 && allocationError) {
+          diag('allocationError and no enabledDockIds', { allocationError });
+          return false;
+        }
       }
 
       const nowUtc = new Date();
       // Bloquear días en el pasado (comparar en timezone del almacén)
       const startOfToday = getStartOfDayInTimezone(nowUtc, warehouseTimezone);
       const startOfSlotDay = getStartOfDayInTimezone(day, warehouseTimezone);
-      if (startOfSlotDay < startOfToday) return false;
+      if (startOfSlotDay < startOfToday) {
+        diag('past day', { startOfSlotDay: startOfSlotDay.toISOString(), startOfToday: startOfToday.toISOString() });
+        return false;
+      }
 
       // Si es hoy, bloquear horas anteriores a "ahora"
       if (startOfSlotDay.getTime() === startOfToday.getTime() && slotStart < nowUtc) {
+        diag('past time (today)', { slotStart: slotStart.toISOString(), nowUtc: nowUtc.toISOString() });
         return false;
       }
 
@@ -854,30 +937,67 @@ export default function CalendarioPage() {
       const { hour: slotEndH, minute: slotEndM } = getDatePartsInTimezone(slotEnd, warehouseTimezone);
       const slotStartMin = slotStartH * 60 + slotStartM;
       const slotEndMin = slotEndH * 60 + slotEndM;
-      if (slotStartMin < businessStartMinutes) return false;
-      if (slotEndMin > businessEndMinutes) return false;
+      if (slotStartMin < businessStartMinutes) {
+        diag('business hours — slotStart before businessStart', { slotStartMin, businessStartMinutes });
+        return false;
+      }
+      if (slotEndMin > businessEndMinutes) {
+        diag('business hours — slotEnd after businessEnd', { slotEndMin, businessEndMinutes, slotEnd: slotEnd.toISOString() });
+        return false;
+      }
 
       // No cruzar a otro día (en timezone del almacén)
-      if (toWarehouseDateString(slotStart, warehouseTimezone) !== toWarehouseDateString(slotEnd, warehouseTimezone)) return false;
+      const slotStartDate = toWarehouseDateString(slotStart, warehouseTimezone);
+      const slotEndDate = toWarehouseDateString(slotEnd, warehouseTimezone);
+      if (slotStartDate !== slotEndDate && slotEndMin > 0) {
+        diag('crosses midnight', { slotStartDate, slotEndDate, slotEndMin });
+        return false;
+      }
 
       // Conflictos con reservas
-      const hasReservationConflict = reservations.some((r) => {
+      const conflictingReservation = reservations.find((r) => {
         if (r.dock_id !== dockId) return false;
-        const rStart = new Date(r.start_datetime);
-        const rEnd = new Date(r.end_datetime);
+        const rStart = truncateToMinute(new Date(r.start_datetime));
+        const rEnd = truncateToMinute(new Date(r.end_datetime));
         return slotStart < rEnd && slotEnd > rStart;
       });
-      if (hasReservationConflict) return false;
+      if (conflictingReservation) {
+        const rStart = truncateToMinute(new Date(conflictingReservation.start_datetime));
+        const rEnd = truncateToMinute(new Date(conflictingReservation.end_datetime));
+        diag('reservation overlap', {
+          reservationId: conflictingReservation.id,
+          rStart: rStart.toISOString(),
+          rEnd: rEnd.toISOString(),
+          slotStart: slotStart.toISOString(),
+          slotEnd: slotEnd.toISOString(),
+          rawRStart: conflictingReservation.start_datetime,
+          rawREnd: conflictingReservation.end_datetime,
+        });
+        return false;
+      }
 
       // Conflictos con bloques
-      const hasBlockConflict = blocks.some((b) => {
+      const conflictingBlock = blocks.find((b) => {
         if (b.dock_id !== dockId) return false;
-        const bStart = new Date(b.start_datetime);
-        const bEnd = new Date(b.end_datetime);
+        const bStart = truncateToMinute(new Date(b.start_datetime));
+        const bEnd = truncateToMinute(new Date(b.end_datetime));
         return slotStart < bEnd && slotEnd > bStart;
       });
-      if (hasBlockConflict) return false;
+      if (conflictingBlock) {
+        const bStart = truncateToMinute(new Date(conflictingBlock.start_datetime));
+        const bEnd = truncateToMinute(new Date(conflictingBlock.end_datetime));
+        diag('dock block overlap', {
+          blockId: conflictingBlock.id,
+          bStart: bStart.toISOString(),
+          bEnd: bEnd.toISOString(),
+          slotStart: slotStart.toISOString(),
+          slotEnd: slotEnd.toISOString(),
+          reason: conflictingBlock.reason,
+        });
+        return false;
+      }
 
+      void diagnose;
       return true;
     },
     [
@@ -891,6 +1011,7 @@ export default function CalendarioPage() {
       allocationError,
       allocationRule,
       warehouseTimezone,
+      truncateToMinute,
     ]
   );
 
@@ -924,7 +1045,11 @@ export default function CalendarioPage() {
       // ✅ NUEVO: Si estamos en modo selección
       if (selectionMode) {
         const eligible = isSlotEligible(dockId, day, timeSlot);
-        if (!eligible) return;
+        if (!eligible) {
+          // Diagnóstico automático: loggear la causa exacta del bloqueo
+          isSlotEligible(dockId, day, timeSlot, true);
+          return;
+        }
 
         // Slot elegible: calcular end según requiredMinutes
         const calculatedEnd = new Date(cellStart.getTime() + requiredMinutes * 60 * 1000);
@@ -932,13 +1057,27 @@ export default function CalendarioPage() {
         // ✅ Seguridad extra: no permitir pasar el horario hábil (aunque isSlotEligible ya lo filtra)
         if (!isWithinBusinessHours(day, cellStart, calculatedEnd)) return;
 
-        setReserveModalSlot({
-          dock_id: dockId,
-          start_datetime: cellStart.toISOString(),
-          end_datetime: calculatedEnd.toISOString(),
-          cargo_type: preCargoTypeId,
-          shipper_provider: preProviderId,
-        });
+        // ✅ Si hay un borrador de copia, mezclar sus datos con el slot elegido
+        if (copyDraft) {
+          const { _copyOfId, _durationMinutes, ...copyFields } = copyDraft;
+          setReserveModalSlot({
+            ...copyFields,
+            dock_id: dockId,
+            start_datetime: cellStart.toISOString(),
+            end_datetime: calculatedEnd.toISOString(),
+          });
+          setCopyOfReservationId(_copyOfId || null);
+          setCopyDraft(null);
+        } else {
+          setReserveModalSlot({
+            dock_id: dockId,
+            start_datetime: cellStart.toISOString(),
+            end_datetime: calculatedEnd.toISOString(),
+            cargo_type: preCargoTypeId,
+            shipper_provider: preProviderId,
+          });
+        }
+
         setSelectedReservation(null);
         setReserveModalOpen(true);
 
@@ -969,6 +1108,7 @@ export default function CalendarioPage() {
       preProviderId,
       slotInterval,
       isWithinBusinessHours,
+      copyDraft,
     ]
   );
 
@@ -991,6 +1131,31 @@ export default function CalendarioPage() {
     if (!draggedEvent || draggedEvent.type !== 'reservation' || !draggedEvent.data) return;
 
     const reservation = draggedEvent.data as Reservation;
+
+    // ── Bloqueo por estado (por cliente) — usa client_id directo ─────────
+    if (!isPrivilegedUser && reservation.status_id) {
+      const blocked = (reservation as any).client_id
+        ? await clientBlockedStatusesService.isBlockedByClientId(
+            orgId!,
+            (reservation as any).client_id,
+            reservation.status_id
+          )
+        : await clientBlockedStatusesService.isReservationBlocked(
+            orgId!,
+            reservation.id,
+            reservation.status_id
+          );
+      if (blocked) {
+        setNotifyModal({
+          isOpen: true,
+          type: 'warning',
+          title: 'Reserva bloqueada',
+          message: 'Esta reserva no puede modificarse en su estado actual. Solo un ADMIN o Full Access puede moverla.',
+        });
+        setDraggedEvent(null);
+        return;
+      }
+    }
 
     const duration = new Date(reservation.end_datetime).getTime() - new Date(reservation.start_datetime).getTime();
 
@@ -1023,18 +1188,19 @@ export default function CalendarioPage() {
     }
 
     // ✅ Restricciones: evitar solapes contra otras reservas/bloques (UI-side)
+    // ✅ FIX: Normalizar timestamps al minuto para evitar off-by-one con segundos residuales
     const willConflictReservation = reservations.some((r) => {
       if (r.id === reservation.id) return false;
       if (r.dock_id !== targetDockId) return false;
-      const rStart = new Date(r.start_datetime);
-      const rEnd = new Date(r.end_datetime);
+      const rStart = truncateToMinute(new Date(r.start_datetime));
+      const rEnd = truncateToMinute(new Date(r.end_datetime));
       return newStart < rEnd && newEnd > rStart;
     });
 
     const willConflictBlock = blocks.some((b) => {
       if (b.dock_id !== targetDockId) return false;
-      const bStart = new Date(b.start_datetime);
-      const bEnd = new Date(b.end_datetime);
+      const bStart = truncateToMinute(new Date(b.start_datetime));
+      const bEnd = truncateToMinute(new Date(b.end_datetime));
       return newStart < bEnd && newEnd > bStart;
     });
 
@@ -1236,6 +1402,85 @@ export default function CalendarioPage() {
     providersService.getActive(orgId).then(setProviders).catch(() => {});
   }, [orgId]);
 
+  // ── Handler: Copiar reserva ───────────────────────────────────────────────
+  // Cierra el modal actual, guarda los datos de la copia en memoria y activa
+  // el modo selección de espacio directamente (igual que "Elegir espacio en calendario").
+  // El usuario elige un slot → se abre el modal con los datos pre-cargados en ese espacio.
+  const handleCopyReservation = useCallback(async (sourceReservation: Reservation) => {
+    // Determinar estado inicial seguro: buscar "Pendiente" o tomar el primero
+    const safeStatus = statuses.find(
+      (s) =>
+        (s.code || '').toLowerCase().includes('pendiente') ||
+        (s.name || '').toLowerCase().includes('pendiente') ||
+        (s.code || '').toLowerCase().includes('pending')
+    ) || statuses[0];
+
+    // Calcular duración original para respetar el tiempo requerido
+    const srcStart = new Date(sourceReservation.start_datetime);
+    const srcEnd = new Date(sourceReservation.end_datetime);
+    const durationMinutes = Math.round((srcEnd.getTime() - srcStart.getTime()) / 60_000);
+
+    // Construir el borrador de copia con todos los campos copiables
+    const draft = {
+      shipper_provider: sourceReservation.shipper_provider,
+      cargo_type: sourceReservation.cargo_type,
+      transport_type: sourceReservation.transport_type,
+      notes: sourceReservation.notes,
+      purchase_order: sourceReservation.purchase_order,
+      truck_plate: sourceReservation.truck_plate,
+      order_request_number: sourceReservation.order_request_number,
+      driver: sourceReservation.driver,
+      dua: sourceReservation.dua,
+      invoice: sourceReservation.invoice,
+      status_id: safeStatus?.id || '',
+      client_id: (sourceReservation as any).client_id,
+      _copyOfId: sourceReservation.id,
+      _durationMinutes: durationMinutes,
+    };
+
+    // Cerrar modal actual
+    setReserveModalOpen(false);
+    setSelectedReservation(null);
+    setReserveModalSlot(null);
+    setCopyOfReservationId(null);
+
+    // Guardar borrador de copia en memoria
+    setCopyDraft(draft);
+
+    // Cargar reglas de asignación de andenes del cliente (igual que handlePreReservationConfirm)
+    setAllocationLoading(true);
+    setAllocationError('');
+    setAllocationRule(null);
+
+    const clientId = (sourceReservation as any).client_id || null;
+
+    if (clientId) {
+      try {
+        const rule = await dockAllocationService.getDockAllocationRule(orgId!, clientId);
+        if (rule) {
+          setAllocationRule(rule);
+          setAllocationError('');
+        } else {
+          setAllocationError('No se pudieron cargar las reglas del cliente.');
+          setAllocationRule(null);
+        }
+      } catch {
+        setAllocationError('No se pudieron cargar las reglas del cliente.');
+        setAllocationRule(null);
+      }
+    } else {
+      setAllocationRule(null);
+    }
+
+    setAllocationLoading(false);
+
+    // Activar modo selección con la duración de la reserva original
+    setPreCargoTypeId(sourceReservation.cargo_type || '');
+    setPreProviderId(sourceReservation.shipper_provider || '');
+    setRequiredMinutes(durationMinutes > 0 ? durationMinutes : 60);
+    setSelectionMode(true);
+  }, [statuses, orgId]);
+
   // ✅ Render
   if (permLoading || loading) {
     return (
@@ -1373,6 +1618,19 @@ export default function CalendarioPage() {
                 Bloqueos
               </button>
             )}
+            {isPrivilegedUser && (
+              <button
+                onClick={() => setTabMode('rules')}
+                className={`px-6 py-3 font-medium text-sm border-b-2 transition-colors whitespace-nowrap ${
+                  tabMode === 'rules'
+                    ? 'border-teal-600 text-teal-600'
+                    : 'border-transparent text-gray-600 hover:text-gray-900'
+                }`}
+              >
+                <i className="ri-settings-3-line mr-2 w-4 h-4 inline-flex items-center justify-center"></i>
+                Reglas Op.
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -1385,6 +1643,17 @@ export default function CalendarioPage() {
       ) : tabMode === 'blocks' && canViewBlocks ? (
         <div className="flex-1 overflow-auto">
           <BlocksManagementTab />
+        </div>
+      ) : tabMode === 'rules' && isPrivilegedUser ? (
+        <div className="flex-1 overflow-auto p-6">
+          <div className="max-w-xl mx-auto bg-amber-50 border border-amber-200 rounded-xl p-6 text-center">
+            <i className="ri-information-line text-amber-600 text-3xl w-8 h-8 flex items-center justify-center mx-auto mb-3"></i>
+            <h3 className="text-base font-semibold text-amber-900 mb-2">Regla de bloqueo por estados</h3>
+            <p className="text-sm text-amber-800">
+              La regla de bloqueo por estados ahora es <strong>por cliente</strong>. Configurala desde{' '}
+              <strong>Admin &gt; Clientes &gt; [Cliente] &gt; Reglas &gt; Bloqueo por estados</strong>.
+            </p>
+          </div>
         </div>
       ) : (
         <>
@@ -1413,13 +1682,19 @@ export default function CalendarioPage() {
 
           {/* Banner de modo selección */}
           {selectionMode && (
-            <div className="bg-teal-600 text-white px-6 py-3 flex items-center justify-between">
+            <div className={`text-white px-6 py-3 flex items-center justify-between ${copyDraft ? 'bg-teal-700' : 'bg-teal-600'}`}>
               <div className="flex items-center gap-3">
-                <i className="ri-cursor-line text-xl w-5 h-5 flex items-center justify-center"></i>
+                <i className={`text-xl w-5 h-5 flex items-center justify-center ${copyDraft ? 'ri-file-copy-line' : 'ri-cursor-line'}`}></i>
                 <div>
-                  <p className="font-semibold">Modo selección activo</p>
+                  <p className="font-semibold">
+                    {copyDraft
+                      ? `Seleccioná un espacio para ubicar la copia de la reserva #${(copyDraft._copyOfId || '').slice(0, 8)}`
+                      : 'Modo selección activo'}
+                  </p>
                   <p className="text-sm text-teal-100">
-                    Seleccioná un espacio disponible en el calendario ({requiredMinutes} min requeridos)
+                    {copyDraft
+                      ? `Hacé clic en un espacio disponible (verde) — ${requiredMinutes} min requeridos. La reserva original no se modifica.`
+                      : `Seleccioná un espacio disponible en el calendario (${requiredMinutes} min requeridos)`}
                     {allocationRule && !allocationRule.allowAllDocks && (
                       <span className="ml-2">
                         — Cliente: {allocationRule.clientName} | Modo: {allocationRule.dockAllocationMode === 'ODD_FIRST' ? 'Intercalado' : 'Secuencial'} | Andenes habilitados: {enabledDockIds.size}
@@ -1428,13 +1703,54 @@ export default function CalendarioPage() {
                   </p>
                 </div>
               </div>
-              <button
-                onClick={handleExitSelectionMode}
-                className="px-4 py-2 bg-white/20 hover:bg-white/30 rounded-lg font-medium transition-colors whitespace-nowrap"
-              >
-                <i className="ri-close-line mr-2 w-4 h-4 inline-flex items-center justify-center"></i>
-                Salir
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => {
+                    // Diagnóstico completo: loggear TODOS los slots bloqueados en el rango visible
+                    console.log('[Availability-DIAG] === DIAGNÓSTICO COMPLETO DE SLOTS ===');
+                    console.log('[Availability-DIAG] requiredMinutes:', requiredMinutes);
+                    console.log('[Availability-DIAG] allocationRule:', allocationRule);
+                    console.log('[Availability-DIAG] enabledDockIds:', [...enabledDockIds]);
+                    console.log('[Availability-DIAG] reservations en rango:', reservations.length);
+                    console.log('[Availability-DIAG] blocks en rango:', blocks.length);
+                    let blockedCount = 0;
+                    let eligibleCount = 0;
+                    daysInView.forEach(day => {
+                      filteredDocks.forEach(dock => {
+                        timeSlots.forEach(slot => {
+                          const eligible = isSlotEligible(dock.id, day, slot);
+                          if (!eligible) {
+                            blockedCount++;
+                            // Solo loggear los primeros 20 slots bloqueados para no saturar
+                            if (blockedCount <= 20) {
+                              isSlotEligible(dock.id, day, slot, true);
+                            }
+                          } else {
+                            eligibleCount++;
+                          }
+                        });
+                      });
+                    });
+                    console.log(`[Availability-DIAG] RESUMEN: ${eligibleCount} elegibles, ${blockedCount} bloqueados (mostrando primeros 20)`);
+                  }}
+                  className="px-3 py-2 bg-white/10 hover:bg-white/20 rounded-lg font-medium transition-colors whitespace-nowrap text-sm"
+                  title="Diagnóstico: ver en consola por qué los slots están bloqueados"
+                >
+                  <i className="ri-bug-line mr-1 w-4 h-4 inline-flex items-center justify-center"></i>
+                  Diagnóstico
+                </button>
+                <button
+                  onClick={() => {
+                    handleExitSelectionMode();
+                    setCopyDraft(null);
+                    setCopyOfReservationId(null);
+                  }}
+                  className="px-4 py-2 bg-white/20 hover:bg-white/30 rounded-lg font-medium transition-colors whitespace-nowrap"
+                >
+                  <i className="ri-close-line mr-2 w-4 h-4 inline-flex items-center justify-center"></i>
+                  Salir
+                </button>
+              </div>
             </div>
           )}
 
@@ -1838,9 +2154,6 @@ export default function CalendarioPage() {
                             ? (() => {
                                 const dayStart = getStartOfDayInTimezone(nowTz, effectiveTzForDay);
                                 const minutesFromMidnight = (nowTz.getTime() - dayStart.getTime()) / 60_000;
-                                const gridStartMinutes = timeSlots.length > 0
-                                  ? timeSlots[0].hour * 60 + timeSlots[0].minute
-                                  : businessStartMinutes;
                                 const minutesFromGridStart = minutesFromMidnight - gridStartMinutes;
                                 return minutesFromGridStart * PX_PER_MINUTE_DYNAMIC;
                               })()
@@ -1928,6 +2241,9 @@ export default function CalendarioPage() {
                                               onMouseEnter={(e) => {
                                                 if (inSelectionMode && eligible) {
                                                   (e.currentTarget as HTMLDivElement).style.backgroundColor = 'rgba(20, 184, 166, 0.60)';
+                                                } else if (inSelectionMode && !eligible) {
+                                                  // Diagnóstico al hacer hover sobre slot bloqueado
+                                                  isSlotEligible(dock.id, day, slot, true);
                                                 }
                                               }}
                                               onMouseLeave={(e) => {
@@ -2024,40 +2340,46 @@ export default function CalendarioPage() {
                                                     borderColor: hexToTint(reservation.status?.color || '#6B7280', 0.55),
                                                     borderLeftWidth: '4px',
                                                     backgroundColor: hexToTint(reservation.status?.color || '#6B7280', 0.84),
-                                                    minHeight: '40px',
+                                                    minHeight: '52px',
                                                   }}
                                                 >
-                                                  <div className="p-2 h-full flex flex-col justify-between text-xs overflow-hidden">
-                                                    <div className="flex flex-col gap-0.5 overflow-hidden">
-                                                      <div className="font-semibold text-gray-900 truncate">
+                                                  <div
+                                                    className="h-full flex flex-col justify-between overflow-hidden"
+                                                    style={{ padding: '7px 9px 7px 9px' }}
+                                                  >
+                                                    {/* Bloque superior: info principal */}
+                                                    <div className="flex flex-col gap-0.5 overflow-hidden min-w-0">
+                                                      <div className="font-bold text-gray-900 truncate text-[13px] leading-tight">
                                                         #{reservation.id.slice(0, 8)}
                                                       </div>
                                                       {reservation.dua && (
-                                                        <div className="text-gray-500 truncate text-[10px]">
+                                                        <div className="font-semibold text-gray-700 truncate text-[12px] leading-tight">
                                                           DUA: {reservation.dua}
                                                         </div>
                                                       )}
                                                       {reservation.order_request_number && (
-                                                        <div className="text-gray-500 truncate text-[10px]">
+                                                        <div className="font-semibold text-gray-700 truncate text-[12px] leading-tight">
                                                           Pedido: {reservation.order_request_number}
                                                         </div>
                                                       )}
                                                       {reservation.shipper_provider && (
-                                                        <div className="text-gray-500 truncate text-[10px]">
-                                                          Prov: {providers.find(p => p.id === reservation.shipper_provider)?.name || reservation.shipper_provider}
+                                                        <div className="font-semibold text-gray-600 truncate text-[12px] leading-tight">
+                                                          {providers.find(p => p.id === reservation.shipper_provider)?.name || reservation.shipper_provider}
                                                         </div>
                                                       )}
                                                     </div>
-                                                    <div className="flex items-center justify-between mt-1 gap-1">
+
+                                                    {/* Bloque inferior: estado + hora — siempre visibles */}
+                                                    <div className="flex flex-wrap items-end gap-x-1.5 gap-y-1 mt-1.5 flex-shrink-0 min-w-0">
                                                       <span
-                                                        className="px-2 py-0.5 rounded text-[10px] font-medium text-white shrink-0"
+                                                        className="px-1.5 py-0.5 rounded text-[11px] font-semibold text-white leading-tight shrink-0"
                                                         style={{ backgroundColor: reservation.status?.color || '#6B7280' }}
                                                       >
                                                         {reservation.status?.name || 'Sin estado'}
                                                       </span>
-                                                      <span className="text-[10px] text-gray-500 flex items-center gap-0.5 shrink-0">
-                                                        <i className="ri-time-line w-3 h-3 flex items-center justify-center"></i>
-                                                        {toWarehouseTimeString(start, warehouseTimezone)} - {toWarehouseTimeString(end, warehouseTimezone)}
+                                                      <span className="text-[12px] font-semibold text-gray-700 flex items-center gap-0.5 shrink-0 leading-tight">
+                                                        <i className="ri-time-line w-3.5 h-3.5 flex items-center justify-center"></i>
+                                                        {toWarehouseTimeString(start, warehouseTimezone)}-{toWarehouseTimeString(end, warehouseTimezone)}
                                                       </span>
                                                     </div>
                                                   </div>
@@ -2116,9 +2438,11 @@ export default function CalendarioPage() {
                                                   minHeight: '40px',
                                                 }}
                                               >
-                                                <div className="p-2 h-full flex flex-col justify-center text-xs">
-                                                  <div className="font-semibold">Bloqueado</div>
-                                                  <div className="text-[10px] opacity-90 truncate">{block.reason}</div>
+                                                <div className="h-full flex flex-col justify-between overflow-hidden" style={{ padding: '7px 9px' }}>
+                                                  <div className="font-bold text-[13px] leading-tight">Bloqueado</div>
+                                                  {block.reason && (
+                                                    <div className="text-[12px] font-semibold opacity-90 truncate leading-tight mt-0.5">{block.reason}</div>
+                                                  )}
                                                 </div>
                                               </div>
                                             );
@@ -2147,16 +2471,23 @@ export default function CalendarioPage() {
             docks={docks}
             statuses={statuses}
             orgId={orgId!}
+            warehouseId={warehouseId}
             warehouseTimezone={warehouseTimezone}
+            copyOfId={copyOfReservationId}
+            onCopy={handleCopyReservation}
             onClose={() => {
               setReserveModalOpen(false);
               setSelectedReservation(null);
               setReserveModalSlot(null);
+              setCopyOfReservationId(null);
+              setCopyDraft(null);
             }}
             onSave={async () => {
               setReserveModalOpen(false);
               setSelectedReservation(null);
               setReserveModalSlot(null);
+              setCopyOfReservationId(null);
+              setCopyDraft(null);
               pendingRealtimeRefreshRef.current = false;
               cacheRef.current.clear();
               await new Promise(resolve => setTimeout(resolve, 300));

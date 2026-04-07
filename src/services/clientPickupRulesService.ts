@@ -16,19 +16,9 @@ async function triggerBlockGeneration(orgId: string, ruleId?: string): Promise<v
       body.rule_id = ruleId;
     }
 
-    console.log('[ClientPickupRules] triggerBlockGeneration:start', { orgId, ruleId, body });
-
-    const { data, error } = await supabase.functions.invoke('generate-client-pickup-blocks', {
-      body,
-    });
-
-    if (error) {
-      console.error('[ClientPickupRules] triggerBlockGeneration:invoke_error', { error, orgId, ruleId });
-    } else {
-      console.log('[ClientPickupRules] triggerBlockGeneration:success', { response: data, orgId, ruleId });
-    }
-  } catch (err) {
-    console.error('[ClientPickupRules] triggerBlockGeneration:catch', { err, orgId, ruleId });
+    await supabase.functions.invoke('generate-client-pickup-blocks', { body });
+  } catch {
+    // fail-silent: la operación principal ya se completó
   }
 }
 
@@ -319,20 +309,13 @@ export async function deleteBlocksForRule(
 
   const reasonPattern = `CLIENT_PICKUP:${ruleId}`;
 
-  console.log('[ClientPickupRules] deleteBlocksForRule:start', { orgId, ruleId, reasonPattern });
-
-  const { error, count } = await supabase
+  const { error } = await supabase
     .from('dock_time_blocks')
-    .delete({ count: 'exact' })
+    .delete()
     .eq('org_id', orgId)
     .eq('reason', reasonPattern);
 
-  if (error) {
-    console.error('[ClientPickupRules] deleteBlocksForRule:error', { error, orgId, ruleId, reasonPattern });
-    throw error;
-  }
-
-  console.log('[ClientPickupRules] deleteBlocksForRule:success', { orgId, ruleId, reasonPattern, deleted: count ?? 0 });
+  if (error) throw error;
 }
 
 /**
@@ -351,10 +334,8 @@ export async function regenerateBlocks(
     throw new Error('dockId es requerido');
   }
 
-  console.log('[ClientPickupRules] regenerateBlocks:start', { orgId, dockId });
-
   try {
-    const { data, error } = await supabase.functions.invoke('generate-client-pickup-blocks', {
+    const { error } = await supabase.functions.invoke('generate-client-pickup-blocks', {
       body: {
         org_id: orgId,
         dock_id: dockId,
@@ -363,12 +344,9 @@ export async function regenerateBlocks(
     });
 
     if (error) {
-      console.error('[ClientPickupRules] regenerateBlocks:invoke_error', { error, orgId, dockId });
-    } else {
-      console.log('[ClientPickupRules] regenerateBlocks:success', { response: data, orgId, dockId });
+      throw new Error(error.message || 'Error al invocar la función');
     }
   } catch (err: any) {
-    console.error('[ClientPickupRules] regenerateBlocks:catch', { err, orgId, dockId });
     throw new Error('Error al regenerar los bloques: ' + (err?.message || String(err)));
   }
 }

@@ -22,6 +22,7 @@ import {
   hasMeaningfulDraftData,
   getDraftAge,
 } from '../../../hooks/useReservationDraft';
+import { useReservationBlockedStatus } from '../../../hooks/useBlockedStatuses';
 import {
   toWarehouseDateString,
   toWarehouseTimeString,
@@ -33,13 +34,19 @@ interface ReservationModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSave: () => void;
+  /** Callback cuando el usuario hace click en "Copiar reserva" */
+  onCopy?: (reservation: Reservation) => void;
   reservation?: Reservation | null;
   docks: Dock[];
   statuses: any[];
   defaults?: any;
   orgId: string;
+  /** ID del almacén activo — se usa para filtrar proveedores */
+  warehouseId?: string | null;
   /** Timezone del almacén activo — si no se pasa, usa America/Costa_Rica */
   warehouseTimezone?: string;
+  /** Si esta instancia del modal es una copia de otra reserva, indica el ID original */
+  copyOfId?: string | null;
 }
 
 interface FileItem {
@@ -63,12 +70,15 @@ export default function ReservationModal({
   isOpen,
   onClose,
   onSave,
+  onCopy,
   reservation,
   docks,
   statuses,
   defaults,
   orgId,
+  warehouseId,
   warehouseTimezone = DEFAULT_TIMEZONE,
+  copyOfId,
 }: ReservationModalProps) {
   const { user, canLocal } = useAuth();
   // Timezone activo del almacén — fuente de verdad para mostrar y guardar fechas
@@ -77,6 +87,15 @@ export default function ReservationModal({
   // ✅ Niveles de permisos: owner, privilegiado, o mismo proveedor asignado
   const isOwner = reservation ? reservation.created_by === user?.id : true;
   const isPrivileged = canLocal('admin.users.create') || canLocal('admin.matrix.update');
+
+  // ✅ Bloqueo por estado — regla por cliente
+  // Usa client_id DIRECTO de la reserva (columna real en BD)
+  const { isBlocked: isStatusBlocked } = useReservationBlockedStatus(
+    orgId,
+    reservation?.id ?? null,
+    reservation?.status_id ?? null,
+    (reservation as any)?.client_id ?? null
+  );
 
   const [removedExistingFileIds, setRemovedExistingFileIds] = useState<string[]>([]);
   const [savedReservationId, setSavedReservationId] = useState<string | null>(null);
@@ -129,7 +148,8 @@ export default function ReservationModal({
 
   const canEditReservation = !reservation || isOwner || isPrivileged || hasSameProvider;
   const canViewSensitive = canEditReservation;
-  const isReadOnly = !!reservation && !canEditReservation;
+  // isReadOnly: sin permisos de edición O reserva bloqueada por estado (y no es privilegiado)
+  const isReadOnly = !!reservation && (!canEditReservation || isStatusBlocked);
 
   const [notifyModal, setNotifyModal] = useState({
     isOpen: false,
@@ -169,7 +189,8 @@ export default function ReservationModal({
     if (isOpen && orgId) {
       loadCatalogs();
     }
-  }, [isOpen, orgId]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, orgId, warehouseId]);
 
   // ── Helper: inicializa el formulario limpio para nueva reserva ───────────
   const initNewForm = useCallback(() => {
@@ -178,6 +199,9 @@ export default function ReservationModal({
       ? new Date(defaults.end_datetime)
       : new Date(now.getTime() + 2 * 60 * 60 * 1000);
 
+    // ✅ Si viene de una copia (_copyOfId), usar estado seguro del defaults o el primero
+    const initialStatusId = defaults?.status_id || statuses[0]?.id || '';
+
     setRecurrenceConfig(DEFAULT_RECURRENCE_CONFIG);
     setFormData({
       dockId: defaults?.dock_id || '',
@@ -185,20 +209,22 @@ export default function ReservationModal({
       startTime: toWarehouseTimeString(now, tz),
       endDate: toWarehouseDateString(endDt, tz),
       endTime: toWarehouseTimeString(endDt, tz),
-      purchaseOrder: '',
-      truckPlate: '',
-      orderRequestNumber: '',
+      // ✅ Campos copiables desde la reserva original
+      purchaseOrder: defaults?.purchase_order || '',
+      truckPlate: defaults?.truck_plate || '',
+      orderRequestNumber: defaults?.order_request_number || '',
       shipperProvider: defaults?.shipper_provider || '',
-      driver: '',
-      dua: '',
-      invoice: '',
-      statusId: statuses[0]?.id || '',
-      notes: '',
-      transportType: 'inbound',
+      driver: defaults?.driver || '',
+      dua: defaults?.dua || '',
+      invoice: defaults?.invoice || '',
+      statusId: initialStatusId,
+      notes: defaults?.notes || '',
+      transportType: defaults?.transport_type || 'inbound',
       cargoType: defaults?.cargo_type || ''
     });
     setFiles([]);
-    setIsImported(false);
+    // ✅ Si tiene DUA, marcar como importado
+    setIsImported(!!(defaults?.dua));
     setCancelReason('');
     setManualOverride(false);
     setSuggestedMinutes(null);
@@ -206,34 +232,47 @@ export default function ReservationModal({
     setDraftWarnings([]);
     setDraftAgeLabel('');
     setActiveTab('info');
-  }, [defaults, statuses]);
+  }, [defaults, statuses, tz]);
 
   const loadCatalogs = async () => {
     try {
       setLoadingProviders(true);
       setProvidersError('');
-      
+
+      // ── Cargar proveedores del almacén activo (para resolución de nombres) ──
+      // Si hay warehouseId → filtrar por almacén; si no → todos los activos
+      const [allProvidersData, cargoTypesData] = await Promise.all([
+        providersService.getByWarehouse(orgId, warehouseId ?? null, true),
+        cargoTypesService.getByWarehouse(orgId, warehouseId ?? null, true),
+      ]);
+
+      setProviders(allProvidersData);
+      setCargoTypes(cargoTypesData);
+
+      // ── Cargar proveedores permitidos para el usuario ──────────────────────
+      // Para usuarios con proveedores asignados: intersectar con los del almacén activo
       let userProviders: UserProvider[] = [];
-      
+
       if (user?.id) {
         try {
-          userProviders = await userProvidersService.getUserProviders(orgId, user.id);
+          const rawUserProviders = await userProvidersService.getUserProviders(orgId, user.id);
+
+          if (warehouseId) {
+            // Filtrar: solo los que también están en el almacén activo
+            const warehouseProviderIds = new Set(allProvidersData.map((p) => p.id));
+            userProviders = rawUserProviders.filter((up) => warehouseProviderIds.has(up.id));
+          } else {
+            // Sin almacén activo: mostrar todos los del usuario
+            userProviders = rawUserProviders;
+          }
         } catch (error: any) {
-          console.error('Error al cargar proveedores del usuario:', error);
+          // non-blocking
         }
       }
 
       setAllowedProviders(userProviders);
-
-      const [providersData, cargoTypesData] = await Promise.all([
-        providersService.getActive(orgId),
-        cargoTypesService.getActive(orgId)
-      ]);
-      
-      setProviders(providersData);
-      setCargoTypes(cargoTypesData);
     } catch (error) {
-      console.error('Error al cargar catálogos:', error);
+      // non-blocking
     } finally {
       setLoadingProviders(false);
     }
@@ -576,7 +615,9 @@ export default function ReservationModal({
       cargo_type: formData.cargoType,
       // ✅ Usar isCancelledStatus en lugar de comparar con string literal
       is_cancelled: isCancelledStatus,
-      cancel_reason: isCancelledStatus ? cancelReason : null
+      cancel_reason: isCancelledStatus ? cancelReason : null,
+      // ✅ Preservar client_id cuando viene de una copia
+      ...(defaults?.client_id ? { client_id: defaults.client_id } : {}),
     };
 
     try {
@@ -930,6 +971,25 @@ export default function ReservationModal({
             {activeTab === 'info' && (
               <div className="p-6">
                 <div className="max-w-2xl">
+                  {/* ── Banner de copia ───────────────────────────────────────── */}
+                  {copyOfId && (
+                    <div className="mb-5 rounded-xl border border-teal-200 bg-teal-50 p-4">
+                      <div className="flex items-start gap-3">
+                        <div className="w-5 h-5 flex items-center justify-center flex-shrink-0 mt-0.5 text-teal-600">
+                          <i className="ri-file-copy-line text-lg"></i>
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-semibold text-teal-900">
+                            Copia de la reserva #{copyOfId.slice(0, 8)}
+                          </p>
+                          <p className="text-xs text-teal-700 mt-0.5">
+                            Esta es una nueva reserva independiente. Podés cambiar el andén, fecha, hora y cualquier otro campo antes de guardar. La reserva original no se modifica.
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
                   {/* ── Banner de borrador ─────────────────────────────────────── */}
                   {showDraftBanner && (
                     <div className={`mb-5 rounded-xl border p-4 ${draftWarnings.length > 0 ? 'bg-amber-50 border-amber-200' : 'bg-teal-50 border-teal-200'}`}>
@@ -973,9 +1033,26 @@ export default function ReservationModal({
                     </div>
                   )}
 
+                  {/* ✅ Banner: reserva bloqueada por estado */}
+                  {isStatusBlocked && (
+                    <div className="mb-6 bg-red-50 border border-red-200 rounded-xl p-4">
+                      <div className="flex items-start gap-3">
+                        <i className="ri-lock-2-line text-red-600 text-xl w-5 h-5 flex items-center justify-center flex-shrink-0 mt-0.5"></i>
+                        <div className="min-w-0">
+                          <h4 className="text-sm font-semibold text-red-900">
+                            Esta reserva no puede modificarse en su estado actual
+                          </h4>
+                          <p className="text-xs text-red-700 mt-1">
+                            El estado "<span className="font-semibold">{reservation?.status?.name}</span>" bloquea toda edición. Solo un usuario con rol <span className="font-semibold">ADMIN</span> o <span className="font-semibold">Full Access</span> puede modificarla.
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
                   {/* ✅ Banner según nivel de acceso */}
-                  {isReadOnly && !canViewSensitive && <RestrictedBanner />}
-                  {isReadOnly && canViewSensitive && (
+                  {isReadOnly && !isStatusBlocked && !canViewSensitive && <RestrictedBanner />}
+                  {isReadOnly && !isStatusBlocked && canViewSensitive && (
                     <div className="mb-6 bg-amber-50 border border-amber-200 rounded-xl p-4">
                       <div className="flex items-start gap-3">
                         <i className="ri-lock-line text-amber-700 text-xl w-5 h-5 flex items-center justify-center flex-shrink-0 mt-0.5"></i>
@@ -1628,10 +1705,25 @@ export default function ReservationModal({
                 ? 'Lectura limitada — algunos datos están ocultos'
                 : isReadOnly
                 ? 'Modo solo lectura — no podés modificar esta reserva'
+                : copyOfId
+                ? <span className="inline-flex items-center gap-1.5 text-teal-700 font-medium"><i className="ri-file-copy-line w-3.5 h-3.5 flex items-center justify-center"></i>Copia de #{copyOfId.slice(0, 8)} — nueva reserva independiente</span>
                 : <>Los campos con <span className="text-gray-800 font-semibold">*</span> son obligatorios</>}
             </div>
 
             <div className="flex items-center gap-3">
+              {/* Botón Copiar reserva — solo visible cuando hay reserva existente y el usuario puede verla */}
+              {reservation && canViewSensitive && onCopy && (
+                <button
+                  type="button"
+                  onClick={() => onCopy(reservation)}
+                  disabled={saving}
+                  className="px-4 py-2.5 text-sm font-medium text-teal-700 hover:bg-teal-50 rounded-lg transition-colors whitespace-nowrap disabled:opacity-50 border border-teal-200 flex items-center gap-2"
+                  title="Crear una copia editable de esta reserva"
+                >
+                  <i className="ri-file-copy-line w-4 h-4 flex items-center justify-center"></i>
+                  Copiar reserva
+                </button>
+              )}
               <button
                 type="button"
                 onClick={handleClose}

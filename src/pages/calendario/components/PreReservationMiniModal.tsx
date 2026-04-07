@@ -69,7 +69,8 @@ export default function PreReservationMiniModal({
     if (isOpen && orgId && user?.id) {
       loadCatalogs();
     }
-  }, [isOpen, orgId, user?.id]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, orgId, user?.id, warehouseId]);
 
   const loadCatalogs = async () => {
     setLoading(true);
@@ -81,25 +82,27 @@ export default function PreReservationMiniModal({
         isPrivileged,
       });*/
 
-      const cargoTypesData = await cargoTypesService.getActive(orgId);
+      const cargoTypesData = await cargoTypesService.getByWarehouse(orgId, warehouseId ?? null, true);
 
       let providersData: Provider[] = [];
 
       if (isPrivileged) {
-        /**console.log(
-          '[PreReservationMiniModal] 👑 Usuario privilegiado - cargando TODOS los proveedores',
-        );*/
-        providersData = await providersService.getActive(orgId);
+        // Usuarios privilegiados: cargar proveedores del almacén activo (no todos los de la org)
+        providersData = await providersService.getByWarehouse(orgId, warehouseId ?? null, true);
       } else {
-        /**console.log(
-          '[PreReservationMiniModal] 👤 Usuario invitado - cargando solo proveedores asignados',
-        );*/
-        const userProviders = await userProvidersService.getUserProviders(
-          orgId,
-          user!.id,
-        );
+        // Usuarios no privilegiados: proveedores asignados al usuario,
+        // intersectados con los del almacén activo
+        const [userProviders, warehouseProviders] = await Promise.all([
+          userProvidersService.getUserProviders(orgId, user!.id),
+          providersService.getByWarehouse(orgId, warehouseId ?? null, true),
+        ]);
 
-        providersData = userProviders.map(up => ({
+        const warehouseProviderIds = new Set(warehouseProviders.map((p) => p.id));
+        const filtered = warehouseId
+          ? userProviders.filter((up) => warehouseProviderIds.has(up.id))
+          : userProviders;
+
+        providersData = filtered.map(up => ({
           id: up.id,
           name: up.name,
           org_id: orgId,

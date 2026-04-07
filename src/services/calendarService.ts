@@ -28,6 +28,8 @@ export interface Reservation {
   order_request_number?: string | null;
   shipper_provider?: string | null;
   recurrence?: any | null;
+  /** ID del cliente asociado a esta reserva (columna directa en reservations) */
+  client_id?: string | null;
 
   status?: {
     name: string;

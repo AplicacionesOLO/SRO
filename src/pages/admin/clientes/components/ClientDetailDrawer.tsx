@@ -3,6 +3,8 @@ import type { Client, ClientRules, ClientRulesFormData, ClientProviderPayload } 
 import type { Dock } from '../../../../types/dock';
 import type { Provider } from '../../../../types/catalog';
 import ClientPickupRulesTab from './ClientPickupRulesTab';
+import BlockedStatusesConfig from '../../../calendario/components/BlockedStatusesConfig';
+import RuleBlock from './RuleBlock';
 
 interface ClientDetailDrawerProps {
   isOpen: boolean;
@@ -648,134 +650,168 @@ export default function ClientDetailDrawer({
 
           {/* Tab: Reglas */}
           {activeTab === 'rules' && (
-            <div className="space-y-6">
-              {/* Sección 1: Reglas de operación del cliente */}
-              <div className="space-y-4">
-                <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-                  <div className="flex items-start gap-3">
-                    <i className="ri-information-line text-blue-600 text-lg mt-0.5"></i>
+            <div className="space-y-4">
+
+              {/* ── BLOQUE 1: Restricción de edición ── */}
+              <RuleBlock
+                icon="ri-time-line"
+                iconBg="bg-teal-100"
+                iconColor="text-teal-600"
+                title="Restricción de edición"
+                description="Define cuántas horas antes de la reserva se bloquea la edición para este cliente."
+                badge="Por cliente"
+                badgeColor="bg-teal-100 text-teal-700"
+                scope="client"
+              >
+                <div className="space-y-3">
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">
+                      Cutoff de edición (horas)
+                    </label>
+                    <div className="flex items-center gap-3">
+                      <input
+                        type="number"
+                        min="0"
+                        max="720"
+                        value={rulesForm.edit_cutoff_hours}
+                        onChange={(e) => setRulesForm({ ...rulesForm, edit_cutoff_hours: parseInt(e.target.value) || 0 })}
+                        disabled={!canUpdateRules || saving}
+                        className="w-32 px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent disabled:bg-gray-100"
+                      />
+                      <span className="text-xs text-gray-500">
+                        {rulesForm.edit_cutoff_hours === 0
+                          ? 'Sin restricción de tiempo'
+                          : `Bloquea ${rulesForm.edit_cutoff_hours}h antes de la reserva`}
+                      </span>
+                    </div>
+                    <p className="text-xs text-gray-400 mt-1">Rango: 0–720 horas. 0 = sin restricción.</p>
+                  </div>
+
+                  {canUpdateRules && (
+                    <div className="pt-1">
+                      <button
+                        onClick={handleSaveRules}
+                        disabled={saving}
+                        className="px-4 py-2 text-sm font-medium text-white bg-teal-600 rounded-lg hover:bg-teal-700 transition-colors disabled:opacity-50 flex items-center gap-2 whitespace-nowrap"
+                      >
+                        {saving && <i className="ri-loader-4-line animate-spin"></i>}
+                        {saving ? 'Guardando...' : 'Guardar'}
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </RuleBlock>
+
+              {/* ── BLOQUE 2: Asignación de andenes ── */}
+              <RuleBlock
+                icon="ri-layout-grid-line"
+                iconBg="bg-indigo-100"
+                iconColor="text-indigo-600"
+                title="Asignación de andenes"
+                description="Controla si el cliente puede usar todos los andenes o solo los asignados, y el orden de asignación."
+                badge="Por cliente"
+                badgeColor="bg-indigo-100 text-indigo-700"
+                scope="client"
+              >
+                <div className="space-y-3">
+                  <label className={`flex items-start gap-3 p-3 border rounded-lg transition-colors cursor-pointer ${
+                    rulesForm.allow_all_docks ? 'bg-indigo-50 border-indigo-300' : 'bg-gray-50 border-gray-200'
+                  } ${!canUpdateRules || saving ? 'opacity-50 cursor-not-allowed' : ''}`}>
+                    <input
+                      type="checkbox"
+                      id="allow_all_docks_drawer"
+                      checked={rulesForm.allow_all_docks}
+                      onChange={(e) => setRulesForm({ ...rulesForm, allow_all_docks: e.target.checked })}
+                      disabled={!canUpdateRules || saving}
+                      className="w-4 h-4 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500 disabled:opacity-50 mt-0.5"
+                    />
                     <div className="flex-1">
-                      <p className="text-sm text-blue-900 font-medium mb-1">
-                        Reglas de operación del cliente
-                      </p>
-                      <p className="text-xs text-blue-800">
-                        Estas reglas controlan el comportamiento de las reservas para este cliente.
-                      </p>
+                      <span className="text-sm font-medium text-gray-900 block">Permitir todos los andenes</span>
+                      <span className="text-xs text-gray-500">Si está activo, ignora la lista de andenes asignados en la pestaña Andenes.</span>
+                    </div>
+                  </label>
+
+                  <div>
+                    <p className="text-xs font-medium text-gray-600 mb-2">Modo de asignación</p>
+                    <div className="space-y-2">
+                      {[
+                        { value: 'SEQUENTIAL', label: 'Secuencial', desc: 'Orden: 1, 2, 3, 4, 5, 6…' },
+                        { value: 'ODD_FIRST', label: 'Intercalado', desc: 'Impares primero: 1, 3, 5… luego 2, 4, 6…' },
+                      ].map((opt) => (
+                        <label
+                          key={opt.value}
+                          className={`flex items-start gap-3 p-3 border rounded-lg transition-colors cursor-pointer ${
+                            rulesForm.dock_allocation_mode === opt.value
+                              ? 'bg-indigo-50 border-indigo-300'
+                              : 'bg-white border-gray-200 hover:bg-gray-50'
+                          } ${!canUpdateRules || saving ? 'opacity-50 cursor-not-allowed' : ''}`}
+                        >
+                          <input
+                            type="radio"
+                            name="dock_allocation_mode"
+                            value={opt.value}
+                            checked={rulesForm.dock_allocation_mode === opt.value}
+                            onChange={() => setRulesForm({ ...rulesForm, dock_allocation_mode: opt.value })}
+                            disabled={!canUpdateRules || saving}
+                            className="w-4 h-4 text-indigo-600 border-gray-300 focus:ring-indigo-500 disabled:opacity-50 mt-0.5"
+                          />
+                          <div className="flex-1">
+                            <span className="text-sm font-medium text-gray-900 block">{opt.label}</span>
+                            <span className="text-xs text-gray-500">{opt.desc}</span>
+                          </div>
+                        </label>
+                      ))}
                     </div>
                   </div>
+
+                  {canUpdateRules && (
+                    <div className="pt-1">
+                      <button
+                        onClick={handleSaveRules}
+                        disabled={saving}
+                        className="px-4 py-2 text-sm font-medium text-white bg-teal-600 rounded-lg hover:bg-teal-700 transition-colors disabled:opacity-50 flex items-center gap-2 whitespace-nowrap"
+                      >
+                        {saving && <i className="ri-loader-4-line animate-spin"></i>}
+                        {saving ? 'Guardando...' : 'Guardar'}
+                      </button>
+                    </div>
+                  )}
                 </div>
+              </RuleBlock>
 
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Cutoff de edición (horas)
-                  </label>
-                  <input
-                    type="number"
-                    min="0"
-                    max="720"
-                    value={rulesForm.edit_cutoff_hours}
-                    onChange={(e) => setRulesForm({ ...rulesForm, edit_cutoff_hours: parseInt(e.target.value) || 0 })}
-                    disabled={!canUpdateRules || saving}
-                    className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent disabled:bg-gray-100"
-                  />
-                  <p className="text-xs text-gray-500 mt-1">
-                    Horas antes de la reserva en las que no se puede editar (0-720). 0 = sin restricción.
-                  </p>
-                </div>
+              {/* ── BLOQUE 3: Cliente Retira ── */}
+              <RuleBlock
+                icon="ri-truck-line"
+                iconBg="bg-emerald-100"
+                iconColor="text-emerald-600"
+                title="Cliente Retira"
+                description="Bloqueos automáticos en andenes específicos para este cliente. Los bloques se crean desde el inicio del horario del almacén."
+                badge="Por cliente"
+                badgeColor="bg-emerald-100 text-emerald-700"
+                scope="client"
+              >
+                <ClientPickupRulesTab
+                  orgId={client.org_id}
+                  clientId={client.id}
+                  docks={docks}
+                  canManage={canUpdateRules}
+                />
+              </RuleBlock>
 
-                <div className="flex items-start gap-3 p-4 bg-gray-50 rounded-lg">
-                  <input
-                    type="checkbox"
-                    id="allow_all_docks_drawer"
-                    checked={rulesForm.allow_all_docks}
-                    onChange={(e) => setRulesForm({ ...rulesForm, allow_all_docks: e.target.checked })}
-                    disabled={!canUpdateRules || saving}
-                    className="w-4 h-4 text-teal-600 border-gray-300 rounded focus:ring-teal-500 disabled:opacity-50 mt-0.5"
-                  />
-                  <div className="flex-1">
-                    <label htmlFor="allow_all_docks_drawer" className="text-sm font-medium text-gray-900 block mb-1">
-                      Permitir todos los andenes
-                    </label>
-                    <p className="text-xs text-gray-600">
-                      Si está activado, el cliente puede usar cualquier andén sin restricciones. Si está desactivado, solo puede usar los andenes asignados en la pestaña Andenes.
-                    </p>
-                  </div>
-                </div>
+              {/* ── BLOQUE 4: Bloqueo por estados ── */}
+              <RuleBlock
+                icon="ri-lock-2-line"
+                iconBg="bg-amber-100"
+                iconColor="text-amber-600"
+                title="Bloqueo por estados"
+                description="Si una reserva de este cliente cae en cualquiera de los estados seleccionados, no podrá modificarse por usuarios normales. Solo ADMIN y Full Access podrán hacerlo."
+                badge="Por cliente"
+                badgeColor="bg-amber-100 text-amber-700"
+                scope="client"
+              >
+                <BlockedStatusesConfig orgId={client.org_id} clientId={client.id} />
+              </RuleBlock>
 
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Modo de asignación de andenes
-                  </label>
-                  <div className="space-y-2">
-                    <label
-                      className={`flex items-start gap-3 p-3 border rounded-lg transition-colors cursor-pointer ${
-                        rulesForm.dock_allocation_mode === 'SEQUENTIAL'
-                          ? 'bg-teal-50 border-teal-300'
-                          : 'bg-white border-gray-200 hover:bg-gray-50'
-                      } ${!canUpdateRules || saving ? 'opacity-50 cursor-not-allowed' : ''}`}
-                    >
-                      <input
-                        type="radio"
-                        name="dock_allocation_mode"
-                        value="SEQUENTIAL"
-                        checked={rulesForm.dock_allocation_mode === 'SEQUENTIAL'}
-                        onChange={() => setRulesForm({ ...rulesForm, dock_allocation_mode: 'SEQUENTIAL' })}
-                        disabled={!canUpdateRules || saving}
-                        className="w-4 h-4 text-teal-600 border-gray-300 focus:ring-teal-500 disabled:opacity-50 mt-0.5"
-                      />
-                      <div className="flex-1">
-                        <span className="text-sm font-medium text-gray-900 block">Secuencial</span>
-                        <span className="text-xs text-gray-500">Asigna andenes en orden: 1, 2, 3, 4, 5, 6…</span>
-                      </div>
-                    </label>
-                    <label
-                      className={`flex items-start gap-3 p-3 border rounded-lg transition-colors cursor-pointer ${
-                        rulesForm.dock_allocation_mode === 'ODD_FIRST'
-                          ? 'bg-teal-50 border-teal-300'
-                          : 'bg-white border-gray-200 hover:bg-gray-50'
-                      } ${!canUpdateRules || saving ? 'opacity-50 cursor-not-allowed' : ''}`}
-                    >
-                      <input
-                        type="radio"
-                        name="dock_allocation_mode"
-                        value="ODD_FIRST"
-                        checked={rulesForm.dock_allocation_mode === 'ODD_FIRST'}
-                        onChange={() => setRulesForm({ ...rulesForm, dock_allocation_mode: 'ODD_FIRST' })}
-                        disabled={!canUpdateRules || saving}
-                        className="w-4 h-4 text-teal-600 border-gray-300 focus:ring-teal-500 disabled:opacity-50 mt-0.5"
-                      />
-                      <div className="flex-1">
-                        <span className="text-sm font-medium text-gray-900 block">Intercalado</span>
-                        <span className="text-xs text-gray-500">Primero impares, luego pares: 1, 3, 5… luego 2, 4, 6…</span>
-                      </div>
-                    </label>
-                  </div>
-                </div>
-
-                {canUpdateRules && (
-                  <div className="pt-4">
-                    <button
-                      onClick={handleSaveRules}
-                      disabled={saving}
-                      className="w-full px-4 py-2 text-sm font-medium text-white bg-teal-600 rounded-lg hover:bg-teal-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-2 whitespace-nowrap"
-                    >
-                      {saving && <i className="ri-loader-4-line animate-spin"></i>}
-                      {saving ? 'Guardando...' : 'Guardar Reglas'}
-                    </button>
-                  </div>
-                )}
-              </div>
-
-              {/* Divisor visual */}
-              <div className="border-t border-gray-300"></div>
-
-              {/* Sección 2: Cliente Retira */}
-            <ClientPickupRulesTab
-              orgId={client.org_id}
-              clientId={client.id}
-              docks={docks}
-              canManage={canUpdateRules}
-            />
             </div>
           )}
 

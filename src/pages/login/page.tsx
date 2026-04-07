@@ -128,7 +128,7 @@ export default function Login() {
                 <p className="font-medium text-gray-900 mb-3">Nota:</p>
                 <p className="bg-teal-50 p-3 rounded-lg text-teal-800">
                   En caso de no poseer un usuario debes solicitarlo al administrador{' '}
-                  <code className="bg-teal-100 px-1 rounded">correo@ologistics.com</code> para poder iniciar sesión.
+                  <code className="bg-teal-100 px-1 rounded">CR: kramirez@ologistics.com / VNZ: srodriguez@febeca.com&nbsp;</code> para poder iniciar sesión.
                 </p>
               </div>
             </div>
@@ -139,10 +139,9 @@ export default function Login() {
       {/* Right side illustration */}
       <div className="hidden lg:flex flex-1 bg-gradient-to-br from-teal-600 to-teal-800 items-center justify-center p-12">
         <div className="max-w-lg text-white">
-          <h2 className="text-4xl font-bold mb-6">Gestión Eficiente de Andenes</h2>
+          <h2 className="text-4xl font-bold mb-6">Control y gestión integral de andenes</h2>
           <p className="text-xl text-teal-100 mb-8">
-            Optimiza la coordinación de llegadas, descargas y salidas de camiones con nuestro sistema
-            integral de reservaciones.
+            Centralizá la programación, monitoreo y control de operaciones de carga y descarga en una sola plataforma.
           </p>
           <div className="space-y-4">
             <div className="flex items-start gap-3">
@@ -150,8 +149,8 @@ export default function Login() {
                 <i className="ri-calendar-check-line text-2xl w-6 h-6 flex items-center justify-center"></i>
               </div>
               <div>
-                <h3 className="font-semibold text-lg mb-1">Calendario Inteligente</h3>
-                <p className="text-teal-100">Visualiza y gestiona reservas por día, semana o mes</p>
+                <h3 className="font-semibold text-lg mb-1">Programación centralizada</h3>
+                <p className="text-teal-100">Gestioná reservas de forma ordenada y sin conflictos</p>
               </div>
             </div>
             <div className="flex items-start gap-3">
@@ -159,8 +158,8 @@ export default function Login() {
                 <i className="ri-file-list-3-line text-2xl w-6 h-6 flex items-center justify-center"></i>
               </div>
               <div>
-                <h3 className="font-semibold text-lg mb-1">Auditoría Completa</h3>
-                <p className="text-teal-100">Historial detallado de todos los cambios realizados</p>
+                <h3 className="font-semibold text-lg mb-1">Trazabilidad operativa</h3>
+                <p className="text-teal-100">Accedé al historial completo de cada operación y sus cambios</p>
               </div>
             </div>
             <div className="flex items-start gap-3">
@@ -168,8 +167,8 @@ export default function Login() {
                 <i className="ri-truck-line text-2xl w-6 h-6 flex items-center justify-center"></i>
               </div>
               <div>
-                <h3 className="font-semibold text-lg mb-1">Control de Andenes</h3>
-                <p className="text-teal-100">Monitorea el estado en tiempo real de cada andén</p>
+                <h3 className="font-semibold text-lg mb-1">Visibilidad en tiempo real</h3>
+                <p className="text-teal-100">Supervisá el estado de cada andén y sus operaciones activas</p>
               </div>
             </div>
           </div>

@@ -264,16 +264,33 @@ export const dashboardService = {
     }
     const { data: warehouses } = await warehousesQuery;
 
-    let collaboratorsQuery = supabase
-      .from('collaborators')
-      .select('id, warehouse_id')
-      .eq('org_id', orgId)
-      .eq('is_active', true);
+    // ✅ FIX: collaborators no tiene warehouse_id — usar tabla pivote collaborator_warehouses
+    let collaboratorsCount = 0;
     if (warehouseId) {
-      // Filtrar colaboradores del almacén (si hay relación warehouse_id)
-      collaboratorsQuery = collaboratorsQuery.eq('warehouse_id', warehouseId);
+      // Filtrar por almacén via tabla pivote
+      const { data: cwLinks } = await supabase
+        .from('collaborator_warehouses')
+        .select('collaborator_id')
+        .eq('org_id', orgId)
+        .eq('warehouse_id', warehouseId);
+      const collabIds = (cwLinks ?? []).map((l: any) => l.collaborator_id);
+      if (collabIds.length > 0) {
+        const { data: collabs } = await supabase
+          .from('collaborators')
+          .select('id')
+          .eq('org_id', orgId)
+          .eq('is_active', true)
+          .in('id', collabIds);
+        collaboratorsCount = collabs?.length || 0;
+      }
+    } else {
+      const { data: collabs } = await supabase
+        .from('collaborators')
+        .select('id')
+        .eq('org_id', orgId)
+        .eq('is_active', true);
+      collaboratorsCount = collabs?.length || 0;
     }
-    const { data: collaborators } = await collaboratorsQuery;
 
     const { data: providers } = await supabase
       .from('providers')
@@ -424,7 +441,7 @@ export const dashboardService = {
       activeDocks: docks?.filter(d => d.is_active).length || 0,
       totalDocks: docks?.length || 0,
       activeWarehouses: warehouses?.length || 0,
-      totalCollaborators: collaborators?.length || 0,
+      totalCollaborators: collaboratorsCount,
       topProviders,
       topDocks,
       peakHours,
