@@ -552,6 +552,22 @@ export default function ReservationModal({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
+    // Validación extra: si el rol tiene restricción de status, bloquear status no permitidos
+    const hasLimitedStatus = canLocal('reservations.limit_status_view');
+    if (hasLimitedStatus && formData.statusId) {
+      const selectedStatus = statuses.find(s => s.id === formData.statusId);
+      const allowedCodes = ['PENDING', 'CANCELLED'];
+      if (selectedStatus && !allowedCodes.includes(selectedStatus.code || '')) {
+        setNotifyModal({
+          isOpen: true,
+          type: 'warning',
+          title: 'Estado no permitido',
+          message: 'Tu rol solo permite asignar los estados Pendiente o Cancelado.'
+        });
+        return;
+      }
+    }
+
     if (isReadOnly) {
       setNotifyModal({
         isOpen: true,

@@ -20,6 +20,7 @@ import { sortDocksByNameNumber } from '../../utils/sortDocks';
 import { ConfirmModal } from '../../components/base/ConfirmModal';
 import { dockAllocationService, type DockAllocationRule } from '../../services/dockAllocationService';
 import { providersService } from '../../services/providersService';
+import { userProvidersService } from '../../services/userProvidersService';
 import { useClientPickupRulesContext } from '../../contexts/ClientPickupRulesContext';
 import BlocksManagementTab from './components/BlocksManagementTab';
 import ReservationHoverCard from './components/ReservationHoverCard';
@@ -186,6 +187,8 @@ export default function CalendarioPage() {
   const [filterStatus, setFilterStatus] = useState<string>('all');
 
   const [providers, setProviders] = useState<{ id: string; name: string }[]>([]);
+  // IDs de proveedores asignados al usuario actual — para calcular acceso por reserva
+  const [userProviderIds, setUserProviderIds] = useState<Set<string>>(new Set());
 
   const [draggedEvent, setDraggedEvent] = useState<CalendarEvent | null>(null);
 
@@ -233,6 +236,7 @@ export default function CalendarioPage() {
   // ✅ Moved all useMemo hooks here (no hooks after returns)
   const canView = useMemo(() => can('calendar.view'), [can]);
   const canCreate = useMemo(() => can('reservations.create'), [can]);
+  const hasLimitedStatusView = useMemo(() => can('reservations.limit_status_view'), [can]);
   const canMove = useMemo(() => can('reservations.move'), [can]);
   const canBlockCreate = useMemo(() => can('dock_blocks.create'), [can]);
   const canBlockUpdate = useMemo(() => can('dock_blocks.update'), [can]);
@@ -1414,6 +1418,14 @@ export default function CalendarioPage() {
     providersService.getActive(orgId).then(setProviders).catch(() => {});
   }, [orgId]);
 
+  // Cargar proveedores asignados al usuario actual (para calcular acceso por reserva)
+  useEffect(() => {
+    if (!orgId || !user?.id) return;
+    userProvidersService.getUserProviders(orgId, user.id)
+      .then((ups) => setUserProviderIds(new Set(ups.map((p) => p.id))))
+      .catch(() => {});
+  }, [orgId, user?.id]);
+
   // ── Handler: Copiar reserva ───────────────────────────────────────────────
   // Cierra el modal actual, guarda los datos de la copia en memoria y activa
   // el modo selección de espacio directamente (igual que "Elegir espacio en calendario").
@@ -2282,9 +2294,17 @@ export default function CalendarioPage() {
 
                                             const { top, height } = clamped;
 
+                                            // Misma lógica que ReservationModal.canViewSensitive
+                                            const isOwnerR = reservation.created_by === user?.id;
+                                            const hasSameProviderR = reservation.shipper_provider
+                                              ? userProviderIds.has(reservation.shipper_provider)
+                                              : false;
+                                            const canViewSensitiveR = isOwnerR || isPrivilegedUser || hasSameProviderR;
+
                                             return (
                                               <ReservationHoverCard
                                                 key={reservation.id}
+                                                isLimitedAccess={!canViewSensitiveR}
                                                 data={{
                                                   id: reservation.id,
                                                   startDatetime: reservation.start_datetime,
@@ -2292,16 +2312,16 @@ export default function CalendarioPage() {
                                                   statusName: reservation.status?.name,
                                                   statusColor: reservation.status?.color,
                                                   dockName: filteredDocks.find(d => d.id === reservation.dock_id)?.name,
-                                                  providerName: providers.find(p => p.id === reservation.shipper_provider)?.name,
-                                                  driver: reservation.driver,
-                                                  truckPlate: reservation.truck_plate,
-                                                  cargoOrigin: (reservation as any).cargo_origin,
-                                                  dua: reservation.dua,
-                                                  invoice: reservation.invoice,
-                                                  purchaseOrder: reservation.purchase_order,
-                                                  pedido: reservation.order_request_number,
-                                                  notes: reservation.notes,
-                                                  createdByName: reservation.creator?.name || reservation.creator?.email || null,
+                                                  providerName: canViewSensitiveR ? providers.find(p => p.id === reservation.shipper_provider)?.name : null,
+                                                  driver: canViewSensitiveR ? reservation.driver : null,
+                                                  truckPlate: canViewSensitiveR ? reservation.truck_plate : null,
+                                                  cargoOrigin: canViewSensitiveR ? (reservation as any).cargo_origin : null,
+                                                  dua: canViewSensitiveR ? reservation.dua : null,
+                                                  invoice: canViewSensitiveR ? reservation.invoice : null,
+                                                  purchaseOrder: canViewSensitiveR ? reservation.purchase_order : null,
+                                                  pedido: canViewSensitiveR ? reservation.order_request_number : null,
+                                                  notes: canViewSensitiveR ? reservation.notes : null,
+                                                  createdByName: canViewSensitiveR ? (reservation.creator?.name || reservation.creator?.email || null) : null,
                                                 }}
                                                 disabled={selectionMode}
                                               >
@@ -2363,52 +2383,59 @@ export default function CalendarioPage() {
                                                       <div className="font-bold text-gray-900 truncate text-[13px] leading-tight">
                                                         #{reservation.id.slice(0, 8)}
                                                       </div>
-                                                      {/* Proveedor — prioridad alta */}
-                                                      {reservation.shipper_provider && (
+                                                      {/* Proveedor — solo si tiene acceso */}
+                                                      {canViewSensitiveR && reservation.shipper_provider && (
                                                         <div className="font-semibold text-gray-700 truncate text-[12px] leading-tight">
                                                           {providers.find(p => p.id === reservation.shipper_provider)?.name || reservation.shipper_provider}
                                                         </div>
                                                       )}
-                                                      {/* DUA */}
-                                                      {reservation.dua && (
+                                                      {/* DUA — solo si tiene acceso */}
+                                                      {canViewSensitiveR && reservation.dua && (
                                                         <div className="text-gray-600 truncate text-[11px] leading-tight">
                                                           <span className="text-gray-400">DUA:</span> {reservation.dua}
                                                         </div>
                                                       )}
-                                                      {/* Pedido */}
-                                                      {reservation.order_request_number && (
+                                                      {/* Pedido — solo si tiene acceso */}
+                                                      {canViewSensitiveR && reservation.order_request_number && (
                                                         <div className="text-gray-600 truncate text-[11px] leading-tight">
                                                           <span className="text-gray-400">Pedido:</span> {reservation.order_request_number}
                                                         </div>
                                                       )}
-                                                      {/* Factura — solo si hay espacio (height > 90) */}
-                                                      {height > 90 && reservation.invoice && (
+                                                      {/* Factura — solo si tiene acceso y hay espacio */}
+                                                      {canViewSensitiveR && height > 90 && reservation.invoice && (
                                                         <div className="text-gray-600 truncate text-[11px] leading-tight">
                                                           <span className="text-gray-400">Factura:</span> {reservation.invoice}
                                                         </div>
                                                       )}
-                                                      {/* Matrícula — solo si hay espacio (height > 105) */}
-                                                      {height > 105 && reservation.truck_plate && (
+                                                      {/* Matrícula — solo si tiene acceso y hay espacio */}
+                                                      {canViewSensitiveR && height > 105 && reservation.truck_plate && (
                                                         <div className="text-gray-600 truncate text-[11px] leading-tight">
                                                           <span className="text-gray-400">Matrícula:</span> {reservation.truck_plate}
                                                         </div>
                                                       )}
-                                                      {/* Chofer — solo si hay espacio (height > 120) */}
-                                                      {height > 120 && reservation.driver && (
+                                                      {/* Chofer — solo si tiene acceso y hay espacio */}
+                                                      {canViewSensitiveR && height > 120 && reservation.driver && (
                                                         <div className="text-gray-600 truncate text-[11px] leading-tight">
                                                           <span className="text-gray-400">Chofer:</span> {reservation.driver}
                                                         </div>
                                                       )}
-                                                      {/* Creado por — solo si hay espacio (height > 120) */}
-                                                      {height > 120 && reservation.creator && (reservation.creator.name || reservation.creator.email) && (
+                                                      {/* Creado por — solo si tiene acceso y hay espacio */}
+                                                      {canViewSensitiveR && height > 120 && reservation.creator && (reservation.creator.name || reservation.creator.email) && (
                                                         <div className="text-gray-500 truncate text-[10px] leading-tight mt-0.5">
                                                           <span className="text-gray-400">Por:</span> {reservation.creator.name || reservation.creator.email}
                                                         </div>
                                                       )}
-                                                      {/* Orden de compra — solo si hay espacio (height > 138) */}
-                                                      {height > 138 && reservation.purchase_order && (
+                                                      {/* Orden de compra — solo si tiene acceso y hay espacio */}
+                                                      {canViewSensitiveR && height > 138 && reservation.purchase_order && (
                                                         <div className="text-gray-600 truncate text-[11px] leading-tight">
                                                           <span className="text-gray-400">OC:</span> {reservation.purchase_order}
+                                                        </div>
+                                                      )}
+                                                      {/* Indicador de acceso limitado en la card */}
+                                                      {!canViewSensitiveR && (
+                                                        <div className="text-amber-600 truncate text-[10px] leading-tight mt-0.5 flex items-center gap-0.5">
+                                                          <i className="ri-eye-off-line" style={{ fontSize: '10px' }}></i>
+                                                          <span>Info limitada</span>
                                                         </div>
                                                       )}
                                                     </div>
@@ -2431,6 +2458,7 @@ export default function CalendarioPage() {
                                               </ReservationHoverCard>
                                             );
                                           })}
+
 
                                         {/* Renderizar BLOQUES */}
                                         {blocks
@@ -2513,7 +2541,11 @@ export default function CalendarioPage() {
             reservation={selectedReservation}
             defaults={reserveModalSlot}
             docks={docks}
-            statuses={statuses}
+            statuses={
+              hasLimitedStatusView
+                ? statuses.filter(s => s.code === 'PENDING' || s.code === 'CANCELLED')
+                : statuses
+            }
             orgId={orgId!}
             warehouseId={warehouseId}
             warehouseTimezone={warehouseTimezone}

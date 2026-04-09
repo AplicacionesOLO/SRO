@@ -184,19 +184,19 @@ export default function PermissionMatrixTab() {
 
       {/* Matriz con CSS Grid */}
       <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
-        <div className="overflow-x-auto">
-          {/* Encabezados */}
+        <div className="overflow-x-auto overflow-y-auto max-h-[65vh]">
+          {/* Encabezados sticky */}
           <div 
-            className="grid bg-gray-50 border-b border-gray-200"
+            className="grid bg-gray-50 border-b border-gray-200 sticky top-0 z-20"
             style={{
               gridTemplateColumns: `400px repeat(${roles.length}, 160px)`
             }}
           >
-            <div className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider border-r border-gray-200">
+            <div className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider border-r border-gray-200 bg-gray-50 sticky left-0 z-30">
               Permiso
             </div>
             {roles.map((role) => (
-              <div key={role.id} className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider border-r border-gray-200 last:border-r-0">
+              <div key={role.id} className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider border-r border-gray-200 last:border-r-0 bg-gray-50">
                 <div className="flex flex-col items-center gap-1">
                   <span>{role.name}</span>
                   <button
@@ -218,14 +218,14 @@ export default function PermissionMatrixTab() {
           <div>
             {Object.entries(groupedPermissions).map(([category, perms]) => (
               <div key={`category-${category}`}>
-                {/* Fila de categoría */}
+                {/* Fila de categoría sticky bajo el header */}
                 <div 
-                  className="grid bg-gray-50 border-b border-gray-200"
+                  className="grid bg-gray-100 border-b border-gray-200 sticky top-[57px] z-10"
                   style={{
                     gridTemplateColumns: `400px repeat(${roles.length}, 160px)`
                   }}
                 >
-                  <div className="px-6 py-3 border-r border-gray-200">
+                  <div className="px-6 py-3 border-r border-gray-200 bg-gray-100 sticky left-0 z-10">
                     <div className="flex items-center justify-between">
                       <span className="font-semibold text-gray-900">{category}</span>
                       <button
@@ -238,7 +238,7 @@ export default function PermissionMatrixTab() {
                     </div>
                   </div>
                   {roles.map((role) => (
-                    <div key={role.id} className="px-4 py-3 border-r border-gray-200 last:border-r-0"></div>
+                    <div key={role.id} className="px-4 py-3 border-r border-gray-200 last:border-r-0 bg-gray-100"></div>
                   ))}
                 </div>
 
@@ -251,7 +251,7 @@ export default function PermissionMatrixTab() {
                       gridTemplateColumns: `400px repeat(${roles.length}, 160px)`
                     }}
                   >
-                    <div className="px-6 py-4 border-r border-gray-200">
+                    <div className={`px-6 py-4 border-r border-gray-200 sticky left-0 z-[5] ${index % 2 === 0 ? 'bg-white' : 'bg-gray-50'}`}>
                       <div>
                         <code className="text-xs font-mono text-gray-900">{permission.name}</code>
                         {permission.description && (
