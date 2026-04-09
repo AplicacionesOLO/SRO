@@ -19,10 +19,15 @@ export function usePermissions() {
   //   permsCount: permissionsSet?.size || 0
   // });
 
+  const hasRole = (role: string): boolean => {
+    return user?.role === role;
+  };
+
   return {
     orgId,
     userId: user?.id || null,
     can: canLocal,
+    hasRole,
     loading: isLoadingPermissions,
     permissionsSet
   };

@@ -1,8 +1,6 @@
 import { useState } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { usePermissions } from '../../hooks/usePermissions';
-import { Navigate } from 'react-router-dom';
-import Navbar from '../../components/feature/Navbar';
 import RolesTab from './components/RolesTab';
 import PermissionsTab from './components/PermissionsTab';
 import PermissionMatrixTab from './components/PermissionMatrixTab';
@@ -17,7 +15,6 @@ export default function AdminPage() {
   if (permissionsLoading || loading) {
     return (
       <div className="min-h-screen bg-gray-50">
-        <Navbar />
         <div className="flex items-center justify-center h-[calc(100vh-80px)]">
           <div className="text-center">
             <div className="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-teal-600 mb-4"></div>
@@ -32,7 +29,6 @@ export default function AdminPage() {
   if (!orgId) {
     return (
       <div className="min-h-screen bg-gray-50">
-        <Navbar />
         <div className="flex items-center justify-center h-[calc(100vh-80px)]">
           <div className="text-center">
             <i className="ri-lock-line text-6xl text-red-500 mb-4"></i>
@@ -50,13 +46,12 @@ export default function AdminPage() {
     );
   }
 
-  // ✅ Guard 3: Verificar permisos (sin pasar orgId como parámetro)
+  // ✅ Guard 3: Verificar permisos
   const hasAccess = hasRole('ADMIN') || can('admin.roles.manage');
 
   if (!hasAccess) {
     return (
       <div className="min-h-screen bg-gray-50">
-        <Navbar />
         <div className="flex items-center justify-center h-[calc(100vh-80px)]">
           <div className="text-center">
             <i className="ri-lock-line text-6xl text-red-500 mb-4"></i>
@@ -83,8 +78,6 @@ export default function AdminPage() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <Navbar />
-      
       <div className="px-6 py-6">
         <div className="mb-6">
           <h1 className="text-2xl font-bold text-gray-900 mb-2">Administración de Permisos</h1>

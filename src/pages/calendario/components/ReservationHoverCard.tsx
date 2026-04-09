@@ -13,14 +13,26 @@ export interface ReservationHoverData {
   id: string;
   startDatetime: string;
   endDatetime: string;
+  // Campos de transporte
   dua?: string | null;
   pedido?: string | null;
   driver?: string | null;
-  notes?: string | null;
+  truckPlate?: string | null;
+  invoice?: string | null;
+  purchaseOrder?: string | null;
+  cargoOrigin?: string | null;
+  // Proveedor / cliente
+  providerName?: string | null;
+  clientName?: string | null;
+  // Estado
   statusName?: string | null;
   statusColor?: string | null;
+  // Andén
   dockName?: string | null;
-  providerName?: string | null;
+  // Notas
+  notes?: string | null;
+  // Usuario creador
+  createdByName?: string | null;
 }
 
 interface ReservationHoverCardProps {
@@ -29,10 +41,9 @@ interface ReservationHoverCardProps {
   children: React.ReactNode;
 }
 
-const CARD_WIDTH = 280;
-const CARD_ESTIMATED_HEIGHT = 300;
+const CARD_WIDTH = 300;
+const CARD_ESTIMATED_HEIGHT = 380;
 const OFFSET = 12;
-// DEBUG: delay en 0 para diagnóstico. Subir a 150 cuando esté confirmado.
 const OPEN_DELAY = 0;
 const CLOSE_DELAY = 80;
 
@@ -54,20 +65,14 @@ export default function ReservationHoverCard({
     };
   }, []);
 
-  // ── Handlers del trigger ────────────────────────────────────────────────
-  // getBoundingClientRect() se llama ANTES del timeout para capturar el rect
-  // mientras el elemento está bajo el cursor (luego el currentTarget es null).
   const handleTriggerEnter = useCallback(
     (e: React.MouseEvent<HTMLElement>) => {
       if (disabled) return;
-
       const rect = e.currentTarget.getBoundingClientRect();
-
       if (closeTimer.current) {
         clearTimeout(closeTimer.current);
         closeTimer.current = null;
       }
-
       openTimer.current = setTimeout(() => {
         const vw = window.innerWidth;
         const vh = window.innerHeight;
@@ -75,7 +80,6 @@ export default function ReservationHoverCard({
         const goUp = rect.bottom + CARD_ESTIMATED_HEIGHT + OFFSET > vh;
         const left = goLeft ? rect.left - CARD_WIDTH - OFFSET : rect.right + OFFSET;
         const top = goUp ? Math.max(8, rect.bottom - CARD_ESTIMATED_HEIGHT) : rect.top;
-
         setCardPos({ top, left });
         setVisible(true);
       }, OPEN_DELAY);
@@ -89,16 +93,12 @@ export default function ReservationHoverCard({
       openTimer.current = null;
     }
     closeTimer.current = setTimeout(() => {
-      if (!insideCard.current) {
-        setVisible(false);
-      }
+      if (!insideCard.current) setVisible(false);
     }, CLOSE_DELAY);
   }, [data.id]);
 
-  const handleTriggerMove = useCallback(() => {
-  }, [data.id]);
+  const handleTriggerMove = useCallback(() => {}, [data.id]);
 
-  // ── Handlers de la tarjeta flotante ────────────────────────────────────
   const handleCardEnter = useCallback(() => {
     insideCard.current = true;
     if (closeTimer.current) {
@@ -109,18 +109,30 @@ export default function ReservationHoverCard({
 
   const handleCardLeave = useCallback(() => {
     insideCard.current = false;
-    closeTimer.current = setTimeout(() => {
-      setVisible(false);
-    }, CLOSE_DELAY);
+    closeTimer.current = setTimeout(() => setVisible(false), CLOSE_DELAY);
   }, []);
 
-  // ── Helpers de presentación ─────────────────────────────────────────────
   const formatTime = (dt: string) =>
     new Date(dt).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
 
   const shortId = data.id.slice(0, 8).toUpperCase();
 
-  // ── Tarjeta flotante ────────────────────────────────────────────────────
+  // ── Filas dinámicas ─────────────────────────────────────────────────────
+  // Cada entrada: { icon, label, value }
+  // Solo se renderiza si value es truthy (no vacío, no null, no undefined)
+  const rows: Array<{ icon: string; label: string; value: string }> = [
+    { icon: 'ri-map-pin-line', label: 'Andén', value: data.dockName ?? '' },
+    { icon: 'ri-building-2-line', label: 'Proveedor', value: data.providerName ?? '' },
+    { icon: 'ri-user-3-line', label: 'Cliente', value: data.clientName ?? '' },
+    { icon: 'ri-steering-2-line', label: 'Chofer', value: data.driver ?? '' },
+    { icon: 'ri-car-line', label: 'Matrícula', value: data.truckPlate ?? '' },
+    { icon: 'ri-map-2-line', label: 'Origen', value: data.cargoOrigin ?? '' },
+    { icon: 'ri-file-list-3-line', label: 'DUA', value: data.dua ?? '' },
+    { icon: 'ri-receipt-line', label: 'Factura', value: data.invoice ?? '' },
+    { icon: 'ri-shopping-bag-3-line', label: 'Orden de compra', value: data.purchaseOrder ?? '' },
+    { icon: 'ri-hashtag', label: 'Pedido', value: data.pedido ?? '' },
+  ].filter((row) => row.value.trim() !== '');
+
   const card = visible ? (
     <div
       onMouseEnter={handleCardEnter}
@@ -161,72 +173,37 @@ export default function ReservationHoverCard({
         </div>
 
         {/* Body */}
-        <div className="px-4 py-3 space-y-2">
-          {/* Hora */}
-          <div className="flex items-center gap-2">
-            <div className="w-5 h-5 flex items-center justify-center flex-shrink-0">
-              <i className="ri-time-line text-gray-400 text-sm" />
+        <div className="px-4 py-3 space-y-1.5">
+          {/* Hora — siempre visible */}
+          <div className="flex items-center gap-2 pb-1.5 border-b border-gray-100 mb-1">
+            <div className="w-4 h-4 flex items-center justify-center flex-shrink-0">
+              <i className="ri-time-line text-gray-400 text-xs" />
             </div>
             <span className="text-xs font-semibold text-gray-800">
               {formatTime(data.startDatetime)} — {formatTime(data.endDatetime)}
             </span>
           </div>
 
-          {/* Andén */}
-          {data.dockName && (
-            <div className="flex items-center gap-2">
-              <div className="w-5 h-5 flex items-center justify-center flex-shrink-0">
-                <i className="ri-map-pin-line text-gray-400 text-sm" />
+          {/* Filas dinámicas */}
+          {rows.map((row) => (
+            <div key={row.label} className="flex items-start gap-2">
+              <div className="w-4 h-4 flex items-center justify-center flex-shrink-0 mt-0.5">
+                <i className={`${row.icon} text-gray-400 text-xs`} />
               </div>
-              <span className="text-xs text-gray-700 truncate">{data.dockName}</span>
-            </div>
-          )}
-
-          {/* Proveedor */}
-          {data.providerName && (
-            <div className="flex items-center gap-2">
-              <div className="w-5 h-5 flex items-center justify-center flex-shrink-0">
-                <i className="ri-truck-line text-gray-400 text-sm" />
+              <div className="flex items-baseline gap-1.5 min-w-0 flex-1">
+                <span className="text-[10px] text-gray-400 whitespace-nowrap flex-shrink-0">
+                  {row.label}:
+                </span>
+                <span className="text-xs text-gray-700 truncate">{row.value}</span>
               </div>
-              <span className="text-xs text-gray-700 truncate">{data.providerName}</span>
             </div>
-          )}
-
-          {/* Chofer */}
-          {data.driver && (
-            <div className="flex items-center gap-2">
-              <div className="w-5 h-5 flex items-center justify-center flex-shrink-0">
-                <i className="ri-steering-2-line text-gray-400 text-sm" />
-              </div>
-              <span className="text-xs text-gray-700 truncate">{data.driver}</span>
-            </div>
-          )}
-
-          {/* DUA */}
-          {data.dua && (
-            <div className="flex items-center gap-2">
-              <div className="w-5 h-5 flex items-center justify-center flex-shrink-0">
-                <i className="ri-file-list-3-line text-gray-400 text-sm" />
-              </div>
-              <span className="text-xs text-gray-700 truncate">DUA: {data.dua}</span>
-            </div>
-          )}
-
-          {/* Pedido */}
-          {data.pedido && (
-            <div className="flex items-center gap-2">
-              <div className="w-5 h-5 flex items-center justify-center flex-shrink-0">
-                <i className="ri-receipt-line text-gray-400 text-sm" />
-              </div>
-              <span className="text-xs text-gray-700 truncate">Pedido: {data.pedido}</span>
-            </div>
-          )}
+          ))}
 
           {/* Notas */}
-          {data.notes && (
-            <div className="flex items-start gap-2 pt-2 border-t border-gray-100 mt-1">
-              <div className="w-5 h-5 flex items-center justify-center flex-shrink-0 mt-0.5">
-                <i className="ri-sticky-note-line text-gray-400 text-sm" />
+          {data.notes && data.notes.trim() !== '' && (
+            <div className="flex items-start gap-2 pt-1.5 border-t border-gray-100 mt-1">
+              <div className="w-4 h-4 flex items-center justify-center flex-shrink-0 mt-0.5">
+                <i className="ri-sticky-note-line text-gray-400 text-xs" />
               </div>
               <span className="text-xs text-gray-500 line-clamp-2 leading-relaxed">
                 {data.notes}
@@ -235,16 +212,24 @@ export default function ReservationHoverCard({
           )}
         </div>
 
-        {/* Footer */}
-        <div className="px-4 py-2 bg-gray-50 border-t border-gray-100">
-          <span className="text-[10px] text-gray-400">Click para ver detalle completo</span>
+        {/* Footer — creado por + hint */}
+        <div className="px-4 py-2 bg-gray-50 border-t border-gray-100 flex items-center justify-between gap-2">
+          {data.createdByName ? (
+            <span className="text-[10px] text-gray-500 truncate">
+              <span className="text-gray-400">Creado por:</span>{' '}
+              <span className="font-medium text-gray-600">{data.createdByName}</span>
+            </span>
+          ) : (
+            <span />
+          )}
+          <span className="text-[10px] text-gray-400 whitespace-nowrap flex-shrink-0">
+            Click para detalle
+          </span>
         </div>
       </div>
     </div>
   ) : null;
 
-  // ── Clonar el child e inyectar los handlers directamente ────────────────
-  // Esto garantiza que los eventos van al nodo DOM real sin wrapper adicional.
   const child = Children.only(children);
   if (!isValidElement(child)) return <>{children}</>;
 

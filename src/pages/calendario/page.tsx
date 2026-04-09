@@ -216,8 +216,8 @@ export default function CalendarioPage() {
   // ✅ Flag para distinguir "primer mount con lastRuleChange ya seteado" vs "lastRuleChange cambió mientras estaba montado"
   const ruleChangeInitialMountRef = useRef(false);
 
-  // ✅ Constante de ancho de columna
-  const COL_W = 200;
+  // ✅ Constante de ancho de columna — reducida para mayor densidad visual
+  const COL_W = 170;
 
   // ✅ Actualizar nowTz cada 60 segundos (nowTz es siempre Date UTC real)
   useEffect(() => {
@@ -1293,25 +1293,40 @@ export default function CalendarioPage() {
     });
   }, [daysInView, filteredDocks.length, COL_W]);
 
-  // ✅ Recalcular posición de etiquetas de fecha en el render inicial y cuando cambian días/docks
-  // useLayoutEffect garantiza que se ejecuta ANTES de que el browser pinte, evitando el flash
+  // ✅ Recalcular posición de etiquetas de fecha en el render inicial y cuando cambian días/docks.
+  // Se usa un doble rAF para garantizar que el browser haya completado el layout y los
+  // offsetWidth de los spans de fecha sean correctos antes de calcular posiciones.
+  // Sin esto, en el primer paint los spans tienen offsetWidth=0 y las etiquetas quedan en left=0.
   React.useLayoutEffect(() => {
     const container = bodyScrollRef.current;
     if (!container) return;
 
-    const scrollLeft = container.scrollLeft;
-    const viewportW = container.offsetWidth;
+    const syncLayout = () => {
+      const scrollLeft = container.scrollLeft;
+      const viewportW = container.offsetWidth;
 
-    // Sincronizar header de andenes
-    if (headerInnerRef.current) {
-      headerInnerRef.current.style.transform = `translateX(-${scrollLeft}px)`;
-    }
-    // Sincronizar fondos de color de la fila de fechas
-    if (dateBgRowRef.current) {
-      dateBgRowRef.current.style.transform = `translateX(-${scrollLeft}px)`;
-    }
-    // Recalcular posición de etiquetas de fecha (capa independiente)
-    updateDateLabels(scrollLeft, viewportW);
+      // Sincronizar header de andenes
+      if (headerInnerRef.current) {
+        headerInnerRef.current.style.transform = `translateX(-${scrollLeft}px)`;
+      }
+      // Sincronizar fondos de color de la fila de fechas
+      if (dateBgRowRef.current) {
+        dateBgRowRef.current.style.transform = `translateX(-${scrollLeft}px)`;
+      }
+      // Recalcular posición de etiquetas de fecha (capa independiente)
+      updateDateLabels(scrollLeft, viewportW);
+    };
+
+    // Primer rAF: esperar a que el browser complete el paint inicial
+    // Segundo rAF: garantizar que los offsetWidth de los spans estén disponibles
+    const raf1 = requestAnimationFrame(() => {
+      const raf2 = requestAnimationFrame(syncLayout);
+      return raf2;
+    });
+
+    return () => {
+      cancelAnimationFrame(raf1);
+    };
   }, [daysInView, filteredDocks, updateDateLabels]);
 
   // ✅ Handler de scroll con sincronización horizontal usando RAF
@@ -1535,29 +1550,35 @@ export default function CalendarioPage() {
   };
 
   return (
-    <div className="h-screen flex flex-col bg-gray-50">
+    // ── Wrapper raíz: ocupa todo el ancho disponible de la app ──────────
+    // fontSize base con clamp() controla la percepción visual de escala
+    // sin limitar el ancho — la UI llena el espacio pero se ve compacta.
+    <div
+      className="h-screen flex flex-col bg-gray-50 w-full overflow-hidden"
+      style={{ fontSize: 'clamp(11px, 0.78vw, 13px)' }}
+    >
       {/* Header con título del almacén activo */}
       <div className="bg-white border-b border-gray-200">
-        <div className="px-6 py-3 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <h1 className="text-lg font-semibold text-gray-900">
+        <div className="flex items-center justify-between" style={{ paddingLeft: 'clamp(12px, 1.2vw, 20px)', paddingRight: 'clamp(12px, 1.2vw, 20px)', paddingTop: '6px', paddingBottom: '6px' }}>
+          <div className="flex items-center gap-2">
+            <h1 className="font-semibold text-gray-900" style={{ fontSize: 'clamp(11px, 0.8vw, 13px)' }}>
               {selectedWarehouse ? (
-                <span className="flex items-center gap-2">
-                  <i className="ri-building-2-line text-teal-600 w-5 h-5 flex items-center justify-center"></i>
+                <span className="flex items-center gap-1.5">
+                  <i className="ri-building-2-line text-teal-600 w-4 h-4 flex items-center justify-center"></i>
                   {selectedWarehouse.name}
-                  <span className="text-sm font-normal text-gray-500">
+                  <span className="text-xs font-normal text-gray-500">
                     ({getUtcOffsetLabel(warehouseTimezone)})
                   </span>
                 </span>
               ) : (
-                <span className="flex items-center gap-2 text-gray-600">
-                  <i className="ri-stack-line w-5 h-5 flex items-center justify-center"></i>
+                <span className="flex items-center gap-1.5 text-gray-600">
+                  <i className="ri-stack-line w-4 h-4 flex items-center justify-center"></i>
                   Todos los almacenes
                 </span>
               )}
             </h1>
             {selectedWarehouse && (
-              <span className="px-2 py-0.5 bg-teal-50 text-teal-700 text-xs font-medium rounded-full">
+              <span className="px-1.5 py-0.5 bg-teal-50 text-teal-700 text-[11px] font-medium rounded-full">
                 Almacén activo
               </span>
             )}
@@ -1565,9 +1586,9 @@ export default function CalendarioPage() {
           {warehouses.length > 1 && (
             <button
               onClick={() => setWarehouseModalOpen(true)}
-              className="text-sm text-teal-600 hover:text-teal-700 font-medium flex items-center gap-1"
+              className="text-xs text-teal-600 hover:text-teal-700 font-medium flex items-center gap-1"
             >
-              <i className="ri-exchange-line w-4 h-4 flex items-center justify-center"></i>
+              <i className="ri-exchange-line w-3.5 h-3.5 flex items-center justify-center"></i>
               Cambiar almacén
             </button>
           )}
@@ -1576,46 +1597,48 @@ export default function CalendarioPage() {
 
       {/* Pestañas de navegación */}
       <div className="bg-white border-b border-gray-200">
-        <div className="px-6">
-          <div className="flex items-center gap-1">
+        <div style={{ paddingLeft: 'clamp(12px, 1.2vw, 20px)' }}>
+          <div className="flex items-center gap-0.5">
             <button
               onClick={() => setTabMode('calendar')}
-              className={`px-6 py-3 font-medium text-sm border-b-2 transition-colors whitespace-nowrap ${
+              className={`font-medium border-b-2 transition-colors whitespace-nowrap ${
                 tabMode === 'calendar'
                   ? 'border-teal-600 text-teal-600'
                   : 'border-transparent text-gray-600 hover:text-gray-900'
               }`}
+              style={{ padding: 'clamp(5px, 0.45vw, 8px) clamp(10px, 0.9vw, 16px)', fontSize: 'clamp(10px, 0.72vw, 12px)' }}
             >
-              <i className="ri-calendar-line mr-2 w-4 h-4 inline-flex items-center justify-center"></i>
+              <i className="ri-calendar-line mr-1.5 inline-flex items-center justify-center" style={{ fontSize: 'clamp(10px, 0.72vw, 12px)' }}></i>
               Calendario
             </button>
             {canManageStatuses && (
               <button
                 onClick={() => setTabMode('statuses')}
-                className={`px-6 py-3 font-medium text-sm border-b-2 transition-colors whitespace-nowrap ${
+                className={`font-medium border-b-2 transition-colors whitespace-nowrap ${
                   tabMode === 'statuses'
                     ? 'border-teal-600 text-teal-600'
                     : 'border-transparent text-gray-600 hover:text-gray-900'
                 }`}
+                style={{ padding: 'clamp(5px, 0.45vw, 8px) clamp(10px, 0.9vw, 16px)', fontSize: 'clamp(10px, 0.72vw, 12px)' }}
               >
-                <i className="ri-list-check mr-2 w-4 h-4 inline-flex items-center justify-center"></i>
+                <i className="ri-list-check mr-1.5 inline-flex items-center justify-center" style={{ fontSize: 'clamp(10px, 0.72vw, 12px)' }}></i>
                 Estatus Op
               </button>
             )}
             {canViewBlocks && (
               <button
                 onClick={() => setTabMode('blocks')}
-                className={`px-6 py-3 font-medium text-sm border-b-2 transition-colors whitespace-nowrap ${
+                className={`font-medium border-b-2 transition-colors whitespace-nowrap ${
                   tabMode === 'blocks'
                     ? 'border-teal-600 text-teal-600'
                     : 'border-transparent text-gray-600 hover:text-gray-900'
                 }`}
+                style={{ padding: 'clamp(5px, 0.45vw, 8px) clamp(10px, 0.9vw, 16px)', fontSize: 'clamp(10px, 0.72vw, 12px)' }}
               >
-                <i className="ri-lock-line mr-2 w-4 h-4 inline-flex items-center justify-center"></i>
+                <i className="ri-lock-line mr-1.5 inline-flex items-center justify-center" style={{ fontSize: 'clamp(10px, 0.72vw, 12px)' }}></i>
                 Bloqueos
               </button>
             )}
-
           </div>
         </div>
       </div>
@@ -1633,10 +1656,10 @@ export default function CalendarioPage() {
         <>
           {/* Banner de borrador pendiente */}
           {showResumeBanner && (
-            <div className="bg-teal-50 border-b border-teal-200 px-6 py-3 flex items-center justify-between gap-4">
-              <div className="flex items-center gap-3">
-                <i className="ri-save-line text-teal-600 text-lg w-5 h-5 flex items-center justify-center"></i>
-                <p className="text-sm text-teal-900">
+            <div className="bg-teal-50 border-b border-teal-200 px-4 py-2 flex items-center justify-between gap-4">
+              <div className="flex items-center gap-2">
+                <i className="ri-save-line text-teal-600 text-base w-4 h-4 flex items-center justify-center"></i>
+                <p className="text-xs text-teal-900">
                   <span className="font-semibold">Tenés un borrador de reserva sin finalizar</span>
                   <span className="text-teal-700 ml-1">({resumeDraftAge})</span>
                 </p>
@@ -1644,11 +1667,11 @@ export default function CalendarioPage() {
               <div className="flex items-center gap-2 flex-shrink-0">
                 <button
                   onClick={() => { setShowResumeBanner(false); setReserveModalOpen(true); setSelectedReservation(null); setReserveModalSlot(null); }}
-                  className="px-3 py-1.5 bg-teal-600 text-white text-xs font-semibold rounded-lg hover:bg-teal-700 transition-colors whitespace-nowrap"
+                  className="px-2.5 py-1 bg-teal-600 text-white text-xs font-semibold rounded-md hover:bg-teal-700 transition-colors whitespace-nowrap"
                 >Continuar</button>
                 <button
                   onClick={() => { localStorage.removeItem(`draft_reservation_${orgId}_new`); setShowResumeBanner(false); }}
-                  className="px-3 py-1.5 border border-gray-300 bg-white text-gray-700 text-xs font-medium rounded-lg hover:bg-gray-50 transition-colors whitespace-nowrap"
+                  className="px-2.5 py-1 border border-gray-300 bg-white text-gray-700 text-xs font-medium rounded-md hover:bg-gray-50 transition-colors whitespace-nowrap"
                 >Descartar</button>
               </div>
             </div>
@@ -1656,16 +1679,16 @@ export default function CalendarioPage() {
 
           {/* Banner de modo selección */}
           {selectionMode && (
-            <div className={`text-white px-6 py-3 flex items-center justify-between ${copyDraft ? 'bg-teal-700' : 'bg-teal-600'}`}>
-              <div className="flex items-center gap-3">
-                <i className={`text-xl w-5 h-5 flex items-center justify-center ${copyDraft ? 'ri-file-copy-line' : 'ri-cursor-line'}`}></i>
+            <div className={`text-white px-4 py-2 flex items-center justify-between ${copyDraft ? 'bg-teal-700' : 'bg-teal-600'}`}>
+              <div className="flex items-center gap-2">
+                <i className={`text-base w-4 h-4 flex items-center justify-center ${copyDraft ? 'ri-file-copy-line' : 'ri-cursor-line'}`}></i>
                 <div>
-                  <p className="font-semibold">
+                  <p className="font-semibold text-xs">
                     {copyDraft
                       ? `Seleccioná un espacio para ubicar la copia de la reserva #${(copyDraft._copyOfId || '').slice(0, 8)}`
                       : 'Modo selección activo'}
                   </p>
-                  <p className="text-sm text-teal-100">
+                  <p className="text-[11px] text-teal-100">
                     {copyDraft
                       ? `Hacé clic en un espacio disponible (verde) — ${requiredMinutes} min requeridos. La reserva original no se modifica.`
                       : `Seleccioná un espacio disponible en el calendario (${requiredMinutes} min requeridos)`}
@@ -1680,7 +1703,6 @@ export default function CalendarioPage() {
               <div className="flex items-center gap-2">
                 <button
                   onClick={() => {
-                    // Diagnóstico completo: loggear TODOS los slots bloqueados en el rango visible
                     console.log('[Availability-DIAG] === DIAGNÓSTICO COMPLETO DE SLOTS ===');
                     console.log('[Availability-DIAG] requiredMinutes:', requiredMinutes);
                     console.log('[Availability-DIAG] allocationRule:', allocationRule);
@@ -1695,7 +1717,6 @@ export default function CalendarioPage() {
                           const eligible = isSlotEligible(dock.id, day, slot);
                           if (!eligible) {
                             blockedCount++;
-                            // Solo loggear los primeros 20 slots bloqueados para no saturar
                             if (blockedCount <= 20) {
                               isSlotEligible(dock.id, day, slot, true);
                             }
@@ -1707,10 +1728,10 @@ export default function CalendarioPage() {
                     });
                     console.log(`[Availability-DIAG] RESUMEN: ${eligibleCount} elegibles, ${blockedCount} bloqueados (mostrando primeros 20)`);
                   }}
-                  className="px-3 py-2 bg-white/10 hover:bg-white/20 rounded-lg font-medium transition-colors whitespace-nowrap text-sm"
+                  className="px-2.5 py-1.5 bg-white/10 hover:bg-white/20 rounded-md font-medium transition-colors whitespace-nowrap text-xs"
                   title="Diagnóstico: ver en consola por qué los slots están bloqueados"
                 >
-                  <i className="ri-bug-line mr-1 w-4 h-4 inline-flex items-center justify-center"></i>
+                  <i className="ri-bug-line mr-1 w-3.5 h-3.5 inline-flex items-center justify-center"></i>
                   Diagnóstico
                 </button>
                 <button
@@ -1719,107 +1740,114 @@ export default function CalendarioPage() {
                     setCopyDraft(null);
                     setCopyOfReservationId(null);
                   }}
-                  className="px-4 py-2 bg-white/20 hover:bg-white/30 rounded-lg font-medium transition-colors whitespace-nowrap"
+                  className="px-3 py-1.5 bg-white/20 hover:bg-white/30 rounded-md font-medium transition-colors whitespace-nowrap text-xs"
                 >
-                  <i className="ri-close-line mr-2 w-4 h-4 inline-flex items-center justify-center"></i>
+                  <i className="ri-close-line mr-1.5 w-3.5 h-3.5 inline-flex items-center justify-center"></i>
                   Salir
                 </button>
               </div>
             </div>
           )}
 
-          {/* ✅ NUEVO: Banner de error de reglas */}
+          {/* Banner de error de reglas */}
           {selectionMode && allocationError && (
-            <div className="bg-amber-500 text-white px-6 py-3 flex items-center gap-3">
-              <i className="ri-alert-line text-xl w-5 h-5 flex items-center justify-center"></i>
+            <div className="bg-amber-500 text-white px-4 py-2 flex items-center gap-2">
+              <i className="ri-alert-line text-base w-4 h-4 flex items-center justify-center"></i>
               <div>
-                <p className="font-semibold">Reglas no disponibles</p>
-                <p className="text-sm text-amber-100">{allocationError}</p>
+                <p className="font-semibold text-xs">Reglas no disponibles</p>
+                <p className="text-[11px] text-amber-100">{allocationError}</p>
               </div>
             </div>
           )}
 
-          {/* ✅ NUEVO: Banner de carga de reglas */}
+          {/* Banner de carga de reglas */}
           {selectionMode && allocationLoading && (
-            <div className="bg-blue-500 text-white px-6 py-3 flex items-center gap-3">
-              <i className="ri-loader-4-line text-xl w-5 h-5 flex items-center justify-center animate-spin"></i>
-              <p className="font-medium">Cargando reglas de asignación de andenes...</p>
+            <div className="bg-blue-500 text-white px-4 py-2 flex items-center gap-2">
+              <i className="ri-loader-4-line text-base w-4 h-4 flex items-center justify-center animate-spin"></i>
+              <p className="font-medium text-xs">Cargando reglas de asignación de andenes...</p>
             </div>
           )}
 
-          {/* Barra superior de controles */}
-          <div className="bg-white border-b border-gray-200 px-6 py-4">
-            <div className="flex items-center justify-between mb-4 gap-4 flex-wrap">
-              <div className="flex items-center gap-4 flex-wrap">
+          {/* Barra superior de controles
+              padding horizontal usa clamp() para no "respirar" demasiado en pantallas anchas */}
+          <div
+            className="bg-white border-b border-gray-200 py-2"
+            style={{ paddingLeft: 'clamp(12px, 1.2vw, 20px)', paddingRight: 'clamp(12px, 1.2vw, 20px)' }}
+          >
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <div className="flex items-center gap-1.5 flex-wrap">
+                {/* Botón Hoy — padding con clamp para escala fluida */}
                 <button
                   onClick={goToToday}
-                  className="px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 font-medium whitespace-nowrap"
+                  className="bg-white border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50 font-medium whitespace-nowrap"
+                  style={{ padding: 'clamp(3px, 0.3vw, 6px) clamp(8px, 0.7vw, 12px)', fontSize: 'inherit' }}
                 >
                   Hoy
                 </button>
 
+                {/* Input de fecha */}
                 <input
                   type="date"
                   value={anchorDate.toISOString().slice(0, 10)}
                   onChange={(e) => handlePickDate(e.target.value)}
-                  className="px-3 py-2 bg-white border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-teal-500 focus:border-transparent"
+                  className="bg-white border border-gray-300 rounded-md focus:ring-2 focus:ring-teal-500 focus:border-transparent"
+                  style={{ padding: 'clamp(3px, 0.3vw, 6px) clamp(6px, 0.5vw, 10px)', fontSize: 'inherit' }}
                 />
 
-                <div className="flex items-center gap-2">
-                  <button onClick={goToPrevious} className="p-2 hover:bg-gray-100 rounded-lg">
-                    <i className="ri-arrow-left-s-line text-xl w-5 h-5 flex items-center justify-center"></i>
+                {/* Flechas de navegación */}
+                <div className="flex items-center gap-0.5">
+                  <button
+                    onClick={goToPrevious}
+                    className="hover:bg-gray-100 rounded-md flex items-center justify-center"
+                    style={{ padding: 'clamp(3px, 0.3vw, 6px)' }}
+                  >
+                    <i className="ri-arrow-left-s-line" style={{ fontSize: 'clamp(13px, 1vw, 16px)' }}></i>
                   </button>
-                  <button onClick={goToNext} className="p-2 hover:bg-gray-100 rounded-lg">
-                    <i className="ri-arrow-right-s-line text-xl w-5 h-5 flex items-center justify-center"></i>
+                  <button
+                    onClick={goToNext}
+                    className="hover:bg-gray-100 rounded-md flex items-center justify-center"
+                    style={{ padding: 'clamp(3px, 0.3vw, 6px)' }}
+                  >
+                    <i className="ri-arrow-right-s-line" style={{ fontSize: 'clamp(13px, 1vw, 16px)' }}></i>
                   </button>
                 </div>
 
-                <div className="flex items-center gap-2 bg-gray-100 rounded-lg p-1">
-                  <button
-                    onClick={() => handleViewModeChange('1day')}
-                    className={`px-4 py-1.5 rounded-md text-sm font-medium transition-colors whitespace-nowrap ${
-                      rangeDays === 1 ? 'bg-white shadow-sm' : 'hover:bg-gray-200'
-                    }`}
-                  >
-                    1 día
-                  </button>
-                  <button
-                    onClick={() => handleViewModeChange('3days')}
-                    className={`px-4 py-1.5 rounded-md text-sm font-medium transition-colors whitespace-nowrap ${
-                      rangeDays === 3 ? 'bg-white shadow-sm' : 'hover:bg-gray-200'
-                    }`}
-                  >
-                    3 días
-                  </button>
-                  <button
-                    onClick={() => handleViewModeChange('7days')}
-                    className={`px-4 py-1.5 rounded-md text-sm font-medium transition-colors whitespace-nowrap ${
-                      rangeDays === 7 ? 'bg-white shadow-sm' : 'hover:bg-gray-200'
-                    }`}
-                  >
-                    7 días
-                  </button>
+                {/* Selector de vista 1/3/7 días */}
+                <div className="flex items-center gap-0.5 bg-gray-100 rounded-md" style={{ padding: '2px' }}>
+                  {([['1day', '1 día', 1], ['3days', '3 días', 3], ['7days', '7 días', 7]] as const).map(([mode, label, days]) => (
+                    <button
+                      key={mode}
+                      onClick={() => handleViewModeChange(mode)}
+                      className={`rounded font-medium transition-colors whitespace-nowrap ${
+                        rangeDays === days ? 'bg-white shadow-sm' : 'hover:bg-gray-200'
+                      }`}
+                      style={{ padding: 'clamp(2px, 0.2vw, 4px) clamp(8px, 0.65vw, 12px)', fontSize: 'inherit' }}
+                    >
+                      {label}
+                    </button>
+                  ))}
                 </div>
 
                 {/* Selector de almacén + Nueva Reserva */}
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1.5">
                   <span
-                    className={`inline-flex items-center px-3 py-2 rounded-lg text-sm font-medium whitespace-nowrap ${
+                    className={`inline-flex items-center rounded-md font-medium whitespace-nowrap ${
                       warehouseLoading
                         ? 'bg-gray-100 text-gray-500'
                         : selectedWarehouse
                         ? 'bg-teal-50 text-teal-700'
                         : 'bg-gray-100 text-gray-600'
                     }`}
+                    style={{ padding: 'clamp(3px, 0.3vw, 6px) clamp(8px, 0.65vw, 10px)', fontSize: 'inherit' }}
                   >
-                    <i className="ri-building-2-line mr-2 w-4 h-4 flex items-center justify-center"></i>
+                    <i className="ri-building-2-line mr-1" style={{ fontSize: 'clamp(11px, 0.8vw, 13px)' }}></i>
                     {warehouseLoading
                       ? 'Cargando…'
                       : selectedWarehouse
                       ? (
                         <>
                           Almacén: {selectedWarehouse.name}
-                          <span className="ml-1.5 text-xs font-normal opacity-70">
+                          <span className="ml-1 font-normal opacity-70" style={{ fontSize: 'clamp(10px, 0.7vw, 11px)' }}>
                             ({getUtcOffsetLabel(warehouseTimezone)})
                           </span>
                         </>
@@ -1830,7 +1858,8 @@ export default function CalendarioPage() {
                   <button
                     onClick={() => setWarehouseModalOpen(true)}
                     disabled={warehouseLoading}
-                    className="px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 whitespace-nowrap font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="bg-white border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50 whitespace-nowrap font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                    style={{ padding: 'clamp(3px, 0.3vw, 6px) clamp(8px, 0.65vw, 12px)', fontSize: 'inherit' }}
                   >
                     Seleccionar Almacén
                   </button>
@@ -1839,32 +1868,35 @@ export default function CalendarioPage() {
                     <button
                       onClick={() => setPreModalOpen(true)}
                       disabled={selectionMode}
-                      className="px-4 py-2 bg-teal-600 text-white rounded-lg hover:bg-teal-700 font-medium whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed"
+                      className="bg-teal-600 text-white rounded-md hover:bg-teal-700 font-medium whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed"
+                      style={{ padding: 'clamp(3px, 0.3vw, 6px) clamp(8px, 0.65vw, 12px)', fontSize: 'inherit' }}
                       title="Crear reserva"
                     >
-                      <i className="ri-add-line mr-2 w-4 h-4 inline-flex items-center justify-center"></i>
+                      <i className="ri-add-line mr-1" style={{ fontSize: 'clamp(11px, 0.8vw, 13px)' }}></i>
                       Nueva Reserva
                     </button>
                   )}
                 </div>
               </div>
 
-              <div className="flex items-center gap-4 flex-wrap justify-end ml-auto">
-                {/* ✅ CORREGIDO: Input de búsqueda de reservas */}
-                <div className="flex-1 min-w-[320px] max-w-[520px]">
+              {/* Lado derecho: buscador + categoría + bloquear */}
+              <div className="flex items-center gap-1.5 flex-wrap justify-end ml-auto">
+                <div style={{ minWidth: 'clamp(160px, 14vw, 280px)', maxWidth: '320px' }}>
                   <input
                     type="text"
                     placeholder="Buscar por DUA, Factura o Chofer..."
                     value={reservationSearchTerm}
                     onChange={(e) => setReservationSearchTerm(e.target.value)}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent"
+                    className="w-full border border-gray-300 rounded-md focus:ring-2 focus:ring-teal-500 focus:border-transparent"
+                    style={{ padding: 'clamp(3px, 0.3vw, 6px) clamp(8px, 0.65vw, 10px)', fontSize: 'inherit' }}
                   />
                 </div>
 
                 <select
                   value={filterCategory}
                   onChange={(e) => setFilterCategory(e.target.value)}
-                  className="shrink-0 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500"
+                  className="shrink-0 border border-gray-300 rounded-md focus:ring-2 focus:ring-teal-500"
+                  style={{ padding: 'clamp(3px, 0.3vw, 6px) clamp(8px, 0.65vw, 10px)', fontSize: 'inherit' }}
                 >
                   <option value="all">Todas las categorías</option>
                   {categories.map((cat) => (
@@ -1880,18 +1912,19 @@ export default function CalendarioPage() {
                       setSelectedBlock(null);
                       setIsBlockModalOpen(true);
                     }}
-                    className="shrink-0 px-4 py-2 bg-gray-800 text-white rounded-lg hover:bg-gray-900 font-medium whitespace-nowrap"
+                    className="shrink-0 bg-gray-800 text-white rounded-md hover:bg-gray-900 font-medium whitespace-nowrap"
+                    style={{ padding: 'clamp(3px, 0.3vw, 6px) clamp(8px, 0.65vw, 12px)', fontSize: 'inherit' }}
                   >
-                    <i className="ri-lock-line mr-2 w-4 h-4 inline-flex items-center justify-center"></i>
+                    <i className="ri-lock-line mr-1" style={{ fontSize: 'clamp(11px, 0.8vw, 13px)' }}></i>
                     Bloquear Tiempo
                   </button>
                 )}
               </div>
             </div>
 
-            <div className="mt-3 text-sm text-gray-600">
+            <div className="mt-1 text-gray-500" style={{ fontSize: 'clamp(10px, 0.65vw, 11px)' }}>
               Andenes visibles: {filteredDocks.length} | Mostrando {daysInView.length} días
-              <span className="ml-3 text-gray-500">
+              <span className="ml-3">
                 Horario: {businessStart.slice(0, 5)} - {businessEnd.slice(0, 5)} | Intervalo: {slotInterval} min
               </span>
             </div>
@@ -1954,17 +1987,16 @@ export default function CalendarioPage() {
                 {/* Encabezado FIJO (días + andenes) — estructura en 2 capas */}
                 <div className="flex-shrink-0 bg-white border-b border-gray-200">
 
-                  {/* ── CAPA 1: Fila de FECHAS — posición absoluta, independiente del scroll ── */}
-                  {/* Esta capa NO se mueve con transform. Las etiquetas se reposicionan por JS */}
+                  {/* ── CAPA 1: Fila de FECHAS — altura con clamp para escala estable ── */}
                   <div
                     ref={dateRowRef}
-                    className="relative h-12 border-b border-gray-200 overflow-hidden"
-                    style={{ backgroundColor: '#f9fafb' }}
+                    className="relative border-b border-gray-200 overflow-hidden"
+                    style={{ backgroundColor: '#f9fafb', height: 'clamp(28px, 2.2vw, 34px)' }}
                   >
                     {/* Espacio de la columna de horas */}
                     <div className="absolute left-0 top-0 w-20 h-full border-r border-gray-200 bg-white z-10" />
 
-                    {/* Fondos de color por día (se mueven con transform igual que el header de andenes) */}
+                    {/* Fondos de color por día */}
                     <div className="absolute left-20 top-0 bottom-0 overflow-hidden" style={{ right: 0 }}>
                       <div
                         ref={dateBgRowRef}
@@ -1989,10 +2021,9 @@ export default function CalendarioPage() {
                       </div>
                     </div>
 
-                    {/* Etiquetas de fecha — posición absolute en coords del viewport, actualizadas por JS */}
+                    {/* Etiquetas de fecha */}
                     {daysInView.map((day) => {
                       const isToday = isSameDayInTimezone(day, nowTz, warehouseTimezone);
-                      const dayW = filteredDocks.length * COL_W;
                       return (
                         <span
                           key={day.toISOString()}
@@ -2000,27 +2031,27 @@ export default function CalendarioPage() {
                             if (el) dateLabelRefs.current.set(day.toISOString(), el);
                             else dateLabelRefs.current.delete(day.toISOString());
                           }}
-                          className={`absolute font-semibold text-sm whitespace-nowrap pointer-events-none flex items-center gap-1.5 z-20 ${isToday ? 'text-teal-700' : 'text-gray-900'}`}
+                          className={`absolute font-semibold whitespace-nowrap pointer-events-none flex items-center gap-1 z-20 ${isToday ? 'text-teal-700' : 'text-gray-900'}`}
                           style={{
+                            fontSize: 'clamp(10px, 0.72vw, 12px)',
                             top: '50%',
                             transform: 'translateY(-50%)',
-                            // Posición inicial en 0; useLayoutEffect la corrige antes del primer paint
                             left: '0px',
                           }}
                         >
-                          {isToday && <span className="inline-block w-2 h-2 rounded-full bg-teal-500 flex-shrink-0" />}
+                          {isToday && <span className="inline-block w-1.5 h-1.5 rounded-full bg-teal-500 flex-shrink-0" />}
                           {formatDayHeader(day)}
                         </span>
                       );
                     })}
                   </div>
 
-                  {/* ── CAPA 2: Fila de ANDENES — se mueve con transform (scroll sincronizado) ── */}
+                  {/* ── CAPA 2: Fila de ANDENES ── */}
                   <div className="flex">
                     {/* Espacio para columna de horas */}
                     <div className="w-20 flex-shrink-0 border-r border-gray-200 bg-white" />
 
-                    {/* Header scrolleable horizontalmente (sincronizado con transform) */}
+                    {/* Header scrolleable horizontalmente */}
                     <div className="flex-1 overflow-hidden">
                       <div
                         ref={headerInnerRef}
@@ -2035,8 +2066,8 @@ export default function CalendarioPage() {
                               className="flex-shrink-0 border-r border-gray-200"
                               style={{ width: `${dayW}px`, minWidth: `${dayW}px` }}
                             >
-                              {/* Fila de andenes */}
-                              <div className="flex h-12">
+                              {/* Fila de andenes — altura con clamp para escala estable */}
+                              <div className="flex" style={{ height: 'clamp(30px, 2.4vw, 38px)' }}>
                                 {filteredDocks.map((dock) => {
                                   const hasCustomColor = !!(dock as any).header_color;
                                   const bgColor = hasCustomColor
@@ -2052,7 +2083,7 @@ export default function CalendarioPage() {
                                   return (
                                     <div
                                       key={dock.id}
-                                      className="flex-shrink-0 border-r border-gray-200 flex flex-col items-center justify-center px-2"
+                                      className="flex-shrink-0 border-r border-gray-200 flex flex-col items-center justify-center px-1.5"
                                       style={{
                                         width: `${COL_W}px`,
                                         minWidth: `${COL_W}px`,
@@ -2060,15 +2091,15 @@ export default function CalendarioPage() {
                                       }}
                                     >
                                       <span
-                                        className="font-semibold text-sm truncate w-full text-center leading-tight"
-                                        style={{ color: nameColor }}
+                                        className="font-semibold truncate w-full text-center leading-tight"
+                                        style={{ color: nameColor, fontSize: 'clamp(10px, 0.72vw, 12px)' }}
                                       >
                                         {dock.name}
                                       </span>
                                       {dock.reference && (
                                         <span
-                                          className="text-[10px] truncate w-full text-center leading-tight mt-0.5"
-                                          style={{ color: refColor, opacity: hasCustomColor ? 0.85 : 1 }}
+                                          className="truncate w-full text-center leading-tight mt-0.5"
+                                          style={{ color: refColor, opacity: hasCustomColor ? 0.85 : 1, fontSize: 'clamp(9px, 0.6vw, 10px)' }}
                                         >
                                           {dock.reference}
                                         </span>
@@ -2258,14 +2289,19 @@ export default function CalendarioPage() {
                                                   id: reservation.id,
                                                   startDatetime: reservation.start_datetime,
                                                   endDatetime: reservation.end_datetime,
-                                                  dua: reservation.dua,
-                                                  pedido: reservation.order_request_number,
-                                                  driver: (reservation as any).driver,
-                                                  notes: (reservation as any).notes,
                                                   statusName: reservation.status?.name,
                                                   statusColor: reservation.status?.color,
                                                   dockName: filteredDocks.find(d => d.id === reservation.dock_id)?.name,
                                                   providerName: providers.find(p => p.id === reservation.shipper_provider)?.name,
+                                                  driver: reservation.driver,
+                                                  truckPlate: reservation.truck_plate,
+                                                  cargoOrigin: (reservation as any).cargo_origin,
+                                                  dua: reservation.dua,
+                                                  invoice: reservation.invoice,
+                                                  purchaseOrder: reservation.purchase_order,
+                                                  pedido: reservation.order_request_number,
+                                                  notes: reservation.notes,
+                                                  createdByName: reservation.creator?.name || reservation.creator?.email || null,
                                                 }}
                                                 disabled={selectionMode}
                                               >
@@ -2321,24 +2357,58 @@ export default function CalendarioPage() {
                                                     className="h-full flex flex-col justify-between overflow-hidden"
                                                     style={{ padding: '7px 9px 7px 9px' }}
                                                   >
-                                                    {/* Bloque superior: info principal */}
-                                                    <div className="flex flex-col gap-0.5 overflow-hidden min-w-0">
+                                                    {/* Bloque superior: info principal — render adaptativo según height */}
+                                                    <div className="flex flex-col gap-0.5 overflow-hidden min-w-0 flex-1">
+                                                      {/* ID — siempre visible */}
                                                       <div className="font-bold text-gray-900 truncate text-[13px] leading-tight">
                                                         #{reservation.id.slice(0, 8)}
                                                       </div>
-                                                      {reservation.dua && (
-                                                        <div className="font-semibold text-gray-700 truncate text-[12px] leading-tight">
-                                                          DUA: {reservation.dua}
-                                                        </div>
-                                                      )}
-                                                      {reservation.order_request_number && (
-                                                        <div className="font-semibold text-gray-700 truncate text-[12px] leading-tight">
-                                                          Pedido: {reservation.order_request_number}
-                                                        </div>
-                                                      )}
+                                                      {/* Proveedor — prioridad alta */}
                                                       {reservation.shipper_provider && (
-                                                        <div className="font-semibold text-gray-600 truncate text-[12px] leading-tight">
+                                                        <div className="font-semibold text-gray-700 truncate text-[12px] leading-tight">
                                                           {providers.find(p => p.id === reservation.shipper_provider)?.name || reservation.shipper_provider}
+                                                        </div>
+                                                      )}
+                                                      {/* DUA */}
+                                                      {reservation.dua && (
+                                                        <div className="text-gray-600 truncate text-[11px] leading-tight">
+                                                          <span className="text-gray-400">DUA:</span> {reservation.dua}
+                                                        </div>
+                                                      )}
+                                                      {/* Pedido */}
+                                                      {reservation.order_request_number && (
+                                                        <div className="text-gray-600 truncate text-[11px] leading-tight">
+                                                          <span className="text-gray-400">Pedido:</span> {reservation.order_request_number}
+                                                        </div>
+                                                      )}
+                                                      {/* Factura — solo si hay espacio (height > 90) */}
+                                                      {height > 90 && reservation.invoice && (
+                                                        <div className="text-gray-600 truncate text-[11px] leading-tight">
+                                                          <span className="text-gray-400">Factura:</span> {reservation.invoice}
+                                                        </div>
+                                                      )}
+                                                      {/* Matrícula — solo si hay espacio (height > 105) */}
+                                                      {height > 105 && reservation.truck_plate && (
+                                                        <div className="text-gray-600 truncate text-[11px] leading-tight">
+                                                          <span className="text-gray-400">Matrícula:</span> {reservation.truck_plate}
+                                                        </div>
+                                                      )}
+                                                      {/* Chofer — solo si hay espacio (height > 120) */}
+                                                      {height > 120 && reservation.driver && (
+                                                        <div className="text-gray-600 truncate text-[11px] leading-tight">
+                                                          <span className="text-gray-400">Chofer:</span> {reservation.driver}
+                                                        </div>
+                                                      )}
+                                                      {/* Creado por — solo si hay espacio (height > 120) */}
+                                                      {height > 120 && reservation.creator && (reservation.creator.name || reservation.creator.email) && (
+                                                        <div className="text-gray-500 truncate text-[10px] leading-tight mt-0.5">
+                                                          <span className="text-gray-400">Por:</span> {reservation.creator.name || reservation.creator.email}
+                                                        </div>
+                                                      )}
+                                                      {/* Orden de compra — solo si hay espacio (height > 138) */}
+                                                      {height > 138 && reservation.purchase_order && (
+                                                        <div className="text-gray-600 truncate text-[11px] leading-tight">
+                                                          <span className="text-gray-400">OC:</span> {reservation.purchase_order}
                                                         </div>
                                                       )}
                                                     </div>

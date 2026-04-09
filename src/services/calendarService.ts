@@ -27,6 +27,8 @@ export interface Reservation {
   truck_plate?: string | null;
   order_request_number?: string | null;
   shipper_provider?: string | null;
+  /** Origen de la carga */
+  cargo_origin?: string | null;
   recurrence?: any | null;
   /** ID del cliente asociado a esta reserva (columna directa en reservations) */
   client_id?: string | null;
@@ -36,6 +38,12 @@ export interface Reservation {
     code: string;
     color: string;
   };
+
+  /** Perfil del usuario que creó la reserva (enriquecido en frontend) */
+  creator?: {
+    name: string | null;
+    email: string | null;
+  } | null;
 }
 
 export interface DockTimeBlock {
@@ -222,6 +230,22 @@ export const calendarService = {
       );
 
       result = result.filter((r) => allowedDockIds.has(r.dock_id));
+    }
+
+    // ── Enriquecer con perfil del creador ───────────────────────────────────
+    if (result.length > 0) {
+      const creatorIds = [...new Set(result.map((r) => r.created_by).filter(Boolean))];
+      if (creatorIds.length > 0) {
+        const { data: profiles } = await supabase
+          .from('profiles')
+          .select('id, name, email')
+          .in('id', creatorIds);
+        const profileMap = new Map((profiles || []).map((p: any) => [p.id, p]));
+        return result.map((r) => ({
+          ...r,
+          creator: profileMap.get(r.created_by) ?? null,
+        }));
+      }
     }
 
     return result;

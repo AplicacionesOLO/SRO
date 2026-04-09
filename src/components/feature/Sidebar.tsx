@@ -201,10 +201,21 @@ export default function Sidebar() {
     const isDisabled = permsLoading && item.path !== '/';
 
     if (hasChildren) {
+      // En modo colapsado: navegar directamente a la ruta del padre (no hay submenú visible)
+      // En modo expandido: toggle del submenú como siempre
+      const handleParentClick = () => {
+        // Siempre hacer toggle del submenú, nunca navegar directo al padre
+        toggleSubmenu(item.label);
+        // Si está colapsado, expandir el sidebar para que se vea el submenú
+        if (!isExpanded) {
+          setIsExpanded(true);
+        }
+      };
+
       return (
         <div key={item.path}>
           <button
-            onClick={() => toggleSubmenu(item.label)}
+            onClick={handleParentClick}
             disabled={isDisabled}
             className={`w-full flex items-center gap-3 px-4 py-3 text-sm font-medium transition-colors ${
               active
@@ -228,7 +239,7 @@ export default function Sidebar() {
             )}
           </button>
           
-          {isExpanded && isSubmenuExpanded && !isDisabled && (
+          {isSubmenuExpanded && !isDisabled && (
             <div className="bg-gray-50">
               {item.children?.map(child => renderMenuItem(child, true))}
             </div>
