@@ -485,6 +485,147 @@ export const correspondenceService = {
   },
 
   /**
+   * Retry sending a single failed email from the outbox.
+   * Reads the outbox row and re-sends it via the smtp-send edge function.
+   */
+  async retryFailedEmail(logId: string): Promise<void> {
+    const supabaseUrl = import.meta.env.VITE_PUBLIC_SUPABASE_URL as string;
+
+    // 1. Fetch the outbox row
+    const { data: row, error: fetchErr } = await supabase
+      .from('correspondence_outbox')
+      .select('id, to_emails, cc_emails, bcc_emails, subject, body, sender_email, status')
+      .eq('id', logId)
+      .maybeSingle();
+
+    if (fetchErr) throw new Error(fetchErr.message);
+    if (!row) throw new Error('No se encontró el registro de envío');
+    if (row.status !== 'failed') throw new Error('Solo se pueden reintentar envíos con estado "Fallido"');
+
+    // 2. Reset status to queued before sending
+    const { error: resetErr } = await supabase
+      .from('correspondence_outbox')
+      .update({ status: 'queued', error: null })
+      .eq('id', logId);
+    if (resetErr) throw new Error(resetErr.message);
+
+    // 3. Get current session JWT
+    const { data: sessionData } = await supabase.auth.getSession();
+    const jwt = sessionData?.session?.access_token;
+    if (!jwt) throw new Error('No hay sesión activa');
+
+    // 4. Call smtp-send edge function
+    const res = await fetch(`${supabaseUrl}/functions/v1/smtp-send`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${jwt}`,
+      },
+      body: JSON.stringify({
+        outboxId: logId,
+        to_emails: row.to_emails ?? [],
+        cc_emails: row.cc_emails ?? [],
+        bcc_emails: row.bcc_emails ?? [],
+        subject: row.subject,
+        body: row.body,
+        sender_email: row.sender_email,
+      }),
+    });
+
+    if (!res.ok) {
+      const errBody = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+      throw new Error(errBody?.error || errBody?.details || `Error HTTP ${res.status}`);
+    }
+  },
+
+  /**
+   * Retry all failed emails for an organisation (bulk).
+   * Returns { attempted, succeeded, failed }
+   */
+  async retryAllFailedEmails(orgId: string, warehouseId?: string | null): Promise<{ attempted: number; succeeded: number; failed: number }> {
+    const supabaseUrl = import.meta.env.VITE_PUBLIC_SUPABASE_URL as string;
+
+    // 1. Fetch all failed rows for the org
+    const { data: rows, error: fetchErr } = await supabase
+      .from('correspondence_outbox')
+      .select('id, to_emails, cc_emails, bcc_emails, subject, body, sender_email, rule_id')
+      .eq('org_id', orgId)
+      .eq('status', 'failed');
+
+    if (fetchErr) throw new Error(fetchErr.message);
+    if (!rows || rows.length === 0) return { attempted: 0, succeeded: 0, failed: 0 };
+
+    // 2. If warehouseId filter is active, filter by warehouse
+    let targetRows = rows;
+    if (warehouseId) {
+      const ruleIds = [...new Set(rows.map((r: any) => r.rule_id).filter(Boolean))];
+      let rulesMap: Record<string, string | null> = {};
+      if (ruleIds.length > 0) {
+        const { data: rulesData } = await supabase
+          .from('correspondence_rules')
+          .select('id, warehouse_id')
+          .in('id', ruleIds);
+        if (rulesData) {
+          rulesMap = Object.fromEntries(rulesData.map((r: any) => [r.id, r.warehouse_id ?? null]));
+        }
+      }
+      targetRows = rows.filter((r: any) => {
+        if (!r.rule_id) return true;
+        const wid = rulesMap[r.rule_id];
+        return wid === warehouseId || wid === null;
+      });
+    }
+
+    if (targetRows.length === 0) return { attempted: 0, succeeded: 0, failed: 0 };
+
+    // 3. Get JWT
+    const { data: sessionData } = await supabase.auth.getSession();
+    const jwt = sessionData?.session?.access_token;
+    if (!jwt) throw new Error('No hay sesión activa');
+
+    // 4. Reset all to queued
+    const ids = targetRows.map((r: any) => r.id);
+    await supabase
+      .from('correspondence_outbox')
+      .update({ status: 'queued', error: null })
+      .in('id', ids);
+
+    // 5. Send all sequentially to avoid overwhelming SMTP
+    let succeeded = 0;
+    let failed = 0;
+
+    for (const row of targetRows) {
+      try {
+        const res = await fetch(`${supabaseUrl}/functions/v1/smtp-send`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${jwt}`,
+          },
+          body: JSON.stringify({
+            outboxId: row.id,
+            to_emails: row.to_emails ?? [],
+            cc_emails: row.cc_emails ?? [],
+            bcc_emails: row.bcc_emails ?? [],
+            subject: row.subject,
+            body: row.body,
+            sender_email: row.sender_email,
+          }),
+        });
+        if (res.ok) {
+          succeeded++;
+        } else {
+          failed++;
+        }
+      } catch {
+        failed++;
+      }
+    }
+
+    return { attempted: targetRows.length, succeeded, failed };
+  },
+
+  /**
    * Retrieves the correspondence logs for a given organisation,
    * optionally filtered by warehouseId (via rule's warehouse_id).
    * Logs from rules with warehouse_id = null are treated as global/legacy.

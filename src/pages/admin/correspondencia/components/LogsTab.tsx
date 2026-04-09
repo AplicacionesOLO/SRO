@@ -19,6 +19,7 @@ export function LogsTab() {
   const [loading, setLoading] = useState(true);
   const [selectedLog, setSelectedLog] = useState<CorrespondenceLog | null>(null);
   const [retrying, setRetrying] = useState<string | null>(null);
+  const [retryingAll, setRetryingAll] = useState(false);
 
   // ✅ Estado para popup de errores
   const [popup, setPopup] = useState<{
@@ -97,8 +98,7 @@ export function LogsTab() {
     try {
       setRetrying(logId);
       await correspondenceService.retryFailedEmail(logId);
-
-      // ✅ FIX: Recargar directamente sin depender de cache
+      setPopup({ isOpen: true, type: 'success', title: 'Reintento exitoso', message: 'El correo fue reenviado correctamente.' });
       await loadLogs();
     } catch (error: any) {
       setPopup({
@@ -109,6 +109,29 @@ export function LogsTab() {
       });
     } finally {
       setRetrying(null);
+    }
+  };
+
+  const handleRetryAll = async () => {
+    if (!orgId) return;
+    try {
+      setRetryingAll(true);
+      const result = await correspondenceService.retryAllFailedEmails(orgId, activeWarehouseId);
+      await loadLogs();
+      if (result.attempted === 0) {
+        setPopup({ isOpen: true, type: 'info', title: 'Sin fallidos', message: 'No hay correos fallidos para reintentar.' });
+      } else {
+        setPopup({
+          isOpen: true,
+          type: result.failed === 0 ? 'success' : 'warning',
+          title: 'Reintento masivo completado',
+          message: `${result.attempted} intentados — ${result.succeeded} enviados correctamente, ${result.failed} fallidos.`,
+        });
+      }
+    } catch (error: any) {
+      setPopup({ isOpen: true, type: 'error', title: 'Error al reintentar todos', message: error.message || 'Error inesperado' });
+    } finally {
+      setRetryingAll(false);
     }
   };
 
@@ -268,6 +291,40 @@ export function LogsTab() {
           </div>
         )}
       </div>
+
+      {/* Barra de acciones bulk */}
+      {(() => {
+        const failedCount = filteredLogs.filter(l => l.status === 'failed').length;
+        if (failedCount === 0) return null;
+        return (
+          <div className="flex items-center justify-between bg-red-50 border border-red-200 rounded-lg px-4 py-3">
+            <div className="flex items-center gap-2 text-sm text-red-700">
+              <i className="ri-error-warning-line text-base w-4 h-4 flex items-center justify-center"></i>
+              <span>
+                Hay <strong>{failedCount}</strong> correo{failedCount !== 1 ? 's' : ''} con estado fallido
+                {activeWarehouseId ? ` en ${activeWarehouse?.name}` : ''}.
+              </span>
+            </div>
+            <button
+              onClick={handleRetryAll}
+              disabled={retryingAll}
+              className="flex items-center gap-2 px-4 py-1.5 bg-red-600 text-white text-sm font-medium rounded-lg hover:bg-red-700 disabled:opacity-50 whitespace-nowrap"
+            >
+              {retryingAll ? (
+                <>
+                  <i className="ri-loader-4-line animate-spin"></i>
+                  Reintentando todos...
+                </>
+              ) : (
+                <>
+                  <i className="ri-refresh-line"></i>
+                  Reintentar todos los fallidos
+                </>
+              )}
+            </button>
+          </div>
+        );
+      })()}
 
       {/* Tabla de logs */}
       <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
