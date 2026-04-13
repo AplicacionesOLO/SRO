@@ -1,6 +1,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import type { CargoType, Provider } from '../../../types/catalog';
+import { saveGenericDraft, readGenericDraft, clearGenericDraft } from '../../../hooks/useReservationDraft';
 import { cargoTypesService } from '../../../services/cargoTypesService';
 import { providersService } from '../../../services/providersService';
 import { userProvidersService } from '../../../services/userProvidersService';
@@ -33,6 +34,8 @@ export default function PreReservationMiniModal({
 }: PreReservationMiniModalProps) {
   const { user, canLocal } = useAuth();
 
+  const DRAFT_KEY = `pre_reservation_draft_${orgId}_${warehouseId || 'all'}`;
+
   const [selectedCargoTypeId, setSelectedCargoTypeId] = useState<string>('');
   const [selectedProviderId, setSelectedProviderId] = useState<string>('');
   const [cargoTypes, setCargoTypes] = useState<CargoType[]>([]);
@@ -63,6 +66,25 @@ export default function PreReservationMiniModal({
     user?.role === 'admin' ||
     user?.role === 'SUPERADMIN' ||
     user?.role === 'superadmin';
+
+  // Restaurar draft al abrir
+  useEffect(() => {
+    if (isOpen) {
+      const draft = readGenericDraft<{ cargoTypeId: string; providerId: string }>(DRAFT_KEY);
+      if (draft) {
+        if (draft.formData.cargoTypeId) setSelectedCargoTypeId(draft.formData.cargoTypeId);
+        if (draft.formData.providerId) setSelectedProviderId(draft.formData.providerId);
+      }
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen]);
+
+  // Auto-save draft cuando cambian las selecciones
+  useEffect(() => {
+    if (!isOpen) return;
+    saveGenericDraft(DRAFT_KEY, { cargoTypeId: selectedCargoTypeId, providerId: selectedProviderId });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedCargoTypeId, selectedProviderId, isOpen]);
 
   // Cargar catálogos cuando se abre el modal
   useEffect(() => {
@@ -184,11 +206,9 @@ export default function PreReservationMiniModal({
     resolveClient();
   }, [isOpen, orgId, selectedProviderId, warehouseId]);
 
-  // Resetear form cuando se cierra
+  // Resetear form cuando se cierra (NO limpia draft — se preserva para restaurar al reabrir)
   useEffect(() => {
     if (!isOpen) {
-      setSelectedCargoTypeId('');
-      setSelectedProviderId('');
       setRequiredMinutes(30);
       setDurationSource('none');
       setLoadingDuration(false);
@@ -294,6 +314,7 @@ export default function PreReservationMiniModal({
       durationSource,
     });*/
 
+    clearGenericDraft(DRAFT_KEY);
     onConfirm({
       cargoTypeId: selectedCargoTypeId,
       providerId: selectedProviderId,
@@ -303,7 +324,9 @@ export default function PreReservationMiniModal({
   };
 
   const handleCancel = () => {
-    //console.log('[PreReservationMiniModal] Cancelled');
+    clearGenericDraft(DRAFT_KEY);
+    setSelectedCargoTypeId('');
+    setSelectedProviderId('');
     onClose();
   };
 

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import React from 'react';
 import { Dock } from '../../../types/dock';
 import { useAuth } from '../../../contexts/AuthContext';
@@ -185,6 +185,13 @@ export default function ReservationModal({
     isNewReservation,
   });
 
+  // ── Guard de sesión de inicialización ────────────────────────────────────
+  // Registra la "firma" de la última sesión inicializada: `${isOpen}_${reservation?.id ?? 'new'}`
+  // Evita re-inicializar cuando defaults/statuses cambian mientras el modal ya está abierto con datos.
+  const initSessionRef = useRef<string>('');
+  // Flag: si el form se inicializó pero statuses estaban vacíos, pendiente de backfill del statusId
+  const statusIdPendingRef = useRef<boolean>(false);
+
   useEffect(() => {
     if (isOpen && orgId) {
       loadCatalogs();
@@ -321,7 +328,22 @@ export default function ReservationModal({
   }, [isOpen, orgId, reservation?.id, canViewSensitive]);
 
   useEffect(() => {
-    if (!isOpen) return;
+    if (!isOpen) {
+      // Al cerrar, limpiar la sesión para que la próxima apertura re-inicialice
+      initSessionRef.current = '';
+      statusIdPendingRef.current = false;
+      return;
+    }
+
+    // ── Calcular firma de la sesión actual ───────────────────────────────────
+    // Cambia cuando: se abre/cierra el modal, o se cambia de reserva (edit target)
+    const sessionKey = `${reservation?.id ?? 'new'}`;
+
+    // Si ya inicializamos para esta sesión, no repetir (guard principal)
+    if (initSessionRef.current === sessionKey) return;
+
+    // Marcar como inicializada ANTES de ejecutar para evitar doble ejecución en StrictMode
+    initSessionRef.current = sessionKey;
 
     setSavedReservationId(reservation?.id ?? null);
     setRecurringResult(null);
@@ -382,12 +404,38 @@ export default function ReservationModal({
         setDraftWarnings(isConsistent ? [] : warnings);
         setDraftAgeLabel(getDraftAge(draft.savedAt));
         setShowDraftBanner(true);
+        // El draft tiene sus propios valores; no necesitamos backfill de statusId
+        statusIdPendingRef.current = false;
       } else {
         // Sin borrador: inicialización normal
+        // Si statuses aún están vacíos, el statusId quedará '' y se backfilleará después
+        statusIdPendingRef.current = statuses.length === 0;
         initNewForm();
       }
     }
-  }, [isOpen, reservation, defaults, statuses]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, reservation?.id]);
+
+  // ── Backfill de statusId cuando statuses llegan async ────────────────────
+  // Solo aplica si: modal abierto, nueva reserva, statuses recién llegaron, y statusId estaba vacío
+  useEffect(() => {
+    if (
+      !isOpen ||
+      !isNewReservation ||
+      !statusIdPendingRef.current ||
+      statuses.length === 0
+    ) return;
+
+    // statuses ya llegaron — aplicar solo el statusId si sigue vacío
+    setFormData(prev => {
+      if (prev.statusId) return prev; // ya tiene valor, no pisar
+      const fallbackId = defaults?.status_id || statuses[0]?.id || '';
+      if (!fallbackId) return prev;
+      statusIdPendingRef.current = false;
+      return { ...prev, statusId: fallbackId };
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [statuses, isOpen, isNewReservation]);
 
   useEffect(() => {
     if (isOpen && !reservation && allowedProviders.length === 1 && !formData.shipperProvider) {
