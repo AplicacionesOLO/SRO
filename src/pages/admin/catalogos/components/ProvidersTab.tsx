@@ -3,6 +3,7 @@ import { usePermissions } from '../../../../hooks/usePermissions';
 import { providersService } from '../../../../services/providersService';
 import type { Provider } from '../../../../types/catalog';
 import ProviderModal from './ProviderModal';
+import ProviderBulkImportModal from './ProviderBulkImportModal';
 
 interface ProvidersTabProps {
   orgId: string;
@@ -16,6 +17,7 @@ export default function ProvidersTab({ orgId, warehouseId }: ProvidersTabProps) 
   const [showOnlyActive, setShowOnlyActive] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isBulkImportOpen, setIsBulkImportOpen] = useState(false);
   const [editingProvider, setEditingProvider] = useState<Provider | undefined>();
   const [error, setError] = useState<string | undefined>();
 
@@ -102,10 +104,19 @@ export default function ProvidersTab({ orgId, warehouseId }: ProvidersTabProps) 
           </label>
         </div>
         {canCreate && (
-          <button onClick={handleCreate} className="flex items-center gap-2 px-4 py-2 bg-teal-600 text-white rounded-lg hover:bg-teal-700 transition-colors whitespace-nowrap cursor-pointer">
-            <i className="ri-add-line w-5 h-5 flex items-center justify-center"></i>
-            Nuevo Proveedor
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setIsBulkImportOpen(true)}
+              className="flex items-center gap-2 px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors whitespace-nowrap cursor-pointer text-sm"
+            >
+              <i className="ri-upload-cloud-line w-5 h-5 flex items-center justify-center"></i>
+              Carga masiva
+            </button>
+            <button onClick={handleCreate} className="flex items-center gap-2 px-4 py-2 bg-teal-600 text-white rounded-lg hover:bg-teal-700 transition-colors whitespace-nowrap cursor-pointer">
+              <i className="ri-add-line w-5 h-5 flex items-center justify-center"></i>
+              Nuevo Proveedor
+            </button>
+          </div>
         )}
       </div>
 
@@ -170,6 +181,14 @@ export default function ProvidersTab({ orgId, warehouseId }: ProvidersTabProps) 
           provider={editingProvider || null}
           onClose={() => setIsModalOpen(false)}
           onSave={handleSave}
+        />
+      )}
+
+      {isBulkImportOpen && (
+        <ProviderBulkImportModal
+          orgId={orgId}
+          onClose={() => setIsBulkImportOpen(false)}
+          onImportDone={loadProviders}
         />
       )}
     </div>

@@ -160,24 +160,12 @@ export const providersService = {
       return activeOnly ? this.getActive(orgId) : this.getAll(orgId);
     }
 
-    // Obtener IDs de proveedores asignados a este almacén
-    const { data: pwRows, error: pwErr } = await supabase
-      .from('provider_warehouses')
-      .select('provider_id')
-      .eq('org_id', orgId)
-      .eq('warehouse_id', warehouseId);
-
-    if (pwErr) throw pwErr;
-
-    const providerIds = (pwRows ?? []).map((r: any) => r.provider_id as string);
-
-    if (providerIds.length === 0) return [];
-
+    // JOIN directo: evita pasar cientos de IDs en la URL (causa 400 Bad Request)
     let query = supabase
       .from('providers')
-      .select('id, org_id, name, active, created_at')
+      .select('id, org_id, name, active, created_at, provider_warehouses!inner(warehouse_id)')
       .eq('org_id', orgId)
-      .in('id', providerIds)
+      .eq('provider_warehouses.warehouse_id', warehouseId)
       .order('name', { ascending: true });
 
     if (activeOnly) {
@@ -186,7 +174,9 @@ export const providersService = {
 
     const { data, error } = await query;
     if (error) throw error;
-    return data || [];
+
+    // Limpiar el campo de join antes de devolver
+    return (data ?? []).map(({ provider_warehouses: _pw, ...p }) => p as Provider);
   },
 
   /**
