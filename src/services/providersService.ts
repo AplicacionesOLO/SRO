@@ -3,76 +3,48 @@ import type { Provider } from '../types/catalog';
 
 export const providersService = {
   async getAll(orgId: string): Promise<Provider[]> {
-    //console.log('[providersService] ========== FETCHING ALL PROVIDERS ==========');
-    //console.log('[providersService] Query params:', { orgId, filterActive: false });
-    
-    const { data, error } = await supabase
-      .from('providers')
-      .select('id, org_id, name, active, created_at')
-      .eq('org_id', orgId)
-      .order('created_at', { ascending: false });
+    const pageSize = 1000;
+    let from = 0;
+    let allProviders: Provider[] = [];
 
-    if (error) {
-      // console.error('[providersService] ❌ ERROR fetching all providers', { 
-      //   error, 
-      //   message: error.message, 
-      //   details: error.details, 
-      //   hint: error.hint,
-      //   code: error.code
-      // });
-      throw error;
+    while (true) {
+      const { data, error } = await supabase
+        .from('providers')
+        .select('id, org_id, name, active, created_at')
+        .eq('org_id', orgId)
+        .order('created_at', { ascending: false })
+        .range(from, from + pageSize - 1);
+
+      if (error) throw error;
+      allProviders = allProviders.concat(data ?? []);
+      if ((data ?? []).length < pageSize) break;
+      from += pageSize;
     }
 
-    //console.log('[providersService] ✅ Query successful');
-    /**console.log('[providersService] Result:', { 
-      count: data?.length || 0,
-      firstRow: data && data.length > 0 ? {
-        id: data[0].id,
-        name: data[0].name,
-        org_id: data[0].org_id,
-        active: data[0].active
-      } : null
-    });*/
-    //console.log('[providersService] ================================================');
-    
-    return data || [];
+    return allProviders;
   },
 
   async getActive(orgId: string): Promise<Provider[]> {
-    //console.log('[providersService] ========== FETCHING ACTIVE PROVIDERS ==========');
-    //console.log('[providersService] Query params:', { orgId, filterActive: true });
-    
-    const { data, error } = await supabase
-      .from('providers')
-      .select('id, org_id, name, active, created_at')
-      .eq('org_id', orgId)
-      .eq('active', true)
-      .order('name', { ascending: true });
+    const pageSize = 1000;
+    let from = 0;
+    let allProviders: Provider[] = [];
 
-    if (error) {
-      // console.error('[providersService] ❌ ERROR fetching active providers', { 
-      //   error, 
-      //   message: error.message, 
-      //   details: error.details, 
-      //   hint: error.hint,
-      //   code: error.code
-      // });
-      throw error;
+    while (true) {
+      const { data, error } = await supabase
+        .from('providers')
+        .select('id, org_id, name, active, created_at')
+        .eq('org_id', orgId)
+        .eq('active', true)
+        .order('name', { ascending: true })
+        .range(from, from + pageSize - 1);
+
+      if (error) throw error;
+      allProviders = allProviders.concat(data ?? []);
+      if ((data ?? []).length < pageSize) break;
+      from += pageSize;
     }
 
-    //console.log('[providersService] ✅ Query successful');
-    /**console.log('[providersService] Result:', { 
-      count: data?.length || 0,
-      firstRow: data && data.length > 0 ? {
-        id: data[0].id,
-        name: data[0].name,
-        org_id: data[0].org_id,
-        active: data[0].active
-      } : null
-    });*/
-    //console.log('[providersService] ================================================');
-    
-    return data || [];
+    return allProviders;
   },
 
   async createProvider(orgId: string, name: string): Promise<Provider> {
@@ -153,30 +125,47 @@ export const providersService = {
   /**
    * Obtener proveedores filtrados por almacén activo.
    * Si warehouseId es null → devuelve todos los de la org (acceso global).
+   *
+   * IMPORTANTE: usa !inner solo cuando hay warehouseId específico, para garantizar
+   * que solo aparezcan proveedores realmente asignados a ese almacén.
+   * Con warehouseId null devuelve todos (incluyendo los sin almacén asignado).
    */
   async getByWarehouse(orgId: string, warehouseId: string | null, activeOnly = false): Promise<Provider[]> {
     if (!warehouseId) {
-      // Acceso global: devolver todos
+      // Acceso global: devolver todos los proveedores de la org
       return activeOnly ? this.getActive(orgId) : this.getAll(orgId);
     }
 
-    // JOIN directo: evita pasar cientos de IDs en la URL (causa 400 Bad Request)
-    let query = supabase
-      .from('providers')
-      .select('id, org_id, name, active, created_at, provider_warehouses!inner(warehouse_id)')
-      .eq('org_id', orgId)
-      .eq('provider_warehouses.warehouse_id', warehouseId)
-      .order('name', { ascending: true });
+    // JOIN directo con !inner: evita pasar cientos de IDs en la URL (causa 400 Bad Request)
+    // y garantiza que solo aparezcan proveedores asignados a este almacén específico.
+    // Paginado en bloques de 1000 para orgs con >1000 proveedores por almacén.
+    const pageSize = 1000;
+    let from = 0;
+    let allProviders: Provider[] = [];
 
-    if (activeOnly) {
-      query = query.eq('active', true);
+    while (true) {
+      let query = supabase
+        .from('providers')
+        .select('id, org_id, name, active, created_at, provider_warehouses!inner(warehouse_id)')
+        .eq('org_id', orgId)
+        .eq('provider_warehouses.warehouse_id', warehouseId)
+        .order('name', { ascending: true })
+        .range(from, from + pageSize - 1);
+
+      if (activeOnly) {
+        query = query.eq('active', true);
+      }
+
+      const { data, error } = await query;
+      if (error) throw error;
+
+      const page = (data ?? []).map(({ provider_warehouses: _pw, ...p }: any) => p as Provider);
+      allProviders = allProviders.concat(page);
+      if (page.length < pageSize) break;
+      from += pageSize;
     }
 
-    const { data, error } = await query;
-    if (error) throw error;
-
-    // Limpiar el campo de join antes de devolver
-    return (data ?? []).map(({ provider_warehouses: _pw, ...p }) => p as Provider);
+    return allProviders;
   },
 
   /**

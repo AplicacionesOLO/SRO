@@ -1,7 +1,7 @@
 import { useState, useRef, useCallback } from 'react';
 import { parseProvidersExcel, generateProviderTemplate } from '@/utils/excelParser';
 import { providerBulkImportService } from '@/services/providerBulkImportService';
-import type { ValidatedRow } from '@/services/providerBulkImportService';
+import type { ValidatedRow, ImportProgress } from '@/services/providerBulkImportService';
 
 interface ProviderBulkImportModalProps {
   orgId: string;
@@ -14,12 +14,15 @@ type Step = 'upload' | 'preview' | 'importing' | 'result';
 interface ImportResult {
   attempted: number;
   succeeded: number;
+  updated: number;
   failed: number;
+  skipped: number;
   errors: { nombre: string; reason: string }[];
 }
 
 const STATUS_LABELS: Record<string, string> = {
-  valid: 'Válido',
+  valid: 'Nuevo',
+  update_warehouses: 'Actualizar almacenes',
   duplicate_file: 'Dup. archivo',
   duplicate_db: 'Dup. base de datos',
   invalid_warehouse: 'Almacén no encontrado',
@@ -28,6 +31,7 @@ const STATUS_LABELS: Record<string, string> = {
 
 const STATUS_COLORS: Record<string, string> = {
   valid: 'bg-green-100 text-green-700',
+  update_warehouses: 'bg-teal-100 text-teal-700',
   duplicate_file: 'bg-amber-100 text-amber-700',
   duplicate_db: 'bg-amber-100 text-amber-700',
   invalid_warehouse: 'bg-red-100 text-red-700',
@@ -46,10 +50,11 @@ export default function ProviderBulkImportModal({
   const [validating, setValidating] = useState(false);
   const [validatedRows, setValidatedRows] = useState<ValidatedRow[]>([]);
   const [importResult, setImportResult] = useState<ImportResult | null>(null);
+  const [progress, setProgress] = useState<ImportProgress | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const validCount = validatedRows.filter((r) => r.status === 'valid').length;
-  const invalidCount = validatedRows.filter((r) => r.status !== 'valid').length;
+  const validCount = validatedRows.filter((r) => r.status === 'valid' || r.status === 'update_warehouses').length;
+  const invalidCount = validatedRows.filter((r) => r.status !== 'valid' && r.status !== 'update_warehouses').length;
 
   const processFile = useCallback(
     async (file: File) => {
@@ -97,16 +102,31 @@ export default function ProviderBulkImportModal({
   };
 
   const handleImport = async () => {
+    setProgress(null);
     setStep('importing');
     try {
-      const result = await providerBulkImportService.importValidRows(orgId, validatedRows);
-      setImportResult(result);
+      const result = await providerBulkImportService.importValidRows(
+        orgId,
+        validatedRows,
+        (prog) => setProgress(prog),
+        50,
+      );
+      setImportResult({
+        attempted: result.attempted,
+        succeeded: result.succeeded,
+        updated: result.updated,
+        failed: result.failed,
+        skipped: result.skipped,
+        errors: result.errors,
+      });
       setStep('result');
     } catch (err: unknown) {
       setImportResult({
         attempted: validCount,
         succeeded: 0,
+        updated: 0,
         failed: validCount,
+        skipped: 0,
         errors: [{ nombre: 'general', reason: String(err) }],
       });
       setStep('result');
@@ -124,6 +144,7 @@ export default function ProviderBulkImportModal({
     setParseError('');
     setValidatedRows([]);
     setImportResult(null);
+    setProgress(null);
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
@@ -365,8 +386,8 @@ export default function ProviderBulkImportModal({
                         </td>
                         <td className="px-3 py-2">
                           <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${STATUS_COLORS[row.status]}`}>
-                            {row.status === 'valid' && <i className="ri-check-line text-xs"></i>}
-                            {row.status !== 'valid' && <i className="ri-close-line text-xs"></i>}
+                            {(row.status === 'valid' || row.status === 'update_warehouses') && <i className="ri-check-line text-xs"></i>}
+                            {row.status !== 'valid' && row.status !== 'update_warehouses' && <i className="ri-close-line text-xs"></i>}
                             {STATUS_LABELS[row.status]}
                           </span>
                           {row.reason && (
@@ -383,12 +404,69 @@ export default function ProviderBulkImportModal({
 
           {/* ── STEP: IMPORTING ── */}
           {step === 'importing' && (
-            <div className="flex flex-col items-center justify-center py-16 gap-4">
-              <div className="w-16 h-16 flex items-center justify-center">
-                <i className="ri-loader-4-line animate-spin text-4xl text-teal-500"></i>
+            <div className="flex flex-col gap-6 py-8 px-2">
+              {/* Encabezado animado */}
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 flex items-center justify-center flex-shrink-0">
+                  <i className="ri-loader-4-line animate-spin text-3xl text-teal-500"></i>
+                </div>
+                <div>
+                  <p className="text-base font-semibold text-gray-800">Importando proveedores...</p>
+                  <p className="text-xs text-gray-500 mt-0.5">Por favor no cerrés esta ventana</p>
+                </div>
               </div>
-              <p className="text-base font-semibold text-gray-800">Importando {validCount} proveedores...</p>
-              <p className="text-sm text-gray-500">Por favor no cerrés esta ventana</p>
+
+              {/* Texto de progreso textual */}
+              {progress && (
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="text-gray-700 font-medium">
+                      Procesando {progress.processed} de {progress.total} registros ({progress.percent}%)
+                    </span>
+                    <span className="text-gray-400 text-xs">
+                      Lote {progress.currentBatch} / {progress.totalBatches}
+                    </span>
+                  </div>
+
+                  {/* Progress bar */}
+                  <div className="w-full bg-gray-100 rounded-full h-3 overflow-hidden">
+                    <div
+                      className="h-3 rounded-full bg-teal-500 transition-all duration-300 ease-out"
+                      style={{ width: `${progress.percent}%` }}
+                    />
+                  </div>
+
+                  {/* Contadores live */}
+                  <div className="grid grid-cols-4 gap-2 mt-1">
+                    <div className="bg-green-50 rounded-lg p-2.5 text-center">
+                      <p className="text-lg font-bold text-green-700">{progress.created}</p>
+                      <p className="text-xs text-green-600 mt-0.5">Creados</p>
+                    </div>
+                    <div className="bg-teal-50 rounded-lg p-2.5 text-center">
+                      <p className="text-lg font-bold text-teal-700">{progress.updated}</p>
+                      <p className="text-xs text-teal-600 mt-0.5">Actualizados</p>
+                    </div>
+                    <div className="bg-red-50 rounded-lg p-2.5 text-center">
+                      <p className="text-lg font-bold text-red-600">{progress.failed}</p>
+                      <p className="text-xs text-red-500 mt-0.5">Errores</p>
+                    </div>
+                    <div className="bg-gray-50 rounded-lg p-2.5 text-center">
+                      <p className="text-lg font-bold text-gray-600">{progress.skipped}</p>
+                      <p className="text-xs text-gray-500 mt-0.5">Omitidos</p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Estado inicial antes de primer progreso */}
+              {!progress && (
+                <div className="space-y-3">
+                  <div className="w-full bg-gray-100 rounded-full h-3 overflow-hidden">
+                    <div className="h-3 rounded-full bg-teal-200 animate-pulse w-1/12" />
+                  </div>
+                  <p className="text-xs text-gray-400 text-center">Preparando importación...</p>
+                </div>
+              )}
             </div>
           )}
 
@@ -396,33 +474,43 @@ export default function ProviderBulkImportModal({
           {step === 'result' && importResult && (
             <div className="space-y-4">
               {importResult.failed === 0 ? (
-                <div className="flex flex-col items-center gap-3 py-8">
+                <div className="flex flex-col items-center gap-3 py-6">
                   <div className="w-16 h-16 flex items-center justify-center bg-green-100 rounded-full">
                     <i className="ri-checkbox-circle-line text-4xl text-green-500"></i>
                   </div>
-                  <p className="text-lg font-bold text-gray-800">¡Importación exitosa!</p>
-                  <p className="text-sm text-gray-500">
-                    Se crearon <strong>{importResult.succeeded}</strong> proveedores correctamente.
+                  <p className="text-lg font-bold text-gray-800">¡Importación completada!</p>
+                  <p className="text-sm text-gray-500 text-center">
+                    {importResult.succeeded > 0 && (
+                      <>Creados: <strong>{importResult.succeeded}</strong>. </>
+                    )}
+                    {importResult.updated > 0 && (
+                      <>Actualizados: <strong>{importResult.updated}</strong>.</>
+                    )}
                   </p>
                 </div>
               ) : (
-                <div className="flex flex-col items-center gap-3 py-6">
+                <div className="flex flex-col items-center gap-3 py-4">
                   <div className="w-16 h-16 flex items-center justify-center bg-amber-100 rounded-full">
                     <i className="ri-alert-line text-4xl text-amber-500"></i>
                   </div>
                   <p className="text-lg font-bold text-gray-800">Importación con errores</p>
+                  <p className="text-sm text-gray-500">Algunos registros no pudieron procesarse</p>
                 </div>
               )}
 
-              {/* Resumen de resultado */}
-              <div className="grid grid-cols-3 gap-3">
+              {/* Resumen de resultado — 4 contadores */}
+              <div className="grid grid-cols-4 gap-3">
                 <div className="bg-gray-50 rounded-xl p-3 text-center">
                   <p className="text-2xl font-bold text-gray-800">{importResult.attempted}</p>
                   <p className="text-xs text-gray-500 mt-0.5">Intentados</p>
                 </div>
                 <div className="bg-green-50 rounded-xl p-3 text-center">
                   <p className="text-2xl font-bold text-green-700">{importResult.succeeded}</p>
-                  <p className="text-xs text-green-600 mt-0.5">Insertados</p>
+                  <p className="text-xs text-green-600 mt-0.5">Creados</p>
+                </div>
+                <div className="bg-teal-50 rounded-xl p-3 text-center">
+                  <p className="text-2xl font-bold text-teal-700">{importResult.updated}</p>
+                  <p className="text-xs text-teal-600 mt-0.5">Actualizados</p>
                 </div>
                 <div className="bg-red-50 rounded-xl p-3 text-center">
                   <p className="text-2xl font-bold text-red-600">{importResult.failed}</p>
@@ -430,16 +518,32 @@ export default function ProviderBulkImportModal({
                 </div>
               </div>
 
+              {/* Omitidos (filas inválidas del archivo) */}
+              {importResult.skipped > 0 && (
+                <div className="flex items-center gap-2 p-3 bg-amber-50 border border-amber-200 rounded-lg">
+                  <i className="ri-information-line text-amber-500 w-4 h-4 flex items-center justify-center flex-shrink-0"></i>
+                  <p className="text-xs text-amber-700">
+                    <strong>{importResult.skipped}</strong> fila{importResult.skipped !== 1 ? 's' : ''} omitida{importResult.skipped !== 1 ? 's' : ''} por errores de validación (almacén no encontrado, duplicado en archivo, etc.)
+                  </p>
+                </div>
+              )}
+
               {importResult.errors.length > 0 && (
                 <div className="border border-red-200 rounded-xl overflow-hidden">
-                  <div className="bg-red-50 px-4 py-2 border-b border-red-200">
-                    <p className="text-xs font-semibold text-red-700">Errores durante la importación:</p>
+                  <div className="bg-red-50 px-4 py-2 border-b border-red-200 flex items-center gap-2">
+                    <i className="ri-error-warning-line text-red-500 w-4 h-4 flex items-center justify-center"></i>
+                    <p className="text-xs font-semibold text-red-700">
+                      {importResult.errors.length} error{importResult.errors.length !== 1 ? 'es' : ''} durante la importación:
+                    </p>
                   </div>
                   <ul className="divide-y divide-red-100 max-h-48 overflow-y-auto">
                     {importResult.errors.map((e, i) => (
-                      <li key={i} className="px-4 py-2 text-xs">
-                        <span className="font-semibold text-gray-800">{e.nombre}:</span>{' '}
-                        <span className="text-red-600">{e.reason}</span>
+                      <li key={i} className="px-4 py-2 text-xs flex items-start gap-2">
+                        <i className="ri-close-circle-line text-red-400 mt-0.5 w-3 h-3 flex items-center justify-center flex-shrink-0"></i>
+                        <span>
+                          <span className="font-semibold text-gray-800">{e.nombre}:</span>{' '}
+                          <span className="text-red-600">{e.reason}</span>
+                        </span>
                       </li>
                     ))}
                   </ul>

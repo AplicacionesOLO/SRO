@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import React from 'react';
+import SearchSelect from '../../../components/base/SearchSelect';
 import { Dock } from '../../../types/dock';
 import { useAuth } from '../../../contexts/AuthContext';
 import { calendarService, type Reservation } from '../../../services/calendarService';
@@ -1212,39 +1213,46 @@ export default function ReservationModal({
                             <div className={inputMasked}>
                               <span className="text-gray-400 select-none">Reservado</span>
                             </div>
+                          ) : isReadOnly ? (
+                            <div className={inputReadOnly}>
+                              {providers.find(p => p.id === formData.shipperProvider)?.name || '—'}
+                            </div>
                           ) : (
                             <>
-                              <select
+                              <SearchSelect
+                                options={allowedProviders.map(p => ({ id: p.id, label: p.name }))}
                                 value={formData.shipperProvider}
-                                onChange={(e) => handleProviderOrCargoTypeChange('shipperProvider', e.target.value)}
-                                className={selectCls}
-                                required
-                                disabled={isReadOnly || isProviderFieldDisabled || hasNoProviders || loadingProviders}
-                              >
-                                <option value="">
-                                  {hasNoProviders 
-                                    ? 'Sin proveedores asignados' 
-                                    : loadingProviders 
+                                onChange={(id) => handleProviderOrCargoTypeChange('shipperProvider', id)}
+                                placeholder={
+                                  hasNoProviders
+                                    ? 'Sin proveedores asignados'
+                                    : loadingProviders
                                     ? 'Cargando proveedores...'
-                                    : 'Seleccionar proveedor'}
-                                </option>
-                                {allowedProviders.map(provider => (
-                                  <option key={provider.id} value={provider.id}>
-                                    {provider.name}
-                                  </option>
-                                ))}
-                              </select>
-                              
+                                    : 'Buscar proveedor...'
+                                }
+                                disabled={isProviderFieldDisabled || hasNoProviders || loadingProviders}
+                              />
+                              {/* Campo oculto para mantener validación HTML5 required */}
+                              <input
+                                type="text"
+                                required
+                                value={formData.shipperProvider}
+                                onChange={() => {}}
+                                className="sr-only"
+                                tabIndex={-1}
+                                aria-hidden="true"
+                              />
+
                               {!isReadOnly && (
                                 <div className={hintBase}>
-                                  {hasNoProviders 
+                                  {hasNoProviders
                                     ? 'No tenés proveedores asignados. Contactá a un administrador.'
                                     : allowedProviders.length === 1
                                     ? 'Este es tu único proveedor asignado.'
-                                    : `Mostrando ${allowedProviders.length} proveedores asignados a tu usuario.`}
+                                    : `${allowedProviders.length} proveedores disponibles — escribí para filtrar.`}
                                 </div>
                               )}
-                              
+
                               {!isReadOnly && providersError && (
                                 <div className="mt-2 text-xs text-red-600 flex items-center gap-1">
                                   <i className="ri-error-warning-line w-4 h-4 flex items-center justify-center"></i>
