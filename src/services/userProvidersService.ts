@@ -57,22 +57,29 @@ export const userProvidersService = {
    * @param providerIds - Array de IDs de proveedores a asignar
    */
   async setUserProviders(orgId: string, userId: string, providerIds: string[]): Promise<void> {
-    //console.log('[userProvidersService] ========== SETTING USER PROVIDERS ==========');
-    //console.log('[userProvidersService] Params:', { orgId, userId, providerIds });
+    // 1. Obtener proveedores actuales — paginado para evitar el límite implícito de 1000 filas.
+    // Sin paginación, un usuario con 2291 asignaciones solo devuelve 1000, y el diff
+    // calcula toInsert erróneamente con los 1291 "faltantes" → duplicate key en user_providers_unique.
+    const pageSize = 1000;
+    let from = 0;
+    const currentRows: any[] = [];
 
-    // 1. Obtener proveedores actuales
-    const { data: currentData, error: fetchError } = await supabase
-      .from('user_providers')
-      .select('provider_id')
-      .eq('org_id', orgId)
-      .eq('user_id', userId);
+    while (true) {
+      const { data: pageData, error: fetchError } = await supabase
+        .from('user_providers')
+        .select('provider_id')
+        .eq('org_id', orgId)
+        .eq('user_id', userId)
+        .range(from, from + pageSize - 1);
 
-    if (fetchError) {
-      // console.error('[userProvidersService] ❌ ERROR fetching current providers', fetchError);
-      throw fetchError;
+      if (fetchError) throw fetchError;
+
+      currentRows.push(...(pageData ?? []));
+      if ((pageData ?? []).length < pageSize) break;
+      from += pageSize;
     }
 
-    const currentProviderIds = currentData?.map((up: any) => up.provider_id) || [];
+    const currentProviderIds = currentRows.map((up: any) => up.provider_id);
     //console.log('[userProvidersService] Current providers:', currentProviderIds);
 
     // 2. Calcular diff
