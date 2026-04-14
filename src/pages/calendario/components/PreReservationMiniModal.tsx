@@ -454,16 +454,20 @@ export default function PreReservationMiniModal({
                 {selectedProviderId && loadingClient && (
                   <p className="mt-1 text-xs text-gray-500 flex items-center gap-1">
                     <i className="ri-loader-4-line animate-spin text-sm"></i>
-                    Resolviendo cliente vinculado...
+                    Verificando configuración de andenes...
                   </p>
                 )}
-                {selectedProviderId && !loadingClient && clientError && (
-                  <div className="mt-2 bg-amber-50 border border-amber-200 rounded-md p-2">
-                    <div className="flex items-start gap-2">
-                      <i className="ri-alert-line text-amber-600 text-sm flex-shrink-0 mt-0.5"></i>
-                      <p className="text-xs text-amber-700">{clientError}</p>
-                    </div>
-                  </div>
+                {selectedProviderId && !loadingClient && resolvedClientId && (
+                  <p className="mt-1 text-xs text-teal-700 flex items-center gap-1">
+                    <i className="ri-checkbox-circle-line text-sm"></i>
+                    Reglas de andenes aplicadas automáticamente
+                  </p>
+                )}
+                {selectedProviderId && !loadingClient && clientError && !resolvedClientId && (
+                  <p className="mt-1 text-xs text-gray-500 flex items-center gap-1">
+                    <i className="ri-information-line text-sm"></i>
+                    Este proveedor opera sin asignación de andenes automática
+                  </p>
                 )}
               </div>
 

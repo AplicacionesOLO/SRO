@@ -1,7 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const VERSION = "v766-fix-driver-column";
+const VERSION = "v767-warehouse-timezone-fix";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -39,18 +39,63 @@ function processTemplate(template: string, ctx: Record<string, any>): string {
   return result;
 }
 
-function formatDateEs(value: any): string {
+/**
+ * Formatea una fecha en la zona horaria del almacén.
+ * NUNCA usa la TZ del servidor (UTC en Deno/Supabase Edge).
+ *
+ * @param value    Timestamp ISO string desde BD (siempre en UTC)
+ * @param timezone IANA timezone del almacén (e.g. "America/Caracas", "America/Costa_Rica")
+ */
+function formatDateInWarehouseTimezone(value: any, timezone: string): string {
   if (!value) return "";
   try {
     const d = new Date(value);
     if (Number.isNaN(d.getTime())) return String(value);
-    return d.toLocaleString("es-ES", {
+
+    // Usar Intl con el timezone del almacén — esto es lo que el usuario ve en el sistema
+    return new Intl.DateTimeFormat("es-ES", {
+      timeZone: timezone,
       year: "numeric",
       month: "long",
       day: "numeric",
       hour: "2-digit",
       minute: "2-digit",
-    });
+      hour12: false,
+    }).format(d);
+  } catch {
+    // Fallback sin timezone si el IANA es inválido (nunca debería pasar)
+    try {
+      const d = new Date(value);
+      return new Intl.DateTimeFormat("es-ES", {
+        year: "numeric",
+        month: "long",
+        day: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false,
+      }).format(d);
+    } catch {
+      return String(value);
+    }
+  }
+}
+
+/**
+ * Formatea solo la hora HH:MM en la zona horaria del almacén.
+ * Útil para mostrar "13:30" en lugar de "13:30:00 UTC".
+ */
+function formatTimeInWarehouseTimezone(value: any, timezone: string): string {
+  if (!value) return "";
+  try {
+    const d = new Date(value);
+    if (Number.isNaN(d.getTime())) return String(value);
+
+    return new Intl.DateTimeFormat("es-ES", {
+      timeZone: timezone,
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    }).format(d);
   } catch {
     return String(value);
   }
@@ -226,12 +271,15 @@ serve(async (req) => {
       });
     }
 
+    // ─── Fetch reservation + warehouse timezone ───────────────────────────────
+    // Se hace un join explícito con warehouses para obtener el timezone del almacén.
+    // Esto es la corrección principal: NUNCA usar la TZ del servidor para formatear fechas.
     const { data: reservation, error: resErr } = await supabase
       .from("reservations")
       .select(
         `
         *,
-        docks(name),
+        docks(name, warehouse_id, warehouses(timezone)),
         reservation_statuses(name)
       `
       )
@@ -250,6 +298,48 @@ serve(async (req) => {
       });
     }
 
+    // ─── Resolver la timezone del almacén ────────────────────────────────────
+    // Fuentes en orden de prioridad:
+    // 1. reservation.warehouse_id → warehouses.timezone (si la reserva tiene warehouse_id directo)
+    // 2. reservation.docks.warehouses.timezone (via el join del dock)
+    // 3. Fallback: "America/Costa_Rica" (default de la plataforma)
+    const FALLBACK_TZ = "America/Costa_Rica";
+
+    let warehouseTimezone: string = FALLBACK_TZ;
+
+    // Intentar obtener timezone via el dock joinado
+    const dockWarehouseTimezone = (reservation as any)?.docks?.warehouses?.timezone;
+    if (dockWarehouseTimezone && typeof dockWarehouseTimezone === "string") {
+      warehouseTimezone = dockWarehouseTimezone;
+    }
+
+    // Si la reserva tiene warehouse_id directo, consultamos el timezone directamente
+    // (más confiable que ir por el dock)
+    const directWarehouseId = (reservation as any)?.warehouse_id ?? null;
+    if (directWarehouseId) {
+      try {
+        const { data: wh } = await supabase
+          .from("warehouses")
+          .select("timezone")
+          .eq("id", directWarehouseId)
+          .maybeSingle();
+        if (wh?.timezone) {
+          warehouseTimezone = wh.timezone;
+        }
+      } catch (e) {
+        console.warn("[correspondence-process-event] Failed to fetch warehouse timezone directly, using dock fallback", e);
+      }
+    }
+
+    console.log("[correspondence-process-event][TIMEZONE]", {
+      reqId,
+      reservationId,
+      warehouseTimezone,
+      directWarehouseId,
+      dockWarehouseTimezone,
+    });
+
+    // ─── Resolvers auxiliares ─────────────────────────────────────────────────
     const createdById =
       (reservation as any).created_by ??
       (reservation as any).created_by_user_id ??
@@ -285,13 +375,28 @@ serve(async (req) => {
       statusToName = statusData?.name ?? "";
     }
 
+    // ─── Construir contexto de la plantilla con fechas en TZ del almacén ─────
+    // ANTES: formatDateEs() sin timezone → mostraba hora UTC del servidor
+    // AHORA: formatDateInWarehouseTimezone() con el timezone del almacén → hora correcta
+    const startDatetime = (reservation as any)?.start_datetime;
+    const endDatetime = (reservation as any)?.end_datetime;
+
     const templateCtx: Record<string, any> = {
       reservation_id: (reservation as any)?.id ?? "",
       dock: (reservation as any)?.docks?.name ?? "",
-      start_datetime: formatDateEs((reservation as any)?.start_datetime),
-      end_datetime: formatDateEs((reservation as any)?.end_datetime),
+
+      // Fecha y hora completa formateada en el timezone del almacén
+      start_datetime: formatDateInWarehouseTimezone(startDatetime, warehouseTimezone),
+      end_datetime: formatDateInWarehouseTimezone(endDatetime, warehouseTimezone),
+
+      // Alias de conveniencia: solo la hora (útil en plantillas tipo "{{hora_inicio}}")
+      start_time: formatTimeInWarehouseTimezone(startDatetime, warehouseTimezone),
+      end_time: formatTimeInWarehouseTimezone(endDatetime, warehouseTimezone),
+
+      // Nombre del timezone para información (e.g. "America/Caracas")
+      warehouse_timezone: warehouseTimezone,
+
       status: (reservation as any)?.reservation_statuses?.name ?? "",
-      // FIX v766: columna real es "driver", no "driver_name"
       driver: (reservation as any)?.driver ?? "",
       truck_plate: (reservation as any)?.truck_plate ?? "",
       dua: (reservation as any)?.dua ?? "",

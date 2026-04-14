@@ -13,54 +13,41 @@ export const userProvidersService = {
    * @returns Lista de proveedores activos asignados al usuario
    */
   async getUserProviders(orgId: string, userId: string): Promise<UserProvider[]> {
-    //console.log('[userProvidersService] ========== FETCHING USER PROVIDERS ==========');
-    //console.log('[userProvidersService] Query params:', { orgId, userId });
-    
-    const { data, error } = await supabase
-      .from('user_providers')
-      .select(`
-        provider_id,
-        providers!user_providers_provider_id_fkey (
-          id,
-          name,
-          active
-        )
-      `)
-      .eq('org_id', orgId)
-      .eq('user_id', userId);
+    // Paginado en bloques de 1000 para usuarios con gran cantidad de proveedores asignados.
+    // Sin paginación, Supabase devuelve máximo 1000 filas y los restantes quedan invisibles.
+    const pageSize = 1000;
+    let from = 0;
+    const allRows: any[] = [];
 
-    if (error) {
-      // console.error('[userProvidersService] ❌ ERROR fetching user providers', { 
-      //   error, 
-      //   message: error.message, 
-      //   details: error.details, 
-      //   hint: error.hint,
-      //   code: error.code
-      // });
-      throw error;
+    while (true) {
+      const { data, error } = await supabase
+        .from('user_providers')
+        .select(`
+          provider_id,
+          providers!user_providers_provider_id_fkey (
+            id,
+            name,
+            active
+          )
+        `)
+        .eq('org_id', orgId)
+        .eq('user_id', userId)
+        .range(from, from + pageSize - 1);
+
+      if (error) throw error;
+
+      allRows.push(...(data ?? []));
+      if ((data ?? []).length < pageSize) break;
+      from += pageSize;
     }
 
-    //console.log('[userProvidersService] ✅ Query successful');
-    /**console.log('[userProvidersService] Raw result:', { 
-      count: data?.length || 0,
-      firstRow: data && data.length > 0 ? data[0] : null
-    });*/
-
     // Filtrar solo proveedores activos y mapear a formato simple
-    const activeProviders = data
-      ?.filter((up: any) => up.providers?.active === true)
+    return allRows
+      .filter((up: any) => up.providers?.active === true)
       .map((up: any) => ({
         id: up.providers.id,
-        name: up.providers.name
-      })) || [];
-
-    /**console.log('[userProvidersService] Filtered active providers:', { 
-      count: activeProviders.length,
-      providers: activeProviders
-    });*/
-    //console.log('[userProvidersService] ================================================');
-    
-    return activeProviders;
+        name: up.providers.name,
+      }));
   },
 
   /**
