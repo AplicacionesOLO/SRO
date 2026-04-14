@@ -122,7 +122,8 @@ export default function ReservationModal({
     statusId: '',
     notes: '',
     transportType: 'inbound',
-    cargoType: ''
+    cargoType: '',
+    operationType: '' as string,
   });
 
   const [isImported, setIsImported] = useState(false);
@@ -228,7 +229,8 @@ export default function ReservationModal({
       statusId: initialStatusId,
       notes: defaults?.notes || '',
       transportType: defaults?.transport_type || 'inbound',
-      cargoType: defaults?.cargo_type || ''
+      cargoType: defaults?.cargo_type || '',
+      operationType: defaults?.operation_type || '',
     });
     setFiles([]);
     // ✅ Si tiene DUA, marcar como importado
@@ -371,7 +373,8 @@ export default function ReservationModal({
         statusId: reservation.status_id || '',
         notes: reservation.notes || '',
         transportType: reservation.transport_type || 'inbound',
-        cargoType: reservation.cargo_type || ''
+        cargoType: reservation.cargo_type || '',
+        operationType: reservation.operation_type || '',
       });
       setIsImported(!!(reservation.dua));
       setCancelReason(reservation.cancel_reason || '');
@@ -673,11 +676,12 @@ export default function ReservationModal({
       shipper_provider: formData.shipperProvider || null,
       driver: formData.driver?.trim() || null,
       dua: formData.dua,
-      invoice: formData.invoice,
+      invoice: formData.invoice || null,
       status_id: formData.statusId || null,
       notes: formData.notes || null,
       transport_type: formData.transportType,
       cargo_type: formData.cargoType,
+      operation_type: formData.operationType || null,
       // ✅ Usar isCancelledStatus en lugar de comparar con string literal
       is_cancelled: isCancelledStatus,
       cancel_reason: isCancelledStatus ? cancelReason : null,
@@ -837,6 +841,13 @@ export default function ReservationModal({
   const providerName = providers.find(p => p.id === formData.shipperProvider)?.name || '';
   const cargoTypeName = cargoTypes.find(ct => ct.id === formData.cargoType)?.name || '';
 
+  const OPERATION_TYPE_LABELS: Record<string, { label: string; icon: string }> = {
+    distribucion: { label: 'Distribución', icon: 'ri-truck-line' },
+    almacen: { label: 'Almacén', icon: 'ri-store-2-line' },
+    zona_franca: { label: 'Zona Franca', icon: 'ri-global-line' },
+  };
+  const operationTypeInfo = formData.operationType ? OPERATION_TYPE_LABELS[formData.operationType] : null;
+
   const categoryLabels: Record<FileCategory, string> = {
     cmr: 'CMR',
     facturas: 'Facturas',
@@ -964,6 +975,12 @@ export default function ReservationModal({
                   <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded-full bg-gray-50 border border-gray-200">
                     <i className="ri-archive-line w-4 h-4 inline-flex items-center justify-center text-gray-500"></i>
                     {cargoTypeName}
+                  </span>
+                )}
+                {operationTypeInfo && (
+                  <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded-full bg-teal-50 border border-teal-200 text-teal-800">
+                    <i className={`${operationTypeInfo.icon} w-4 h-4 inline-flex items-center justify-center text-teal-600`}></i>
+                    {operationTypeInfo.label}
                   </span>
                 )}
                 {providerName && canViewSensitive && (
@@ -1281,6 +1298,42 @@ export default function ReservationModal({
                       </div>
                     </div>
 
+                    {/* ✅ Tipo de operación */}
+                    <div className="bg-white border border-gray-200 rounded-xl p-4">
+                      <h4 className="text-sm font-semibold text-gray-900 mb-4">Tipo de operación</h4>
+                      <div className="flex gap-2 flex-wrap">
+                        {[
+                          { value: 'distribucion', label: 'Distribución', icon: 'ri-truck-line' },
+                          { value: 'almacen', label: 'Almacén', icon: 'ri-store-2-line' },
+                          { value: 'zona_franca', label: 'Zona Franca', icon: 'ri-global-line' },
+                        ].map(({ value, label, icon }) => {
+                          const selected = formData.operationType === value;
+                          return (
+                            <button
+                              key={value}
+                              type="button"
+                              disabled={isReadOnly}
+                              onClick={() => setFormData(prev => ({
+                                ...prev,
+                                operationType: selected ? '' : value,
+                              }))}
+                              className={`flex items-center gap-2 px-4 py-2.5 rounded-lg border text-sm font-medium transition-colors whitespace-nowrap cursor-pointer ${
+                                selected
+                                  ? 'bg-teal-600 border-teal-600 text-white'
+                                  : 'bg-white border-gray-300 text-gray-700 hover:border-teal-400 hover:text-teal-700'
+                              } ${isReadOnly ? 'cursor-not-allowed opacity-70' : ''}`}
+                            >
+                              <i className={`${icon} w-4 h-4 flex items-center justify-center`}></i>
+                              {label}
+                            </button>
+                          );
+                        })}
+                      </div>
+                      {!isReadOnly && (
+                        <p className="mt-2 text-xs text-gray-500">Seleccioná el tipo de operación que clasifica esta reserva.</p>
+                      )}
+                    </div>
+
                     {/* ✅ Ubicación y estado */}
                     <div className="bg-white border border-gray-200 rounded-xl p-4">
                       <h4 className="text-sm font-semibold text-gray-900 mb-4">Ubicación y estado</h4>
@@ -1561,7 +1614,7 @@ export default function ReservationModal({
                           </div>
 
                           <div>
-                            <label className={labelBase}>Factura *</label>
+                            <label className={labelBase}>Factura</label>
                             {canViewSensitive ? (
                               <input
                                 type="text"
@@ -1569,7 +1622,6 @@ export default function ReservationModal({
                                 onChange={(e) => setFormData({ ...formData, invoice: e.target.value })}
                                 className={sensitiveInputCls}
                                 placeholder="FAC-001"
-                                required={!isReadOnly}
                                 disabled={isReadOnly}
                               />
                             ) : (

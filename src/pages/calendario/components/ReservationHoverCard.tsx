@@ -29,6 +29,8 @@ export interface ReservationHoverData {
   statusColor?: string | null;
   // Andén
   dockName?: string | null;
+  // Tipo de operación
+  operationType?: string | null;
   // Notas
   notes?: string | null;
   // Usuario creador
@@ -124,8 +126,43 @@ export default function ReservationHoverCard({
   // Cada entrada: { icon, label, value, sensitive }
   // sensitive=true → se oculta cuando isLimitedAccess=true
   // Solo se renderiza si value es truthy (no vacío, no null, no undefined)
+  const OPERATION_LABELS: Record<string, string> = {
+    // valores en snake_case normalizados (sin tildes) — forma canónica del BD
+    distribucion: 'Distribución',
+    almacen: 'Almacén',
+    zona_franca: 'Zona Franca',
+    // aliases con tilde (por si algún registro antiguo los tiene)
+    distribución: 'Distribución',
+    almacén: 'Almacén',
+    // aliases capitalizados
+    Distribucion: 'Distribución',
+    Almacen: 'Almacén',
+    Zona_Franca: 'Zona Franca',
+    'Zona Franca': 'Zona Franca',
+    Distribución: 'Distribución',
+    Almacén: 'Almacén',
+  };
+
+  /**
+   * Normaliza el valor de operationType para el lookup:
+   * convierte a minúsculas, reemplaza espacios por _, elimina tildes.
+   */
+  const normalizeOpType = (val: string): string =>
+    val
+      .toLowerCase()
+      .replace(/\s+/g, '_')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '');
+
+  const operationLabel = data.operationType
+    ? (OPERATION_LABELS[data.operationType]
+        ?? OPERATION_LABELS[normalizeOpType(data.operationType)]
+        ?? data.operationType)
+    : '';
+
   const allRows: Array<{ icon: string; label: string; value: string; sensitive?: boolean }> = [
     { icon: 'ri-map-pin-line', label: 'Andén', value: data.dockName ?? '' },
+    { icon: 'ri-truck-line', label: 'Operación', value: operationLabel },
     { icon: 'ri-building-2-line', label: 'Proveedor', value: data.providerName ?? '', sensitive: true },
     { icon: 'ri-user-3-line', label: 'Cliente', value: data.clientName ?? '', sensitive: true },
     { icon: 'ri-steering-2-line', label: 'Chofer', value: data.driver ?? '', sensitive: true },

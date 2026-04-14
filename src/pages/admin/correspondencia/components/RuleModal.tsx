@@ -70,6 +70,7 @@ export default function RuleModal({ isOpen, onClose, onSave, rule, orgId, active
     body_template: "",
     is_active: true,
     include_casetilla_photos: false,
+    require_dua: false,
     warehouse_id: activeWarehouseId ?? null,
   } as any);
 
@@ -111,6 +112,7 @@ export default function RuleModal({ isOpen, onClose, onSave, rule, orgId, active
           body_template: rule.body_template,
           is_active: rule.is_active,
           include_casetilla_photos: rule.include_casetilla_photos ?? false,
+          require_dua: rule.require_dua ?? false,
           warehouse_id: (rule as any).warehouse_id ?? activeWarehouseId ?? null,
         } as any);
         setRecipientEmailInput("");
@@ -286,6 +288,7 @@ export default function RuleModal({ isOpen, onClose, onSave, rule, orgId, active
       body_template: "",
       is_active: true,
       include_casetilla_photos: false,
+      require_dua: false,
       warehouse_id: activeWarehouseId ?? null,
     } as any);
     setRecipientEmailInput("");
@@ -302,15 +305,23 @@ export default function RuleModal({ isOpen, onClose, onSave, rule, orgId, active
     return lower.includes('arrib') || lower.includes('despacha') || lower.includes('dispatch');
   }, [selectedStatusToName]);
 
+  // Muestra la opción DUA solo cuando el estado destino es "Finalizada"
+  const showDuaOption = useMemo(() => {
+    const lower = selectedStatusToName.toLowerCase();
+    return formData.event_type === 'reservation_status_changed' && lower.includes('finaliz');
+  }, [selectedStatusToName, formData.event_type]);
+
   // Al cambiar estado destino, si ya no aplica la opción de fotos, resetear el toggle
   const handleStatusToChange = (value: string) => {
     const newStatusName = statuses.find(s => s.id === value)?.name?.toLowerCase() ?? '';
     const willShowPhoto = newStatusName.includes('arrib') || newStatusName.includes('despacha') || newStatusName.includes('dispatch');
+    const willShowDua = newStatusName.includes('finaliz');
     setFormData(prev => ({
       ...prev,
       status_to_id: value || null,
       include_casetilla_photos: willShowPhoto ? prev.include_casetilla_photos : false,
-    }));
+      require_dua: willShowDua ? (prev as any).require_dua : false,
+    } as any));
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -592,6 +603,31 @@ export default function RuleModal({ isOpen, onClose, onSave, rule, orgId, active
                           se incrustarán en el cuerpo del correo. Usa la variable{' '}
                           <code className="bg-teal-100 px-1 rounded font-mono">{'{{fotos}}'}</code>{' '}
                           en el cuerpo para indicar dónde apareceran.
+                        </p>
+                      </div>
+                    </label>
+                  </div>
+                )}
+
+                {/* Condición DUA — aparece solo cuando estado destino es "Finalizada" */}
+                {showDuaOption && (
+                  <div className="mt-3 p-3 bg-amber-50 border border-amber-200 rounded-lg">
+                    <label className="flex items-start gap-3 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={(formData as any).require_dua ?? false}
+                        onChange={(e) =>
+                          setFormData((prev) => ({ ...prev, require_dua: e.target.checked } as any))
+                        }
+                        className="w-4 h-4 text-amber-600 rounded focus:ring-amber-500 mt-0.5 shrink-0"
+                      />
+                      <div>
+                        <p className="text-sm font-medium text-amber-800">
+                          Aplicar solo si la reserva tiene DUA (Importado)
+                        </p>
+                        <p className="text-xs text-amber-700 mt-0.5">
+                          Si está activo, esta regla <strong>solo se dispara</strong> cuando la reserva tiene un número de DUA registrado.
+                          Úsalo para enviar correos distintos a importaciones vs. cargas nacionales al finalizar.
                         </p>
                       </div>
                     </label>

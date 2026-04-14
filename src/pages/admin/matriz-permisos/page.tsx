@@ -23,157 +23,240 @@ interface RolePermission {
 // ✅ Función para traducir nombres técnicos a descripciones amigables
 const getPermissionLabel = (technicalName: string): string => {
   const translations: Record<string, string> = {
-    // Admin - Usuarios
-    'admin.users.view': 'Ver usuarios',
-    'admin.users.create': 'Crear usuarios',
-    'admin.users.update': 'Editar usuarios',
-    'admin.users.delete': 'Eliminar usuarios',
-    'admin.users.assign_roles': 'Asignar roles a usuarios',
-    
-    // Admin - Roles
-    'admin.roles.view': 'Ver roles',
-    'admin.roles.create': 'Crear roles',
-    'admin.roles.update': 'Editar roles',
-    'admin.roles.delete': 'Eliminar roles',
-    
-    // Admin - Permisos
-    'admin.permissions.view': 'Ver permisos',
-    'admin.permissions.create': 'Crear permisos',
-    'admin.permissions.update': 'Editar permisos',
-    'admin.permissions.delete': 'Eliminar permisos',
-    
-    // Admin - Matriz
-    'admin.matrix.view': 'Ver matriz de permisos',
-    'admin.matrix.update': 'Editar matriz de permisos',
-    
-    // Almacenes
-    'warehouses.view': 'Ver almacenes',
-    'warehouses.create': 'Crear almacenes',
-    'warehouses.update': 'Editar almacenes',
-    'warehouses.delete': 'Eliminar almacenes',
-    
-    // Andenes
-    'docks.view': 'Ver andenes',
-    'docks.create': 'Crear andenes',
-    'docks.update': 'Editar andenes',
-    'docks.delete': 'Eliminar andenes',
-    
-    // Reservas
-    'reservations.view': 'Ver reservas',
-    'reservations.create': 'Crear reservas',
-    'reservations.update': 'Editar reservas',
-    'reservations.delete': 'Eliminar reservas',
-    'reservations.approve': 'Aprobar reservas',
-    'reservations.reject': 'Rechazar reservas',
-    
-    // Calendario
-    'calendar.view': 'Ver calendario',
-    'calendar.manage': 'Gestionar calendario',
-    'calendar.block': 'Bloquear horarios',
-    
-    // Catálogos
-    'catalogs.view': 'Ver catálogos',
-    'catalogs.create': 'Crear catálogos',
-    'catalogs.update': 'Editar catálogos',
-    'catalogs.delete': 'Eliminar catálogos',
-    
-    // Proveedores
-    'providers.view': 'Ver proveedores',
-    'providers.create': 'Crear proveedores',
-    'providers.update': 'Editar proveedores',
-    'providers.delete': 'Eliminar proveedores',
-    
-    // Tipos de carga
-    'cargo_types.view': 'Ver tipos de carga',
-    'cargo_types.create': 'Crear tipos de carga',
-    'cargo_types.update': 'Editar tipos de carga',
-    'cargo_types.delete': 'Eliminar tipos de carga',
-    
-    // Perfiles de tiempo
-    'time_profiles.view': 'Ver perfiles de tiempo',
-    'time_profiles.create': 'Crear perfiles de tiempo',
-    'time_profiles.update': 'Editar perfiles de tiempo',
-    'time_profiles.delete': 'Eliminar perfiles de tiempo',
-    
-    // Dashboard
-    'dashboard.view': 'Ver panel de control',
-    'dashboard.analytics': 'Ver analíticas',
-    
-    // Reportes
-    'reports.view': 'Ver reportes',
-    'reports.export': 'Exportar reportes',
+    // ─── Admin › Clientes ───────────────────────────────────────────
+    'admin.clients.view':                    'Ver módulo Clientes',
+    'admin.clients.create':                  'Crear clientes',
+    'admin.clients.update':                  'Editar clientes',
+    'admin.clients.delete':                  'Eliminar clientes',
+    'admin.clients.assign_docks':            'Asignar andenes a clientes',
+    'admin.clients.providers.view':          'Ver proveedores asignados a un cliente',
+    'admin.clients.providers.manage':        'Gestionar proveedores por cliente',
+    'admin.clients.rules.update':            'Editar reglas de cutoff por cliente',
 
-    // ✅ NUEVOS: Permisos de menú principal
-    'menu.dashboard.view': 'Ver menú Dashboard',
-    'menu.calendario.view': 'Ver menú Calendario',
-    'menu.reservas.view': 'Ver menú Reservas',
-    'menu.andenes.view': 'Ver menú Andenes',
-    'menu.manpower.view': 'Ver menú Manpower',
-    'menu.casetilla.view': 'Ver menú Punto Control IN/OUT',
+    // ─── Admin › Matriz de Permisos ─────────────────────────────────
+    'admin.matrix.view':                     'Ver matriz de permisos',
+    'admin.matrix.update':                   'Editar matriz de permisos',
 
-    // ✅ NUEVOS: Permisos de submenú Administración
-    'menu.admin.view': 'Ver menú Administración',
-    'menu.admin.usuarios.view': 'Ver menú Usuarios',
-    'menu.admin.roles.view': 'Ver menú Roles',
-    'menu.admin.matriz_permisos.view': 'Ver menú Matriz de Permisos',
-    'menu.admin.catalogos.view': 'Ver menú Catálogos',
-    'menu.admin.almacenes.view': 'Ver menú Almacenes',
-    'menu.admin.correspondencia.view': 'Ver menú Correspondencia',
+    // ─── Admin › Permisos ────────────────────────────────────────────
+    'admin.permissions.view':                'Ver permisos del sistema',
+    'admin.permissions.create':              'Crear permisos del sistema',
+    'admin.permissions.update':              'Editar permisos del sistema',
+    'admin.permissions.delete':              'Eliminar permisos del sistema',
+    'admin.permissions.manage':              'Gestionar permisos del sistema',
 
-    // ✅ NUEVOS: Permisos de tabs de Correspondencia
-    'correspondence.gmail_account.view': 'Ver tab Cuenta Gmail',
-    'correspondence.rules.view': 'Ver tab Reglas de Correspondencia',
-    'correspondence.logs.view': 'Ver tab Bitácora de Envíos',
+    // ─── Admin › Roles ───────────────────────────────────────────────
+    'admin.roles.view':                      'Ver roles',
+    'admin.roles.create':                    'Crear roles',
+    'admin.roles.update':                    'Editar roles',
+    'admin.roles.delete':                    'Eliminar roles',
+    'admin.roles.manage':                    'Gestionar roles',
+
+    // ─── Admin › Usuarios ────────────────────────────────────────────
+    'admin.users.view':                      'Ver usuarios del sistema',
+    'admin.users.create':                    'Crear usuarios',
+    'admin.users.update':                    'Editar datos de usuarios',
+    'admin.users.delete':                    'Eliminar usuarios',
+    'admin.users.assign_roles':              'Asignar roles a usuarios',
+    'admin.users.update_role':               'Cambiar rol y datos de un usuario',
+
+    // ─── Calendario ──────────────────────────────────────────────────
+    'calendar.view':                         'Ver calendario de reservas',
+    'calendar.manage':                       'Gestionar calendario',
+    'calendar.block':                        'Bloquear horarios en el calendario',
+
+    // ─── Tipos de Carga ──────────────────────────────────────────────
+    'cargo_types.view':                      'Ver tipos de carga',
+    'cargo_types.create':                    'Crear tipos de carga',
+    'cargo_types.update':                    'Editar tipos de carga',
+    'cargo_types.delete':                    'Eliminar tipos de carga',
+
+    // ─── Casetilla (Punto Control IN/OUT) ────────────────────────────
+    'casetilla.view':                        'Ver registro de entradas y salidas (IN/OUT)',
+    'casetilla.create':                      'Registrar entrada o salida (IN/OUT)',
+    'casetilla.manage':                      'Gestionar registros de IN/OUT',
+
+    // ─── Correspondencia ─────────────────────────────────────────────
+    'correspondence.view':                   'Ver reglas de correspondencia',
+    'correspondence.create':                 'Crear reglas de correspondencia',
+    'correspondence.update':                 'Editar reglas de correspondencia',
+    'correspondence.delete':                 'Eliminar reglas de correspondencia',
+    'correspondence.gmail_account.view':     'Ver cuenta Gmail conectada',
+    'correspondence.rules.view':             'Ver pestaña Reglas de Correspondencia',
+    'correspondence.logs.view':              'Ver bitácora de correos enviados',
+
+    // ─── Bloqueos de Andenes ─────────────────────────────────────────
+    'dock_blocks.view':                      'Ver bloqueos de tiempo en andenes',
+    'dock_blocks.create':                    'Crear bloqueos en andenes',
+    'dock_blocks.update':                    'Editar bloqueos en andenes',
+    'dock_blocks.delete':                    'Eliminar bloqueos en andenes',
+
+    // ─── Categorías de Andenes ───────────────────────────────────────
+    'dock_categories.view':                  'Ver categorías de andenes',
+    'dock_categories.create':               'Crear categorías de andenes',
+    'dock_categories.update':               'Editar categorías de andenes',
+    'dock_categories.delete':               'Eliminar categorías de andenes',
+
+    // ─── Estados de Andenes ──────────────────────────────────────────
+    'dock_statuses.view':                    'Ver estados operativos de andenes',
+    'dock_statuses.create':                  'Crear estados operativos de andenes',
+    'dock_statuses.update':                  'Editar estados operativos de andenes',
+    'dock_statuses.delete':                  'Eliminar estados operativos de andenes',
+
+    // ─── Andenes ─────────────────────────────────────────────────────
+    'docks.view':                            'Ver andenes',
+    'docks.create':                          'Crear andenes',
+    'docks.update':                          'Editar andenes',
+    'docks.delete':                          'Eliminar andenes',
+
+    // ─── Manpower (Colaboradores) ─────────────────────────────────────
+    'manpower.view':                         'Ver lista de colaboradores',
+    'manpower.manage':                       'Gestionar colaboradores (Manpower)',
+
+    // ─── Menú › Navegación principal ─────────────────────────────────
+    'menu.dashboard.view':                   'Acceder al menú Dashboard',
+    'menu.calendario.view':                  'Acceder al menú Calendario',
+    'menu.reservas.view':                    'Acceder al menú Reservas',
+    'menu.andenes.view':                     'Acceder al menú Andenes',
+    'menu.manpower.view':                    'Acceder al menú Manpower',
+    'menu.casetilla.view':                   'Acceder al menú Punto Control IN/OUT',
+
+    // ─── Menú › Submenú Administración ───────────────────────────────
+    'menu.admin.view':                       'Acceder al menú Administración',
+    'menu.admin.usuarios.view':              'Acceder al menú Usuarios (Admin)',
+    'menu.admin.roles.view':                 'Acceder al menú Roles (Admin)',
+    'menu.admin.matriz_permisos.view':       'Acceder al menú Matriz de Permisos (Admin)',
+    'menu.admin.catalogos.view':             'Acceder al menú Catálogos (Admin)',
+    'menu.admin.almacenes.view':             'Acceder al menú Almacenes (Admin)',
+    'menu.admin.correspondencia.view':       'Acceder al menú Correspondencia (Admin)',
+    'menu.admin.clientes.view':              'Acceder al menú Clientes (Admin)',
+
+    // ─── Estados Operativos ──────────────────────────────────────────
+    'operational_statuses.view':             'Ver estados operativos',
+    'operational_statuses.create':           'Crear estados operativos',
+    'operational_statuses.update':           'Editar estados operativos',
+    'operational_statuses.delete':           'Eliminar estados operativos',
+
+    // ─── Proveedores ──────────────────────────────────────────────────
+    'providers.view':                        'Ver proveedores',
+    'providers.create':                      'Crear proveedores',
+    'providers.update':                      'Editar proveedores',
+    'providers.delete':                      'Eliminar proveedores',
+
+    // ─── Archivos de Reservas ─────────────────────────────────────────
+    'reservation_files.view':                'Ver archivos adjuntos de reservas',
+    'reservation_files.upload':              'Subir archivos a reservas',
+    'reservation_files.delete':              'Eliminar archivos de reservas',
+
+    // ─── Estados de Reserva ───────────────────────────────────────────
+    'reservation_statuses.view':             'Ver estados de reserva',
+    'reservation_statuses.create':           'Crear estados de reserva',
+    'reservation_statuses.update':           'Editar estados de reserva',
+    'reservation_statuses.delete':           'Eliminar estados de reserva',
+
+    // ─── Reservas ─────────────────────────────────────────────────────
+    'reservations.view':                     'Ver reservas',
+    'reservations.create':                   'Crear reservas',
+    'reservations.update':                   'Editar reservas',
+    'reservations.delete':                   'Eliminar reservas',
+    'reservations.cancel':                   'Cancelar reservas',
+    'reservations.move':                     'Mover reservas (arrastrar en calendario)',
+    'reservations.approve':                  'Aprobar reservas',
+    'reservations.reject':                   'Rechazar reservas',
+    'reservations.limit_status_view':        'Restringir vista de estados (solo Pendiente y Cancelado)',
+
+    // ─── Perfiles de Tiempo ───────────────────────────────────────────
+    'time_profiles.view':                    'Ver perfiles de tiempo (Proveedor × Tipo de carga)',
+    'time_profiles.create':                  'Crear perfiles de tiempo',
+    'time_profiles.update':                  'Editar perfiles de tiempo',
+    'time_profiles.delete':                  'Eliminar perfiles de tiempo',
+
+    // ─── Almacenes ────────────────────────────────────────────────────
+    'warehouses.view':                       'Ver almacenes',
+    'warehouses.create':                     'Crear almacenes',
+    'warehouses.update':                     'Editar almacenes',
+    'warehouses.delete':                     'Eliminar almacenes',
+
+    // ─── Chat / Asistente SRO ─────────────────────────────────────────
+    'chat.view':                             'Ver módulo de chat con asistente',
+    'chat.ask':                              'Hacer preguntas al asistente SRO',
+    'chat.answers.basic':                    'Recibir respuestas básicas del asistente',
+    'chat.answers.extended':                 'Recibir respuestas extendidas del asistente',
+    'chat.answers.internal':                 'Recibir respuestas con información interna',
+    'chat.audit.view':                       'Ver auditoría de conversaciones del chat',
+    'chat.documents.view':                   'Ver documentos de conocimiento del chat',
+    'chat.documents.manage':                 'Gestionar documentos de conocimiento del chat',
+
+    // ─── Dashboard / Reportes ────────────────────────────────────────
+    'dashboard.view':                        'Ver panel de control',
+    'dashboard.analytics':                   'Ver analíticas del dashboard',
+    'reports.view':                          'Ver reportes',
+    'reports.export':                        'Exportar reportes',
   };
 
-  // Si existe traducción, usarla
+  // Si existe traducción exacta, usarla
   if (translations[technicalName]) {
     return translations[technicalName];
   }
 
-  // Si no existe, intentar generar una descripción automática
+  // Fallback inteligente: descomponer el slug en partes
   const parts = technicalName.split('.');
   if (parts.length >= 2) {
-    const module = parts[0];
     const action = parts[parts.length - 1];
-    
+
     const actionLabels: Record<string, string> = {
-      'view': 'Ver',
-      'create': 'Crear',
-      'update': 'Editar',
-      'delete': 'Eliminar',
-      'manage': 'Gestionar',
-      'approve': 'Aprobar',
-      'reject': 'Rechazar',
-      'export': 'Exportar',
+      view:    'Ver',
+      create:  'Crear',
+      update:  'Editar',
+      delete:  'Eliminar',
+      manage:  'Gestionar',
+      approve: 'Aprobar',
+      reject:  'Rechazar',
+      export:  'Exportar',
+      cancel:  'Cancelar',
+      move:    'Mover',
+      upload:  'Subir',
+      assign:  'Asignar',
     };
 
+    // Reconstruir el objeto a partir de las partes intermedias del slug
+    const moduleSlug = parts.slice(0, -1).join('.');
     const moduleLabels: Record<string, string> = {
-      'admin': 'administración',
-      'users': 'usuarios',
-      'roles': 'roles',
-      'permissions': 'permisos',
-      'warehouses': 'almacenes',
-      'docks': 'andenes',
-      'reservations': 'reservas',
-      'calendar': 'calendario',
-      'catalogs': 'catálogos',
-      'providers': 'proveedores',
-      'cargo_types': 'tipos de carga',
-      'time_profiles': 'perfiles de tiempo',
-      'dashboard': 'panel',
-      'reports': 'reportes',
-      'menu': 'menú',
-      'correspondence': 'correspondencia',
+      'admin':                     'Administración',
+      'admin.users':               'usuarios',
+      'admin.roles':               'roles',
+      'admin.permissions':         'permisos',
+      'admin.matrix':              'matriz de permisos',
+      'admin.clients':             'clientes',
+      'admin.clients.providers':   'proveedores del cliente',
+      'admin.clients.rules':       'reglas del cliente',
+      'warehouses':                'almacenes',
+      'docks':                     'andenes',
+      'dock_blocks':               'bloqueos de andenes',
+      'dock_categories':           'categorías de andenes',
+      'dock_statuses':             'estados de andenes',
+      'reservations':              'reservas',
+      'reservation_statuses':      'estados de reserva',
+      'reservation_files':         'archivos de reservas',
+      'calendar':                  'calendario',
+      'providers':                 'proveedores',
+      'cargo_types':               'tipos de carga',
+      'time_profiles':             'perfiles de tiempo',
+      'casetilla':                 'punto control IN/OUT',
+      'manpower':                  'colaboradores',
+      'operational_statuses':      'estados operativos',
+      'correspondence':            'correspondencia',
+      'menu':                      'acceso al menú',
+      'dashboard':                 'panel de control',
+      'reports':                   'reportes',
+      'chat':                      'chat asistente',
     };
 
     const actionLabel = actionLabels[action] || action;
-    const moduleLabel = moduleLabels[module] || module;
-    
+    const moduleLabel = moduleLabels[moduleSlug] || moduleSlug.replace(/_/g, ' ');
+
     return `${actionLabel} ${moduleLabel}`;
   }
 
-  // Si no se puede traducir, devolver el nombre original
   return technicalName;
 };
 
@@ -202,6 +285,21 @@ export default function MatrizPermisosPage() {
   const { user } = useAuth();
   const { orgId, loading: permissionsLoading, can } = usePermissions();
   const { activeWarehouse } = useActiveWarehouse();
+
+  // ✅ Estado de categorías colapsadas (visual only, no afecta permisos)
+  const [collapsedCategories, setCollapsedCategories] = useState<Set<string>>(new Set());
+
+  const toggleCategory = (category: string) => {
+    setCollapsedCategories((prev) => {
+      const next = new Set(prev);
+      if (next.has(category)) {
+        next.delete(category);
+      } else {
+        next.add(category);
+      }
+      return next;
+    });
+  };
 
   const [roles, setRoles] = useState<Role[]>([]);
   const [permissions, setPermissions] = useState<Permission[]>([]);
@@ -544,7 +642,8 @@ const groupedPermissions = safePermissions.reduce((acc, perm) => {
         </div>
 
         <div className="bg-white rounded-xl shadow-md border border-gray-200 overflow-hidden">
-          <div className="overflow-x-auto">
+          {/* Contenedor con scroll bidireccional y altura máxima para sticky header */}
+          <div className="overflow-auto max-h-[calc(100vh-260px)]">
             <table className="w-full border-collapse">
               <colgroup>
                 <col style={{ width: '400px' }} />
@@ -553,15 +652,17 @@ const groupedPermissions = safePermissions.reduce((acc, perm) => {
                 ))}
               </colgroup>
 
-              <thead className="bg-gradient-to-r from-gray-50 to-gray-100 border-b-2 border-gray-300">
+              {/* ✅ STICKY HEADER: top-0 + z-30 para que flote sobre filas y sobre la 1ª col sticky */}
+              <thead className="bg-gradient-to-r from-gray-50 to-gray-100 border-b-2 border-gray-300 sticky top-0 z-30">
                 <tr>
-                  <th className="px-6 py-4 text-left text-sm font-bold text-gray-700 uppercase tracking-wider sticky left-0 bg-gradient-to-r from-gray-50 to-gray-100 z-10 shadow-sm border-r border-gray-200">
+                  {/* ✅ Esquina superior-izquierda: sticky en AMBOS ejes — z-40 para estar sobre todo */}
+                  <th className="px-6 py-4 text-left text-sm font-bold text-gray-700 uppercase tracking-wider sticky left-0 top-0 bg-gray-50 z-40 border-r border-gray-200" style={{ backgroundImage: 'linear-gradient(to right, #f9fafb, #f3f4f6)' }}>
                     Permiso
                   </th>
                   {safeRoles.map((role) => (
                     <th
                       key={role.id}
-                      className="px-6 py-4 text-center text-sm font-bold text-gray-700 uppercase tracking-wider border-r border-gray-200 last:border-r-0"
+                      className="px-6 py-4 text-center text-sm font-bold text-gray-700 uppercase tracking-wider border-r border-gray-200 last:border-r-0 bg-gradient-to-r from-gray-50 to-gray-100"
                     >
                       <div className="flex flex-col items-center gap-1">
                         <i className="ri-shield-user-line text-lg text-teal-600"></i>
@@ -573,56 +674,79 @@ const groupedPermissions = safePermissions.reduce((acc, perm) => {
               </thead>
 
               <tbody className="bg-white divide-y divide-gray-200">
-                {Object.entries(groupedPermissions).map(([category, perms]) => (
-                  <>
-                    <tr key={`cat-${category}`} className="bg-gradient-to-r from-teal-50 to-teal-100/50 border-t-2 border-teal-200">
-                      <td
-                        colSpan={safeRoles.length + 1}
-                        className="px-6 py-4 text-sm font-bold text-teal-900 uppercase tracking-wide"
-                      >
-                        <div className="flex items-center gap-2">
-                          <i className="ri-folder-line text-lg"></i>
-                          {getCategoryLabel(category)}
-                        </div>
-                      </td>
-                    </tr>
-
-                    {perms.map((permission, idx) => (
-                      <tr 
-                        key={permission.id} 
-                        className={`hover:bg-teal-50/30 transition-colors ${
-                          idx % 2 === 0 ? 'bg-white' : 'bg-gray-50/50'
-                        }`}
-                      >
-                        <td className="px-6 py-4 text-sm font-medium text-gray-900 sticky left-0 bg-inherit shadow-sm border-r border-gray-200">
-                          <div className="flex items-start gap-2">
-                            <i className="ri-key-2-line text-gray-400 text-base mt-0.5 flex-shrink-0"></i>
-                            <div className="flex flex-col">
-                              <span className="font-semibold text-gray-900">{getPermissionLabel(permission.name)}</span>
-                              <span className="text-xs text-gray-500 mt-0.5 font-mono">{permission.name}</span>
-                            </div>
-                          </div>
+                {Object.entries(groupedPermissions).map(([category, perms]) => {
+                  const isCollapsed = collapsedCategories.has(category);
+                  return (
+                    <>
+                      {/* ✅ CATEGORÍA COLAPSABLE: sticky left-0 en la celda de categoría para scroll horizontal */}
+                      <tr key={`cat-${category}`} className="bg-gradient-to-r from-teal-50 to-teal-100/50 border-t-2 border-teal-200">
+                        <td
+                          colSpan={safeRoles.length + 1}
+                          className="px-6 py-4 text-sm font-bold text-teal-900 uppercase tracking-wide"
+                        >
+                          {/* ✅ Botón de colapso — solo affordance mínimo, sin cambiar estética */}
+                          <button
+                            type="button"
+                            onClick={() => toggleCategory(category)}
+                            className="flex items-center gap-2 w-full text-left cursor-pointer hover:opacity-80 transition-opacity"
+                          >
+                            <i className="ri-folder-line text-lg"></i>
+                            <span>{getCategoryLabel(category)}</span>
+                            <i
+                              className={`ri-arrow-down-s-line text-base ml-1 transition-transform duration-200 ${
+                                isCollapsed ? '-rotate-90' : 'rotate-0'
+                              }`}
+                            ></i>
+                            <span className="text-xs font-normal text-teal-600 ml-1 normal-case">
+                              ({perms.length} {perms.length === 1 ? 'permiso' : 'permisos'})
+                            </span>
+                          </button>
                         </td>
+                      </tr>
 
-                        {safeRoles.map((role) => (
-                          <td key={role.id} className="px-6 py-4 text-center border-r border-gray-200 last:border-r-0">
-                            <div className="flex items-center justify-center">
-                              <label className="inline-flex items-center justify-center cursor-pointer group">
-                                <input
-                                  type="checkbox"
-                                  checked={hasPermission(role.id, permission.id)}
-                                  onChange={() => togglePermission(role.id, permission.id)}
-                                  disabled={!canUpdateMatrix}
-                                  className="w-5 h-5 text-teal-600 border-2 border-gray-300 rounded-md focus:ring-2 focus:ring-teal-500 focus:ring-offset-2 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed transition-all group-hover:border-teal-400"
-                                />
-                              </label>
+                      {/* ✅ Filas de permisos — ocultas visualmente cuando la categoría está colapsada */}
+                      {!isCollapsed && perms.map((permission, idx) => (
+                        <tr
+                          key={permission.id}
+                          className={`hover:bg-teal-50/30 transition-colors ${
+                            idx % 2 === 0 ? 'bg-white' : 'bg-gray-50/50'
+                          }`}
+                        >
+                          {/* ✅ STICKY 1ª COLUMNA: fondo explícito para cubrir contenido que pase por debajo */}
+                          <td
+                            className={`px-6 py-4 text-sm font-medium text-gray-900 sticky left-0 z-10 border-r border-gray-200 ${
+                              idx % 2 === 0 ? 'bg-white' : 'bg-gray-50'
+                            }`}
+                          >
+                            <div className="flex items-start gap-2">
+                              <i className="ri-key-2-line text-gray-400 text-base mt-0.5 flex-shrink-0"></i>
+                              <div className="flex flex-col">
+                                <span className="font-semibold text-gray-900">{getPermissionLabel(permission.name)}</span>
+                                <span className="text-xs text-gray-500 mt-0.5 font-mono">{permission.name}</span>
+                              </div>
                             </div>
                           </td>
-                        ))}
-                      </tr>
-                    ))}
-                  </>
-                ))}
+
+                          {safeRoles.map((role) => (
+                            <td key={role.id} className="px-6 py-4 text-center border-r border-gray-200 last:border-r-0">
+                              <div className="flex items-center justify-center">
+                                <label className="inline-flex items-center justify-center cursor-pointer group">
+                                  <input
+                                    type="checkbox"
+                                    checked={hasPermission(role.id, permission.id)}
+                                    onChange={() => togglePermission(role.id, permission.id)}
+                                    disabled={!canUpdateMatrix}
+                                    className="w-5 h-5 text-teal-600 border-2 border-gray-300 rounded-md focus:ring-2 focus:ring-teal-500 focus:ring-offset-2 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed transition-all group-hover:border-teal-400"
+                                  />
+                                </label>
+                              </div>
+                            </td>
+                          ))}
+                        </tr>
+                      ))}
+                    </>
+                  );
+                })}
               </tbody>
             </table>
           </div>

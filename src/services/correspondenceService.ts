@@ -156,6 +156,11 @@ function normalizeRulePayloadForDb(
       ? (ruleData as any).include_casetilla_photos
       : false;
 
+  const requireDua =
+    typeof (ruleData as any).require_dua === "boolean"
+      ? (ruleData as any).require_dua
+      : false;
+
   // warehouse_id: puede venir en ruleData
   const warehouseId = asUuid((ruleData as any).warehouse_id) ?? null;
 
@@ -192,6 +197,7 @@ function normalizeRulePayloadForDb(
 
     is_active: isActive,
     include_casetilla_photos: includeCasetillaPhotos,
+    require_dua: requireDua,
   };
 
   if (mode === "create") {

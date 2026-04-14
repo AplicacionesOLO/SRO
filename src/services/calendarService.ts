@@ -14,6 +14,8 @@ export interface Reservation {
   notes: string | null;
   transport_type: string | null;
   cargo_type: string | null;
+  /** Clasificación de la operación: distribucion | almacen | zona_franca */
+  operation_type?: string | null;
   is_cancelled: boolean;
   cancel_reason: string | null;
   cancelled_by: string | null;
@@ -542,6 +544,7 @@ export const calendarService = {
         notes: reservation.notes || null,
         transport_type: reservation.transport_type || null,
         cargo_type: reservation.cargo_type || null,
+        operation_type: reservation.operation_type || null,
         is_cancelled: false,
         cancel_reason: null,
         cancelled_by: null,
@@ -693,6 +696,7 @@ export const calendarService = {
         notes: updates.notes || null,
         transport_type: updates.transport_type || null,
         cargo_type: updates.cargo_type || null,
+        operation_type: updates.operation_type || null,
         is_cancelled: updates.is_cancelled ?? false,
         cancel_reason: updates.cancel_reason || null,
         cancelled_by: null,

@@ -2320,6 +2320,7 @@ export default function CalendarioPage() {
                                                   invoice: canViewSensitiveR ? reservation.invoice : null,
                                                   purchaseOrder: canViewSensitiveR ? reservation.purchase_order : null,
                                                   pedido: canViewSensitiveR ? reservation.order_request_number : null,
+                                                  operationType: (reservation as any).operation_type ?? null,
                                                   notes: canViewSensitiveR ? reservation.notes : null,
                                                   createdByName: canViewSensitiveR ? (reservation.creator?.name || reservation.creator?.email || null) : null,
                                                 }}
@@ -2440,18 +2441,47 @@ export default function CalendarioPage() {
                                                       )}
                                                     </div>
 
-                                                    {/* Bloque inferior: estado + hora — siempre visibles */}
-                                                    <div className="flex flex-wrap items-end gap-x-1.5 gap-y-1 mt-1.5 flex-shrink-0 min-w-0">
-                                                      <span
-                                                        className="px-1.5 py-0.5 rounded text-[11px] font-semibold text-white leading-tight shrink-0"
-                                                        style={{ backgroundColor: reservation.status?.color || '#6B7280' }}
-                                                      >
-                                                        {reservation.status?.name || 'Sin estado'}
-                                                      </span>
-                                                      <span className="text-[12px] font-semibold text-gray-700 flex items-center gap-0.5 shrink-0 leading-tight">
-                                                        <i className="ri-time-line w-3.5 h-3.5 flex items-center justify-center"></i>
-                                                        {toWarehouseTimeString(start, warehouseTimezone)}-{toWarehouseTimeString(end, warehouseTimezone)}
-                                                      </span>
+                                                    {/* Bloque inferior: tipo de operación + estado + hora */}
+                                                    <div className="flex flex-col gap-1 mt-1.5 flex-shrink-0 min-w-0">
+                                                      {/* Chip de tipo de operación — justo arriba del estado */}
+                                                      {(reservation as any).operation_type && (() => {
+                                                        const OP_LABELS: Record<string, { label: string; icon: string }> = {
+                                                          distribucion: { label: 'Distribución', icon: 'ri-store-2-line' },
+                                                          almacen: { label: 'Almacén', icon: 'ri-archive-line' },
+                                                          zona_franca: { label: 'Zona Franca', icon: 'ri-global-line' },
+                                                        };
+                                                        const raw: string = (reservation as any).operation_type;
+                                                        const key = raw.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, '_');
+                                                        const info = OP_LABELS[key] ?? { label: raw, icon: 'ri-flag-line' };
+                                                        return (
+                                                          <div className="flex items-center gap-1 min-w-0">
+                                                            <span
+                                                              className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold leading-tight truncate max-w-full text-gray-900"
+                                                              style={{
+                                                                backgroundColor: 'rgba(0,0,0,0.06)',
+                                                                border: '1px solid rgba(0,0,0,0.10)',
+                                                              }}
+                                                            >
+                                                              <i className={`${info.icon} flex-shrink-0 text-gray-900`} style={{ fontSize: '9px' }} />
+                                                              <span className="truncate">{info.label}</span>
+                                                            </span>
+                                                          </div>
+                                                        );
+                                                      })()}
+
+                                                      {/* Estado + hora */}
+                                                      <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1 min-w-0">
+                                                        <span
+                                                          className="px-1.5 py-0.5 rounded text-[11px] font-semibold text-white leading-tight shrink-0"
+                                                          style={{ backgroundColor: reservation.status?.color || '#6B7280' }}
+                                                        >
+                                                          {reservation.status?.name || 'Sin estado'}
+                                                        </span>
+                                                        <span className="text-[12px] font-semibold text-gray-700 flex items-center gap-0.5 shrink-0 leading-tight">
+                                                          <i className="ri-time-line w-3.5 h-3.5 flex items-center justify-center"></i>
+                                                          {toWarehouseTimeString(start, warehouseTimezone)}-{toWarehouseTimeString(end, warehouseTimezone)}
+                                                        </span>
+                                                      </div>
                                                     </div>
                                                   </div>
                                                 </div>

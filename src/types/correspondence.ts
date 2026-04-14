@@ -34,6 +34,8 @@ export interface CorrespondenceRule {
   body_template: string;
   is_active: boolean;
   include_casetilla_photos: boolean;
+  /** Solo aplica cuando status_to es "Finalizada". Si true, la regla solo se dispara si la reserva tiene DUA (importación). */
+  require_dua: boolean;
   created_by: string;
   created_at: string;
   updated_by: string | null;
@@ -118,6 +120,8 @@ export interface CorrespondenceRuleFormData {
   body_template: string;
   is_active: boolean;
   include_casetilla_photos: boolean;
+  /** Solo aplica cuando status_to es "Finalizada". Si true, la regla solo se dispara si la reserva tiene DUA (importación). */
+  require_dua: boolean;
 }
 
 export const CORRESPONDENCE_EVENT_LABELS: Record<CorrespondenceEventType, string> = {

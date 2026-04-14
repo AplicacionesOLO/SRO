@@ -10,7 +10,19 @@ import { providersService } from '../../../services/providersService';
 import { userProvidersService } from '../../../services/userProvidersService';
 import { ConfirmModal } from '../../../components/base/ConfirmModal';
 import WarehousePageHeader from '../../../components/feature/WarehousePageHeader';
+import { useFormDraft, saveGenericDraft } from '../../../hooks/useReservationDraft';
 import type { Provider } from '../../../types/catalog';
+
+// ─── Draft types ─────────────────────────────────────────────────────────────
+interface NewUserDraftData {
+  email: string;
+  full_name: string;
+  role_id: string;
+  phone_e164: string;
+  /** Estado de apertura del modal — persistido para restaurarlo al volver */
+  modalOpen: boolean;
+  /** No persistimos password por seguridad */
+}
 
 interface User {
   id: string;
@@ -68,6 +80,17 @@ export default function UsuariosPage() {
     password: '',
     phone_e164: ''
   });
+
+  // ── Draft de "Nuevo Usuario" ──────────────────────────────────────────────
+  // Solo persiste cuando editingUser === null (modo creación)
+  const { saveDraft: saveUserDraft, clearDraft: clearUserDraft, readDraft: readUserDraft } =
+    useFormDraft<NewUserDraftData>({
+      storageKey: `draft_new_user_${orgId ?? 'local'}`,
+      isNewRecord: !editingUser && showModal,
+    });
+
+  // ── Flag para saber si el usuario tocó Nombre Completo manualmente ────────
+  const fullNameEditedRef = useRef(false);
 
   // Estados para control de acceso
   const [selectedCountryIds, setSelectedCountryIds] = useState<string[]>([]);
@@ -345,6 +368,70 @@ export default function UsuariosPage() {
     // });
   }, [canCreate, canEdit, canDelete, canAssign]);
 
+  // ─── Al montar la página: revisar si había un modal abierto con draft ────
+  // Este efecto corre una sola vez al montar. Si el usuario estaba creando un
+  // usuario y navegó a otra ruta, al volver encontrará el modal abierto con
+  // sus datos intactos.
+  useEffect(() => {
+    const draft = readUserDraft();
+    if (draft?.formData?.modalOpen === true) {
+      const { email, full_name, role_id, phone_e164 } = draft.formData;
+      setFormData(prev => ({
+        ...prev,
+        email: email ?? '',
+        full_name: full_name ?? '',
+        role_id: role_id ?? '',
+        phone_e164: phone_e164 ?? '',
+      }));
+      if (full_name && full_name.trim()) {
+        fullNameEditedRef.current = true;
+      }
+      setShowModal(true);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // ← solo al montar
+
+  // ─── Al abrir el modal manualmente (botón "Nuevo Usuario"), restaurar draft si existe ──
+  useEffect(() => {
+    if (showModal && !editingUser) {
+      const draft = readUserDraft();
+      if (draft?.formData) {
+        const { email, full_name, role_id, phone_e164 } = draft.formData;
+        // Solo restaurar si el formulario está vacío (evitar pisar datos recién escritos)
+        setFormData(prev => ({
+          ...prev,
+          email: prev.email || email || '',
+          full_name: prev.full_name || full_name || '',
+          role_id: prev.role_id || role_id || '',
+          phone_e164: prev.phone_e164 || phone_e164 || '',
+        }));
+        if (full_name && full_name.trim()) {
+          fullNameEditedRef.current = true;
+        }
+      }
+    }
+    if (!showModal) {
+      fullNameEditedRef.current = false;
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showModal, editingUser]);
+
+  // ─── Auto-guardar draft (campos + estado abierto) mientras el usuario escribe ──
+  useEffect(() => {
+    if (!showModal || !!editingUser) return;
+    saveUserDraft({
+      email: formData.email,
+      full_name: formData.full_name,
+      role_id: formData.role_id,
+      phone_e164: formData.phone_e164,
+      modalOpen: true,
+    });
+  }, [formData.email, formData.full_name, formData.role_id, formData.phone_e164, showModal, editingUser, saveUserDraft]);
+
+  // ─── Búsqueda en la lista de usuarios ────────────────────────────────────
+  const [searchTerm, setSearchTerm] = useState('');
+  const [searchFocused, setSearchFocused] = useState(false);
+
   // ✅ NUEVO: Estado para manejar el userId recién creado
   const [newlyCreatedUserId, setNewlyCreatedUserId] = useState<string | null>(null);
 
@@ -432,6 +519,7 @@ export default function UsuariosPage() {
             action: 'create',
             roleId: formData.role_id,
             email: formData.email,
+            full_name: formData.full_name.trim() || formData.email.split('@')[0],
             password: formData.password,
             phone_e164: phoneE164,
             roleIds: formData.role_id ? [formData.role_id] : [],
@@ -549,6 +637,10 @@ export default function UsuariosPage() {
             await userProvidersService.setUserProviders(orgId, createdUserId, selectedProviderIds);
           }
         }
+
+        // Limpiar draft y flag tras creación exitosa
+        clearUserDraft();
+        fullNameEditedRef.current = false;
 
         setShowModal(false);
         setEditingUser(null);
@@ -844,6 +936,17 @@ export default function UsuariosPage() {
     p.name.toLowerCase().includes(providerSearchTerm.toLowerCase())
   );
 
+  // ─── Filtrado de la lista de usuarios por búsqueda ────────────────────────
+  const normalizedSearch = searchTerm.trim().toLowerCase();
+  const displayedUsers = normalizedSearch
+    ? users.filter(u =>
+        u.full_name?.toLowerCase().includes(normalizedSearch) ||
+        u.email?.toLowerCase().includes(normalizedSearch) ||
+        u.role_name?.toLowerCase().includes(normalizedSearch) ||
+        u.phone_e164?.toLowerCase().includes(normalizedSearch)
+      )
+    : users;
+
   return (
     <div className="p-6">
       {/* Popups */}
@@ -931,6 +1034,46 @@ export default function UsuariosPage() {
         )}
       </div>
 
+      {/* ─── Barra de búsqueda ─────────────────────────────────────────────── */}
+      <div className="mb-4 relative">
+        <div
+          className={`flex items-center gap-3 px-4 py-2.5 rounded-xl border transition-all duration-200 ${
+            searchFocused
+              ? 'border-teal-400 bg-white/90 backdrop-blur-sm shadow-sm'
+              : 'border-gray-200 bg-white/70 backdrop-blur-sm'
+          }`}
+        >
+          <div className="w-4 h-4 flex items-center justify-center flex-shrink-0">
+            <i className={`ri-search-line text-sm transition-colors duration-200 ${searchFocused ? 'text-teal-500' : 'text-gray-400'}`}></i>
+          </div>
+          <input
+            type="text"
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            onFocus={() => setSearchFocused(true)}
+            onBlur={() => setSearchFocused(false)}
+            placeholder="Buscar por nombre, email o rol..."
+            className="flex-1 bg-transparent text-sm text-gray-700 placeholder-gray-400 outline-none"
+          />
+          {searchTerm && (
+            <button
+              onClick={() => setSearchTerm('')}
+              className="w-5 h-5 flex items-center justify-center text-gray-400 hover:text-gray-600 transition-colors flex-shrink-0"
+            >
+              <i className="ri-close-line text-sm"></i>
+            </button>
+          )}
+        </div>
+        {/* Contador de resultados cuando hay búsqueda activa */}
+        {normalizedSearch && (
+          <p className="mt-1.5 text-xs text-gray-500 pl-1">
+            {displayedUsers.length === 0
+              ? 'Sin resultados'
+              : `${displayedUsers.length} resultado${displayedUsers.length !== 1 ? 's' : ''}`}
+          </p>
+        )}
+      </div>
+
       {loadError && (
         <div className="mb-6 p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
           <div className="flex items-start gap-3">
@@ -972,7 +1115,7 @@ export default function UsuariosPage() {
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
-              {users.map((user) => (
+              {displayedUsers.map((user) => (
                 <tr key={user.id} className="hover:bg-gray-50">
                   <td className="px-6 py-4 whitespace-nowrap">
                     <div className="flex items-center gap-3">
@@ -1020,6 +1163,23 @@ export default function UsuariosPage() {
             </tbody>
           </table>
         </div>
+
+        {/* Empty state: búsqueda sin resultados */}
+        {normalizedSearch && displayedUsers.length === 0 && users.length > 0 && (
+          <div className="text-center py-12">
+            <div className="w-12 h-12 flex items-center justify-center rounded-full bg-gray-50 mx-auto mb-3">
+              <i className="ri-search-line text-2xl text-gray-300"></i>
+            </div>
+            <p className="text-gray-600 font-medium">Sin resultados para &ldquo;{searchTerm}&rdquo;</p>
+            <p className="text-sm text-gray-400 mt-1">Intentá con otro nombre, email o rol.</p>
+            <button
+              onClick={() => setSearchTerm('')}
+              className="mt-3 text-sm text-teal-600 hover:text-teal-700 font-medium"
+            >
+              Limpiar búsqueda
+            </button>
+          </div>
+        )}
 
         {/* Empty state: múltiples almacenes sin selección */}
         {users.length === 0 && !loadError && !activeWarehouseId && hasMultipleWarehouses && (
@@ -1090,7 +1250,20 @@ export default function UsuariosPage() {
                 )}
               </div>
               <button
-                onClick={() => setShowModal(false)}
+                onClick={() => {
+                  // X = cierre temporal intencional: borramos modalOpen del draft
+                  // para que al volver a la página NO se reabra automáticamente,
+                  // pero los campos siguen guardados para cuando el usuario pulse
+                  // "Nuevo Usuario" de nuevo.
+                  const draft = readUserDraft();
+                  if (draft?.formData) {
+                    saveGenericDraft(`draft_new_user_${orgId ?? 'local'}`, {
+                      ...draft.formData,
+                      modalOpen: false,
+                    });
+                  }
+                  setShowModal(false);
+                }}
                 className="w-8 h-8 flex items-center justify-center text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100 transition-colors"
               >
                 <i className="ri-close-line text-xl"></i>
@@ -1108,7 +1281,10 @@ export default function UsuariosPage() {
                   <input
                     type="text"
                     value={formData.full_name}
-                    onChange={(e) => setFormData({ ...formData, full_name: e.target.value })}
+                    onChange={(e) => {
+                      fullNameEditedRef.current = true;
+                      setFormData({ ...formData, full_name: e.target.value });
+                    }}
                     className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent"
                     required
                   />
@@ -1121,7 +1297,16 @@ export default function UsuariosPage() {
                   <input
                     type="email"
                     value={formData.email}
-                    onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+                    onChange={(e) => {
+                      const newEmail = e.target.value;
+                      // Solo sugerir nombre desde email si el usuario NO lo ha editado manualmente
+                      if (!fullNameEditedRef.current && !formData.full_name.trim()) {
+                        const suggested = newEmail.split('@')[0].replace(/[._-]/g, ' ').trim();
+                        setFormData(prev => ({ ...prev, email: newEmail, full_name: suggested }));
+                      } else {
+                        setFormData(prev => ({ ...prev, email: newEmail }));
+                      }
+                    }}
                     className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent"
                     required
                     disabled={!!editingUser}
@@ -1441,6 +1626,11 @@ export default function UsuariosPage() {
                 <button
                   type="button"
                   onClick={() => {
+                    // Descarte explícito → limpiar draft y flag
+                    if (!editingUser) {
+                      clearUserDraft();
+                      fullNameEditedRef.current = false;
+                    }
                     setShowModal(false);
                     setEditingUser(null);
                     setFormData({ email: '', full_name: '', role_id: '', password: '', phone_e164: '' });
