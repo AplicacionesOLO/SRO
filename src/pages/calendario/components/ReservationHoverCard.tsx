@@ -33,6 +33,8 @@ export interface ReservationHoverData {
   operationType?: string | null;
   // Notas
   notes?: string | null;
+  // BL / Conocimiento del contenedor
+  blNumber?: string | null;
   // Usuario creador
   createdByName?: string | null;
 }
@@ -172,6 +174,7 @@ export default function ReservationHoverCard({
     { icon: 'ri-receipt-line', label: 'Factura', value: data.invoice ?? '', sensitive: true },
     { icon: 'ri-shopping-bag-3-line', label: 'Orden de compra', value: data.purchaseOrder ?? '', sensitive: true },
     { icon: 'ri-hashtag', label: 'Pedido', value: data.pedido ?? '', sensitive: true },
+    { icon: 'ri-ship-line', label: 'BL / Contenedor', value: data.blNumber ?? '', sensitive: true },
   ];
 
   const rows = allRows.filter((row) => {

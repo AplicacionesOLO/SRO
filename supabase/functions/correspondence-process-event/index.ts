@@ -1,7 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const VERSION = "v910-fix-user_id-column";
+const VERSION = "v911-fix-provider-name";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -247,7 +247,7 @@ serve(async (req) => {
     }
     if (actorUserId !== userData.user.id) return json(403, { error: "Forbidden", reqId });
 
-    // ── Step 1: Fetch reservation (sin user_id — columna no existe) ──────────
+    // ── Step 1: Fetch reservation ────────────────────────────────────────────
     const { data: reservation, error: resErr } = await supabase
       .from("reservations")
       .select("id, dock_id, dua, invoice, driver, truck_plate, shipper_provider, start_datetime, end_datetime, created_by, status_id")
@@ -354,7 +354,7 @@ serve(async (req) => {
     // ── Step 7: Resolve helper data ──────────────────────────────────────────
     const reservationDua: string = ((reservation as any)?.dua ?? "").trim();
 
-    // created_by es la columna real (user_id no existe en reservations)
+    // Resolve creator name
     const createdById = (reservation as any).created_by ?? null;
     let createdByName = "";
     if (createdById) {
@@ -374,7 +374,29 @@ serve(async (req) => {
     const startDatetime = (reservation as any)?.start_datetime;
     const endDatetime = (reservation as any)?.end_datetime;
 
-    const providerName: string = ((reservation as any)?.shipper_provider ?? "").trim();
+    // ── Resolve provider name from shipper_provider UUID ────────────────────
+    // shipper_provider stores the provider UUID — resolve to human-readable name
+    const shipperProviderId: string = ((reservation as any)?.shipper_provider ?? "").trim();
+    let providerName = "";
+    if (shipperProviderId) {
+      // Check if it looks like a UUID (has dashes) → resolve name from providers table
+      const looksLikeUuid = /^[0-9a-f-]{36}$/i.test(shipperProviderId);
+      if (looksLikeUuid) {
+        const { data: providerData } = await supabase
+          .from("providers")
+          .select("name")
+          .eq("id", shipperProviderId)
+          .maybeSingle();
+        providerName = providerData?.name ?? shipperProviderId;
+      } else {
+        // Already a plain text name (legacy data)
+        providerName = shipperProviderId;
+      }
+    }
+
+    console.log("[correspondence-process-event][PROVIDER_RESOLVED]", {
+      reqId, reservationId, shipperProviderId, providerName,
+    });
 
     const templateCtx: Record<string, any> = {
       reservation_id: reservation.id ?? "",

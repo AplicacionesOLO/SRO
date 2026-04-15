@@ -34,6 +34,8 @@ export interface Reservation {
   recurrence?: any | null;
   /** ID del cliente asociado a esta reserva (columna directa en reservations) */
   client_id?: string | null;
+  /** BL / Conocimiento del contenedor — solo aplica cuando operation_type=zona_franca + is_imported=true */
+  bl_number?: string | null;
 
   status?: {
     name: string;
@@ -558,6 +560,7 @@ export const calendarService = {
         order_request_number: reservation.order_request_number || null,
         shipper_provider: reservation.shipper_provider || null,
         recurrence: reservation.recurrence || null,
+        bl_number: reservation.bl_number || null,
       } as Reservation;
     }
 
@@ -712,6 +715,7 @@ export const calendarService = {
         order_request_number: updates.order_request_number || null,
         shipper_provider: updates.shipper_provider || null,
         recurrence: updates.recurrence || null,
+        bl_number: updates.bl_number || null,
       } as Reservation);
 
       const triggerOrgId = reservationForTrigger.org_id || oldOrgId || updates.org_id || '';
@@ -756,6 +760,7 @@ export const calendarService = {
         order_request_number: updates.order_request_number || null,
         shipper_provider: updates.shipper_provider || null,
         recurrence: updates.recurrence || null,
+        bl_number: updates.bl_number || null,
       };
 
       return fallback;

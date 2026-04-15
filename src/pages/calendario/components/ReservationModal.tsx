@@ -124,6 +124,7 @@ export default function ReservationModal({
     transportType: 'inbound',
     cargoType: '',
     operationType: '' as string,
+    blNumber: '',
   });
 
   const [isImported, setIsImported] = useState(false);
@@ -231,6 +232,7 @@ export default function ReservationModal({
       transportType: defaults?.transport_type || 'inbound',
       cargoType: defaults?.cargo_type || '',
       operationType: defaults?.operation_type || '',
+      blNumber: defaults?.bl_number || '',
     });
     setFiles([]);
     // ✅ Si tiene DUA, marcar como importado
@@ -375,6 +377,7 @@ export default function ReservationModal({
         transportType: reservation.transport_type || 'inbound',
         cargoType: reservation.cargo_type || '',
         operationType: reservation.operation_type || '',
+        blNumber: (reservation as any).bl_number || '',
       });
       // ✅ Fuente de verdad: columna is_imported de BD; fallback a presencia de DUA
       const reservationIsImported = (reservation as any).is_imported;
@@ -643,6 +646,18 @@ export default function ReservationModal({
       return;
     }
 
+    // ✅ Validación: BL obligatorio cuando operationType=zona_franca + isImported
+    const showBLField = formData.operationType === 'zona_franca' && isImported;
+    if (showBLField && !formData.blNumber.trim()) {
+      setNotifyModal({
+        isOpen: true,
+        type: 'warning',
+        title: 'Campo requerido',
+        message: 'El campo "BL / Conocimiento del contenedor" es obligatorio para operaciones de Zona Franca con carga importada.',
+      });
+      return;
+    }
+
     // ✅ Convertir hora local del almacén → UTC para persistir correctamente
     const startDateTime = fromWarehouseLocalToUtc(formData.startDate, formData.startTime, tz);
     const endDateTime = fromWarehouseLocalToUtc(formData.endDate, formData.endTime, tz);
@@ -692,6 +707,10 @@ export default function ReservationModal({
       cancel_reason: isCancelledStatus ? cancelReason : null,
       // ✅ Preservar client_id cuando viene de una copia
       ...(defaults?.client_id ? { client_id: defaults.client_id } : {}),
+      // ✅ BL: solo guardar cuando aplica (zona_franca + importado); en otro caso null
+      bl_number: (formData.operationType === 'zona_franca' && isImported)
+        ? (formData.blNumber?.trim() || null)
+        : null,
     };
 
     try {
@@ -1677,6 +1696,39 @@ export default function ReservationModal({
                         </div>
                       </div>
                     </div>
+
+                    {/* ✅ Campo BL / Conocimiento del contenedor — condicional: zona_franca + importado */}
+                    {formData.operationType === 'zona_franca' && isImported && (
+                      <div className="bg-white border border-gray-200 rounded-xl p-4">
+                        <h4 className="text-sm font-semibold text-gray-900 mb-4">
+                          Documentos de importación
+                        </h4>
+                        <div>
+                          <label className={labelBase}>
+                            BL / Conocimiento del contenedor *
+                          </label>
+                          {canViewSensitive ? (
+                            <input
+                              type="text"
+                              value={formData.blNumber}
+                              onChange={(e) => setFormData({ ...formData, blNumber: e.target.value })}
+                              className={sensitiveInputCls}
+                              placeholder="BL-2024-001"
+                              disabled={isReadOnly}
+                            />
+                          ) : (
+                            <div className={inputMasked}>
+                              <span className="select-none">Reservado</span>
+                            </div>
+                          )}
+                          {!isReadOnly && (
+                            <p className={hintBase}>
+                              Obligatorio para operaciones de Zona Franca con carga importada.
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    )}
 
                     {/* ✅ Observaciones: ENMASCARAR si no puede ver sensible */}
                     <div className="bg-white border border-gray-200 rounded-xl p-4">

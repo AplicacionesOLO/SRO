@@ -2350,6 +2350,7 @@ export default function CalendarioPage() {
                                                   pedido: canViewSensitiveR ? reservation.order_request_number : null,
                                                   operationType: (reservation as any).operation_type ?? null,
                                                   notes: canViewSensitiveR ? reservation.notes : null,
+                                                  blNumber: canViewSensitiveR ? (reservation as any).bl_number ?? null : null,
                                                   createdByName: canViewSensitiveR ? (reservation.creator?.name || reservation.creator?.email || null) : null,
                                                 }}
                                                 disabled={selectionMode}
@@ -2428,6 +2429,12 @@ export default function CalendarioPage() {
                                                       {canViewSensitiveR && reservation.order_request_number && (
                                                         <div className="text-gray-600 truncate text-[11px] leading-tight">
                                                           <span className="text-gray-400">Pedido:</span> {reservation.order_request_number}
+                                                        </div>
+                                                      )}
+                                                      {/* BL — solo si tiene acceso, hay espacio, y aplica (zona franca + importado) */}
+                                                      {canViewSensitiveR && height > 90 && (reservation as any).bl_number && (
+                                                        <div className="text-gray-600 truncate text-[11px] leading-tight">
+                                                          <span className="text-gray-400">BL:</span> {(reservation as any).bl_number}
                                                         </div>
                                                       )}
                                                       {/* Factura — solo si tiene acceso y hay espacio */}
