@@ -4,8 +4,6 @@ import type { Dock } from '../types/dock';
 
 export const clientsService = {
   async listClients(orgId: string, search?: string): Promise<Client[]> {
-    //console.log('[ClientsService] listClients', { orgId, search });
-
     let query = supabase
       .from('clients')
       .select('*')
@@ -18,10 +16,48 @@ export const clientsService = {
 
     const { data, error } = await query;
 
-    if (error) {
-      // console.error('[ClientsService] listClients error', error);
-      throw error;
+    if (error) throw error;
+
+    return (data || []) as Client[];
+  },
+
+  /**
+   * Lista clientes filtrados por almacén activo.
+   * - warehouseId !== null → solo clientes asignados a ese almacén (vía warehouse_clients)
+   * - warehouseId === null → todos los clientes de la org (sin filtro de almacén)
+   */
+  async listClientsByWarehouse(orgId: string, warehouseId: string | null, search?: string): Promise<Client[]> {
+    if (!warehouseId) {
+      // Sin filtro de almacén → devolver todos
+      return this.listClients(orgId, search);
     }
+
+    // Obtener IDs de clientes asignados al almacén activo
+    const { data: wcRows, error: wcError } = await supabase
+      .from('warehouse_clients')
+      .select('client_id')
+      .eq('org_id', orgId)
+      .eq('warehouse_id', warehouseId);
+
+    if (wcError) throw wcError;
+
+    const clientIds = (wcRows || []).map((r) => r.client_id);
+
+    if (clientIds.length === 0) return [];
+
+    let query = supabase
+      .from('clients')
+      .select('*')
+      .eq('org_id', orgId)
+      .in('id', clientIds)
+      .order('created_at', { ascending: false });
+
+    if (search && search.trim()) {
+      query = query.ilike('name', `%${search.trim()}%`);
+    }
+
+    const { data, error } = await query;
+    if (error) throw error;
 
     return (data || []) as Client[];
   },

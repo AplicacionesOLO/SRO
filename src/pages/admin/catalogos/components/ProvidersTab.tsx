@@ -20,6 +20,7 @@ export default function ProvidersTab({ orgId, warehouseId }: ProvidersTabProps) 
   const [isBulkImportOpen, setIsBulkImportOpen] = useState(false);
   const [editingProvider, setEditingProvider] = useState<Provider | undefined>();
   const [error, setError] = useState<string | undefined>();
+  const [assignments, setAssignments] = useState<Record<string, string>>({});
 
   const canRead = can('providers.view');
   const canCreate = can('providers.create');
@@ -38,8 +39,25 @@ export default function ProvidersTab({ orgId, warehouseId }: ProvidersTabProps) 
       // Si hay almacén activo → filtrar por almacén; si no → mostrar todos (acceso global)
       const data = await providersService.getByWarehouse(orgId, warehouseId, showOnlyActive);
       setProviders(data);
+      // Cargar asignaciones visuales — separado para no bloquear la tabla principal
+      if (data.length > 0) {
+        try {
+          const ids = data.map(p => p.id);
+          const asgn = await providersService.getProviderAssignments(orgId, ids);
+          setAssignments(asgn);
+        } catch {
+          // Si falla la carga de asignaciones, no mostrar error técnico
+          setAssignments({});
+        }
+      } else {
+        setAssignments({});
+      }
     } catch (err: any) {
-      setError(err?.message || 'Error al cargar proveedores');
+      const raw = err?.message ?? '';
+      const isFetchError = raw.toLowerCase().includes('failed to fetch') || raw.toLowerCase().includes('networkerror');
+      setError(isFetchError
+        ? 'Por favor elija un almacén para validar los datos.'
+        : raw || 'Error al cargar proveedores');
     } finally {
       setLoading(false);
     }
@@ -138,15 +156,30 @@ export default function ProvidersTab({ orgId, warehouseId }: ProvidersTabProps) 
             <thead>
               <tr className="border-b border-gray-200">
                 <th className="text-left py-3 px-4 text-sm font-semibold text-gray-700">Nombre</th>
+                <th className="text-left py-3 px-4 text-sm font-semibold text-gray-700">Asignado a</th>
                 <th className="text-left py-3 px-4 text-sm font-semibold text-gray-700">Estado</th>
                 <th className="text-left py-3 px-4 text-sm font-semibold text-gray-700">Creado</th>
                 <th className="text-right py-3 px-4 text-sm font-semibold text-gray-700">Acciones</th>
               </tr>
             </thead>
             <tbody>
-              {filteredProviders.map((provider) => (
+              {filteredProviders.map((provider) => {
+                const assignmentText = assignments[provider.id];
+                const isUnassigned = !assignmentText || assignmentText === 'Sin asignación';
+                return (
                 <tr key={provider.id} className="border-b border-gray-100 hover:bg-gray-50">
-                  <td className="py-3 px-4 text-sm text-gray-900">{provider.name}</td>
+                  <td className="py-3 px-4 text-sm text-gray-900 font-medium whitespace-nowrap">{provider.name}</td>
+                  <td className="py-3 px-4 text-sm max-w-xs">
+                    {assignmentText === undefined ? (
+                      <span className="text-gray-300 text-xs">—</span>
+                    ) : isUnassigned ? (
+                      <span className="text-gray-400 text-xs italic">Sin asignación</span>
+                    ) : (
+                      <span className="text-gray-600 leading-snug block" title={assignmentText}>
+                        {assignmentText}
+                      </span>
+                    )}
+                  </td>
                   <td className="px-4 py-3 whitespace-nowrap">
                     <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${provider.active ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'}`}>
                       {provider.active ? 'Activo' : 'Inactivo'}
@@ -168,7 +201,8 @@ export default function ProvidersTab({ orgId, warehouseId }: ProvidersTabProps) 
                     </div>
                   </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </div>

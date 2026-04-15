@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { usePermissions } from '../../../hooks/usePermissions';
+import { useActiveWarehouse } from '../../../contexts/ActiveWarehouseContext';
 import { clientsService } from '../../../services/clientsService';
 import { providersService } from '../../../services/providersService';
 import type { Client, ClientFormData, ClientRules, ClientRulesFormData, ClientProviderPayload } from '../../../types/client';
@@ -11,6 +12,7 @@ import { ConfirmModal } from '../../../components/base/ConfirmModal';
 
 export default function ClientesPage() {
   const { orgId, can, loading: permissionsLoading } = usePermissions();
+  const { activeWarehouseId, activeWarehouse } = useActiveWarehouse();
 
   const [clients, setClients] = useState<Client[]>([]);
   const [filteredClients, setFilteredClients] = useState<Client[]>([]);
@@ -64,16 +66,14 @@ export default function ClientesPage() {
     try {
       setLoading(true);
       setLoadError(null);
-
-      // console.log('[ClientesPage] loadClients request', { orgId });
-      const data = await clientsService.listClients(orgId, searchTerm);
-
-      // console.log('[ClientesPage] loadClients success', { count: data.length });
+      const data = await clientsService.listClientsByWarehouse(orgId, activeWarehouseId, searchTerm);
       setClients(data);
     } catch (error) {
-      // console.error('[ClientesPage] loadClients error', error);
-      const message = error instanceof Error ? error.message : 'Error al cargar clientes';
-      setLoadError(message);
+      const raw = error instanceof Error ? error.message : 'Error al cargar clientes';
+      const isFetchError = raw.toLowerCase().includes('failed to fetch') || raw.toLowerCase().includes('networkerror');
+      setLoadError(isFetchError
+        ? 'Por favor elija un almacén para validar los datos.'
+        : raw);
     } finally {
       setLoading(false);
     }
@@ -95,7 +95,7 @@ export default function ClientesPage() {
         }
       } catch { /* corrupt */ }
     }
-  }, [permissionsLoading, orgId]);
+  }, [permissionsLoading, orgId, activeWarehouseId]);
 
   // Filtrar por búsqueda
   useEffect(() => {
@@ -358,6 +358,22 @@ export default function ClientesPage() {
         )}
       </div>
 
+      {/* Banner: todos los almacenes */}
+      {!activeWarehouseId && (
+        <div className="mb-4 p-3 bg-amber-50 border border-amber-200 rounded-lg flex items-center gap-2">
+          <i className="ri-information-line text-amber-500 w-5 h-5 flex items-center justify-center"></i>
+          <p className="text-sm text-amber-700">Mostrando clientes de todos los almacenes. Selecciona un almacén para filtrar.</p>
+        </div>
+      )}
+
+      {/* Banner almacén activo */}
+      {activeWarehouseId && activeWarehouse && (
+        <div className="mb-4 p-3 bg-teal-50 border border-teal-200 rounded-lg flex items-center gap-2">
+          <i className="ri-building-line text-teal-500 w-5 h-5 flex items-center justify-center"></i>
+          <p className="text-sm text-teal-700">Mostrando clientes de <span className="font-semibold">{activeWarehouse.name}</span>.</p>
+        </div>
+      )}
+
       {/* Banner de borrador pendiente */}
       {showResumeBanner && (
         <div className="mb-4 bg-teal-50 border border-teal-200 rounded-xl px-5 py-3 flex items-center justify-between gap-4">
@@ -427,7 +443,11 @@ export default function ClientesPage() {
             <i className="ri-inbox-line text-5xl text-gray-400 mb-3"></i>
             <h3 className="text-lg font-semibold text-gray-900 mb-1">No hay clientes</h3>
             <p className="text-gray-600">
-              {searchTerm ? 'Intenta con otra búsqueda.' : 'Crea tu primer cliente para comenzar.'}
+              {searchTerm
+                ? 'Intenta con otra búsqueda.'
+                : activeWarehouseId
+                  ? 'No hay clientes asignados a este almacén.'
+                  : 'Crea tu primer cliente para comenzar.'}
             </p>
           </div>
         ) : (

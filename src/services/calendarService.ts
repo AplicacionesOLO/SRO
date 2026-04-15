@@ -7,9 +7,9 @@ export interface Reservation {
   dock_id: string;
   start_datetime: string;
   end_datetime: string;
-  dua: string;
-  invoice: string;
-  driver: string;
+  dua: string | null;
+  invoice: string | null;
+  driver: string | null;
   status_id: string | null;
   notes: string | null;
   transport_type: string | null;
@@ -538,8 +538,8 @@ export const calendarService = {
         start_datetime: reservation.start_datetime || '',
         end_datetime: reservation.end_datetime || '',
         dua: reservation.dua || '',
-        invoice: reservation.invoice || '',
-        driver: reservation.driver || '',
+        invoice: reservation.invoice?.trim() || null,
+        driver: reservation.driver?.trim() || null,
         status_id: reservation.status_id || null,
         notes: reservation.notes || null,
         transport_type: reservation.transport_type || null,
@@ -689,9 +689,9 @@ export const calendarService = {
         dock_id: updates.dock_id || '',
         start_datetime: updates.start_datetime || '',
         end_datetime: updates.end_datetime || '',
-        dua: updates.dua || '',
-        invoice: updates.invoice || '',
-        driver: updates.driver || '',
+        dua: updates.dua || null,
+        invoice: updates.invoice || null,
+        driver: updates.driver || null,
         status_id: updates.status_id || null,
         notes: updates.notes || null,
         transport_type: updates.transport_type || null,

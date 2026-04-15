@@ -205,6 +205,101 @@ export const providersService = {
   },
 
   /**
+   * Obtener las asignaciones almacén→clientes de una lista de proveedores.
+   * Retorna un mapa: providerId → texto legible "Almacén: (Cliente1, Cliente2) / Almacén2: ..."
+   */
+  async getProviderAssignments(orgId: string, providerIds: string[]): Promise<Record<string, string>> {
+    if (providerIds.length === 0) return {};
+
+    // 1. Traer provider_warehouses con nombre del almacén
+    const { data: pwRows, error: pwErr } = await supabase
+      .from('provider_warehouses')
+      .select('provider_id, warehouse_id, warehouses(name)')
+      .eq('org_id', orgId)
+      .in('provider_id', providerIds);
+
+    if (pwErr) throw pwErr;
+
+    // 2. Traer client_providers con nombre del cliente
+    const { data: cpRows, error: cpErr } = await supabase
+      .from('client_providers')
+      .select('provider_id, client_id, clients(name)')
+      .eq('org_id', orgId)
+      .in('provider_id', providerIds);
+
+    if (cpErr) throw cpErr;
+
+    // 3. Traer warehouse_clients para saber qué clientes pertenecen a qué almacén
+    const warehouseIds = [...new Set((pwRows ?? []).map((r: any) => r.warehouse_id as string))];
+    let wcRows: any[] = [];
+    if (warehouseIds.length > 0) {
+      const { data, error: wcErr } = await supabase
+        .from('warehouse_clients')
+        .select('warehouse_id, client_id')
+        .eq('org_id', orgId)
+        .in('warehouse_id', warehouseIds);
+      if (wcErr) throw wcErr;
+      wcRows = data ?? [];
+    }
+
+    // Índice: warehouse_id → Set<client_id>
+    const warehouseToClients: Record<string, Set<string>> = {};
+    for (const wc of wcRows) {
+      if (!warehouseToClients[wc.warehouse_id]) warehouseToClients[wc.warehouse_id] = new Set();
+      warehouseToClients[wc.warehouse_id].add(wc.client_id);
+    }
+
+    // Índice: client_id → client name (desde cpRows)
+    const clientNames: Record<string, string> = {};
+    for (const cp of (cpRows ?? [])) {
+      if (cp.clients && cp.client_id) {
+        clientNames[cp.client_id] = (cp.clients as any).name ?? cp.client_id;
+      }
+    }
+
+    // Índice: provider_id → Set<client_id> (todos los clientes vinculados al proveedor)
+    const providerToClients: Record<string, Set<string>> = {};
+    for (const cp of (cpRows ?? [])) {
+      if (!providerToClients[cp.provider_id]) providerToClients[cp.provider_id] = new Set();
+      providerToClients[cp.provider_id].add(cp.client_id);
+    }
+
+    // Construir texto final por proveedor
+    const result: Record<string, string> = {};
+
+    for (const pid of providerIds) {
+      const warehouses = (pwRows ?? []).filter((r: any) => r.provider_id === pid);
+
+      if (warehouses.length === 0) {
+        result[pid] = 'Sin asignación';
+        continue;
+      }
+
+      const providerClientIds = providerToClients[pid] ?? new Set();
+
+      const parts: string[] = warehouses.map((pw: any) => {
+        const warehouseName: string = (pw.warehouses as any)?.name ?? pw.warehouse_id;
+        const wcClients = warehouseToClients[pw.warehouse_id] ?? new Set();
+
+        // Clientes que están vinculados al proveedor Y pertenecen a este almacén
+        const matchingClients = [...providerClientIds]
+          .filter(cid => wcClients.has(cid))
+          .map(cid => clientNames[cid] ?? cid)
+          .sort();
+
+        if (matchingClients.length > 0) {
+          return `${warehouseName}: (${matchingClients.join(', ')})`;
+        }
+        return warehouseName;
+      });
+
+      result[pid] = parts.join(' / ');
+    }
+
+    return result;
+  },
+
+  /**
    * Agregar un proveedor a un almacén específico (sin reemplazar otros).
    */
   async addProviderToWarehouse(orgId: string, providerId: string, warehouseId: string): Promise<void> {

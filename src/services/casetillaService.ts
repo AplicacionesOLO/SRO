@@ -20,6 +20,10 @@ type PendingReservationRow = {
   created_at: string;
   status_id: string | null;
   is_cancelled: boolean | null;
+  notes: string | null;
+  cargo_type: string | null;
+  // ✅ Fuente de verdad real para Nacional/Importado
+  is_imported: boolean | null;
 };
 
 // ✅ Nuevo tipo para reservas elegibles para salida
@@ -282,6 +286,42 @@ class CasetillaService {
         throw new Error('Se encontró la reserva pero no se pudo actualizar su estado. Verificá permisos o contactá a un administrador.');
       }
 
+      // ✅ 3b) SINCRONIZACIÓN: actualizar campos de la reserva con los datos del ingreso
+      if (reservationId) {
+        const syncPayload: Record<string, string | null | boolean> = {};
+
+        if (data.matricula?.trim()) syncPayload['truck_plate'] = data.matricula.trim();
+        if (data.chofer?.trim()) syncPayload['driver'] = data.chofer.trim();
+        if (data.dua?.trim()) {
+          syncPayload['dua'] = data.dua.trim();
+          // Si el ingreso trae DUA, marcar la reserva como importada
+          syncPayload['is_imported'] = true;
+        }
+        if (data.orden_compra?.trim()) syncPayload['purchase_order'] = data.orden_compra.trim();
+        if (data.numero_pedido?.trim()) syncPayload['order_request_number'] = data.numero_pedido.trim();
+        if (data.observaciones?.trim()) syncPayload['notes'] = data.observaciones.trim();
+
+        if (Object.keys(syncPayload).length > 0) {
+          syncPayload['updated_by'] = userId;
+          syncPayload['updated_at'] = new Date().toISOString();
+
+          // Sincronización AWAIT con error explícito — no falla silenciosamente
+          const { error: syncErr } = await supabase
+            .from('reservations')
+            .update(syncPayload)
+            .eq('id', reservationId)
+            .eq('org_id', orgId)
+            .select('id');
+
+          if (syncErr) {
+            throw new Error(
+              `El ingreso fue creado, pero no se pudieron sincronizar los datos en la reserva vinculada. ` +
+              `Detalle: ${syncErr.message}. Por favor actualizá manualmente la reserva.`
+            );
+          }
+        }
+      }
+
       // ✅ 4) Crear registro casetilla PRIMERO (antes del trigger de email)
       //       Así cuando el email busque fotos en casetilla_ingresos, ya existen.
       const { data: ingreso, error: ingresoError } = await supabase
@@ -292,8 +332,10 @@ class CasetillaService {
           matricula: data.matricula,
           dua: data.dua,
           factura: data.factura,
+          cedula: data.cedula?.trim() || null,
           orden_compra: data.orden_compra,
           numero_pedido: data.numero_pedido,
+          observaciones: data.observaciones?.trim() || null,
           reservation_id: reservationId,
           created_by: userId,
           fotos: data.fotos && data.fotos.length > 0 ? data.fotos : null,
@@ -470,6 +512,29 @@ class CasetillaService {
         }
       }
 
+      // ─── Cargo types: solo para display (ya no se usa para is_imported) ──
+      const cargoTypeIds = [
+        ...new Set(
+          rows
+            .map((r) => r.cargo_type)
+            .filter((id) => id && id.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i))
+        )
+      ] as string[];
+
+      const cargoTypesMap = new Map<string, string>(); // id -> name
+
+      if (cargoTypeIds.length > 0) {
+        const { data: ctData } = await supabase
+          .from('cargo_types')
+          .select('id, name')
+          .in('id', cargoTypeIds);
+
+        (ctData ?? []).forEach((ct: any) => {
+          cargoTypesMap.set(ct.id, ct.name ?? '');
+        });
+      }
+      // ─────────────────────────────────────────────────────────────────────
+
       // Map final para UI
       return rows.map((r) => {
         const dock = docksMap.get(r.dock_id);
@@ -480,16 +545,30 @@ class CasetillaService {
           ? (providersMap.get(r.shipper_provider!) ?? 'N/A')
           : (r.shipper_provider ?? 'N/A');
 
+        // ── is_imported: FUENTE DE VERDAD = columna is_imported de reservations ──
+        // Regla definitiva:
+        //   1. Si is_imported = true  → DUA obligatorio (reserva marcada como Importado)
+        //   2. Si is_imported = false/null → DUA opcional (reserva Nacional)
+        //   3. Fallback: si la reserva ya tiene DUA pero is_imported es null, se trata como importada
+        const cargoTypeName = r.cargo_type ? (cargoTypesMap.get(r.cargo_type) ?? '') : '';
+        const is_imported =
+          r.is_imported === true ||
+          // Fallback seguro: si is_imported no está seteado pero ya tiene DUA → importada
+          (r.is_imported == null && !!(r.dua && r.dua.trim().length > 0));
+
         return {
           id: r.id,
-          dua: r.dua,
+          dua: r.dua ?? '',
           placa: r.truck_plate ?? '',
           chofer: r.driver ?? '',
           orden_compra: r.purchase_order ?? '',
           numero_pedido: r.order_request_number ?? '',
+          notes: (r as any).notes ?? null,
           provider_name: providerName,
           warehouse_name: whName ?? 'N/A',
-          created_at: r.created_at
+          created_at: r.created_at,
+          is_imported,
+          cargo_type_name: cargoTypeName || null,
         };
       });
     } catch (error) {

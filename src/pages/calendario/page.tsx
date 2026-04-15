@@ -244,6 +244,34 @@ export default function CalendarioPage() {
   const canViewBlocks = useMemo(() => can('dock_blocks.view'), [can]);
   const canManageStatuses = useMemo(() => can('operational_statuses.view'), [can]);
 
+  // ── Control de roles privilegiados para tabs Estatus Op y Bloqueos ────────
+  // Solo ADMIN y Full Access pueden ver/usar esos dos módulos.
+  // Esta validación es una segunda capa además del sistema de permisos.
+  const isPrivilegedRole = useMemo(
+    () => user?.role === 'ADMIN' || user?.role === 'Full Access',
+    [user?.role]
+  );
+
+  // Visibilidad final de cada tab restringido (requiere AMBAS condiciones)
+  const canSeeStatusesTab = useMemo(
+    () => isPrivilegedRole && canManageStatuses,
+    [isPrivilegedRole, canManageStatuses]
+  );
+  const canSeeBlocksTab = useMemo(
+    () => isPrivilegedRole && canViewBlocks,
+    [isPrivilegedRole, canViewBlocks]
+  );
+
+  // ── Seguridad: si el rol no tiene acceso a statuses/blocks y está en esa pestaña, volver al calendario ──
+  useEffect(() => {
+    if (tabMode === 'statuses' && !canSeeStatusesTab) {
+      setTabMode('calendar');
+    }
+    if (tabMode === 'blocks' && !canSeeBlocksTab) {
+      setTabMode('calendar');
+    }
+  }, [tabMode, canSeeStatusesTab, canSeeBlocksTab]);
+
   // Computed: almacén seleccionado
   const selectedWarehouse = useMemo(() => {
     if (!warehouseId) return null;
@@ -1623,7 +1651,7 @@ export default function CalendarioPage() {
               <i className="ri-calendar-line mr-1.5 inline-flex items-center justify-center" style={{ fontSize: 'clamp(10px, 0.72vw, 12px)' }}></i>
               Calendario
             </button>
-            {canManageStatuses && (
+            {canSeeStatusesTab && (
               <button
                 onClick={() => setTabMode('statuses')}
                 className={`font-medium border-b-2 transition-colors whitespace-nowrap ${
@@ -1637,7 +1665,7 @@ export default function CalendarioPage() {
                 Estatus Op
               </button>
             )}
-            {canViewBlocks && (
+            {canSeeBlocksTab && (
               <button
                 onClick={() => setTabMode('blocks')}
                 className={`font-medium border-b-2 transition-colors whitespace-nowrap ${
@@ -1656,11 +1684,11 @@ export default function CalendarioPage() {
       </div>
 
       {/* Contenido según pestaña */}
-      {tabMode === 'statuses' ? (
+      {tabMode === 'statuses' && canSeeStatusesTab ? (
         <div className="flex-1 overflow-auto p-6">
           <OperationalStatusesTab orgId={orgId!} />
         </div>
-      ) : tabMode === 'blocks' && canViewBlocks ? (
+      ) : tabMode === 'blocks' && canSeeBlocksTab ? (
         <div className="flex-1 overflow-auto">
           <BlocksManagementTab />
         </div>

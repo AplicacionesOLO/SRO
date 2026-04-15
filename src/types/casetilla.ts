@@ -4,8 +4,10 @@ export interface CreateCasetillaIngresoInput {
   matricula: string;
   dua: string;
   factura: string;
+  cedula?: string;
   orden_compra?: string;
   numero_pedido?: string;
+  observaciones?: string;
   reservation_id?: string;
   fotos?: string[];
 }
@@ -17,12 +19,38 @@ export interface CasetillaIngreso {
   matricula: string;
   dua: string;
   factura: string;
+  cedula?: string | null;
   orden_compra?: string | null;
   numero_pedido?: string | null;
+  observaciones?: string | null;
   reservation_id?: string | null;
   fotos?: string[] | null;
   created_by: string;
   created_at: string;
+}
+
+// Reserva pendiente enriquecida (para pre-carga del formulario de ingreso)
+export interface PendingReservation {
+  id: string;
+  // Campos que se mostrarán en la tabla
+  dua: string;
+  placa: string;
+  chofer: string;
+  orden_compra?: string;
+  numero_pedido?: string;
+  provider_name: string;
+  warehouse_name: string;
+  created_at: string;
+  // Campos adicionales para pre-cargar el form de ingreso
+  notes?: string | null;
+  /**
+   * true si el cargo_type de la reserva contiene "Importado" (case-insensitive)
+   * O si la reserva ya tiene un DUA cargado.
+   * Determina si el campo DUA es obligatorio en el formulario de ingreso.
+   */
+  is_imported?: boolean;
+  /** Nombre resuelto del cargo_type (para debug/display) */
+  cargo_type_name?: string | null;
 }
 
 // Tipos para Salidas

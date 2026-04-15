@@ -1,7 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const VERSION = "v879-dua-condition";
+const VERSION = "v889-warehouse-isolation";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -149,23 +149,7 @@ serve(async (req) => {
     }
     if (actorUserId !== userData.user.id) return json(403, { error: "Forbidden", reqId });
 
-    // ── Fetch rules ──────────────────────────────────────────────────────────
-    let rulesQuery = supabase.from("correspondence_rules").select("*").eq("org_id", orgId).eq("is_active", true).eq("event_type", eventType);
-
-    if (eventType === "reservation_status_changed") {
-      rulesQuery = rulesQuery.or([
-        "and(status_from_id.is.null,status_to_id.is.null)",
-        `and(status_from_id.eq.${asNull(statusFromId)},status_to_id.is.null)`,
-        `and(status_from_id.is.null,status_to_id.eq.${asNull(statusToId)})`,
-        `and(status_from_id.eq.${asNull(statusFromId)},status_to_id.eq.${asNull(statusToId)})`,
-      ].join(","));
-    }
-
-    const { data: rules, error: rulesErr } = await rulesQuery;
-    if (rulesErr) return json(500, { error: "Failed to fetch rules", details: rulesErr.message, reqId });
-    if (!rules || rules.length === 0) return json(200, { success: true, message: "No active rules found", queued: 0, sent: 0, failed: 0, results: [], reqId });
-
-    // ── Fetch reservation ────────────────────────────────────────────────────
+    // ── Fetch reservation FIRST (needed to resolve warehouseId for rule filtering) ─
     const { data: reservation, error: resErr } = await supabase
       .from("reservations")
       .select("*, docks(id, name, warehouse_id), reservation_statuses(name)")
@@ -181,10 +165,57 @@ serve(async (req) => {
 
     if (resErr || !reservation) return json(500, { error: "Failed to fetch reservation", details: resErr?.message ?? "not found", reqId });
 
+    // ── Resolve warehouseId from reservation's dock ──────────────────────────
+    const dockWarehouseId: string | null = (reservation as any)?.docks?.warehouse_id ?? null;
+
+    console.log("[correspondence-process-event][WAREHOUSE_RESOLVED]", {
+      reqId, reservationId, dockWarehouseId,
+    });
+
+    // ── Fetch rules — filtered by org + eventType + warehouse isolation ──────
+    // KEY FIX: Only evaluate rules that belong to the reservation's warehouse
+    // OR rules that are global (warehouse_id = null / legacy rules).
+    // This prevents rules from other warehouses in the same org from firing.
+    let rulesQuery = supabase
+      .from("correspondence_rules")
+      .select("*")
+      .eq("org_id", orgId)
+      .eq("is_active", true)
+      .eq("event_type", eventType);
+
+    if (dockWarehouseId) {
+      // Only rules matching this warehouse OR global legacy rules (warehouse_id IS NULL)
+      rulesQuery = rulesQuery.or(`warehouse_id.eq.${dockWarehouseId},warehouse_id.is.null`);
+    }
+    // If we can't resolve a warehouse (no dock), fall back to org-wide rules
+    // (original behavior) to avoid swallowing legitimate events
+
+    if (eventType === "reservation_status_changed") {
+      rulesQuery = rulesQuery.or([
+        "and(status_from_id.is.null,status_to_id.is.null)",
+        `and(status_from_id.eq.${asNull(statusFromId)},status_to_id.is.null)`,
+        `and(status_from_id.is.null,status_to_id.eq.${asNull(statusToId)})`,
+        `and(status_from_id.eq.${asNull(statusFromId)},status_to_id.eq.${asNull(statusToId)})`,
+      ].join(","));
+    }
+
+    const { data: rules, error: rulesErr } = await rulesQuery;
+
+    console.log("[correspondence-process-event][RULES_FOUND]", {
+      reqId,
+      reservationId,
+      dockWarehouseId,
+      eventType,
+      rulesCount: rules?.length ?? 0,
+      ruleIds: (rules ?? []).map((r: any) => ({ id: r.id, name: r.name, warehouse_id: r.warehouse_id })),
+    });
+
+    if (rulesErr) return json(500, { error: "Failed to fetch rules", details: rulesErr.message, reqId });
+    if (!rules || rules.length === 0) return json(200, { success: true, message: "No active rules found", queued: 0, sent: 0, failed: 0, results: [], reqId });
+
     // ── Resolve warehouse timezone ───────────────────────────────────────────
     const FALLBACK_TZ = "America/Costa_Rica";
     let warehouseTimezone = FALLBACK_TZ;
-    const dockWarehouseId = (reservation as any)?.docks?.warehouse_id ?? null;
 
     if (dockWarehouseId) {
       try {
@@ -246,7 +277,6 @@ serve(async (req) => {
 
     for (const rule of rules as any[]) {
       // ── CONDICIÓN DUA ────────────────────────────────────────────────────
-      // Si la regla tiene require_dua = true, solo aplica si la reserva tiene DUA no vacío
       if (rule.require_dua === true) {
         if (!reservationDua) {
           console.log("[correspondence-process-event][DUA_SKIP]", {
@@ -344,7 +374,7 @@ serve(async (req) => {
       }
     }
 
-    console.log("[correspondence-process-event][DONE]", { reqId, reservationId, queued, sent, failed });
+    console.log("[correspondence-process-event][DONE]", { reqId, reservationId, dockWarehouseId, queued, sent, failed });
     return json(200, { success: true, queued, sent, failed, results, reqId });
   } catch (e: any) {
     console.error("[correspondence-process-event][FATAL]", { reqId, error: e?.message ?? String(e) });

@@ -295,7 +295,18 @@ export default function CasetillaPage() {
           <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-4 sm:p-6 lg:p-8">
             <IngresoForm
               orgId={orgId!}
-              initialData={{ chofer: selectedReservation?.chofer || '', matricula: selectedReservation?.placa || '', dua: selectedReservation?.dua || '', factura: '', orden_compra: selectedReservation?.orden_compra || '', numero_pedido: selectedReservation?.numero_pedido || '', reservation_id: selectedReservation?.id || undefined }}
+              initialData={{
+                chofer: selectedReservation?.chofer || '',
+                matricula: selectedReservation?.placa || '',
+                dua: selectedReservation?.dua || '',
+                factura: '',
+                cedula: '',
+                orden_compra: selectedReservation?.orden_compra || '',
+                numero_pedido: selectedReservation?.numero_pedido || '',
+                observaciones: selectedReservation?.notes || '',
+                reservation_id: selectedReservation?.id || undefined,
+              }}
+              linkedReservation={selectedReservation}
               initialFotos={fotosIngreso} onFotosChange={setFotosIngreso} photoSessionKey={FOTOS_INGRESO_KEY}
               onSubmit={handleSubmitIngreso}
               onCancel={() => { setSelectedReservation(null); setFotosIngresoRaw([]); clearSession(); setViewModeRaw('HOME'); }}

@@ -376,7 +376,9 @@ export default function ReservationModal({
         cargoType: reservation.cargo_type || '',
         operationType: reservation.operation_type || '',
       });
-      setIsImported(!!(reservation.dua));
+      // ✅ Fuente de verdad: columna is_imported de BD; fallback a presencia de DUA
+      const reservationIsImported = (reservation as any).is_imported;
+      setIsImported(reservationIsImported != null ? !!reservationIsImported : !!(reservation.dua));
       setCancelReason(reservation.cancel_reason || '');
       setManualOverride(false);
       setSuggestedMinutes(null);
@@ -675,13 +677,16 @@ export default function ReservationModal({
       order_request_number: formData.orderRequestNumber || null,
       shipper_provider: formData.shipperProvider || null,
       driver: formData.driver?.trim() || null,
-      dua: formData.dua,
+      // ✅ DUA: solo si es importado; si es nacional se guarda null
+      dua: isImported ? (formData.dua?.trim() || null) : null,
       invoice: formData.invoice || null,
       status_id: formData.statusId || null,
       notes: formData.notes || null,
       transport_type: formData.transportType,
       cargo_type: formData.cargoType,
       operation_type: formData.operationType || null,
+      // ✅ Persistir el toggle Nacional/Importado como campo real en BD
+      is_imported: isImported,
       // ✅ Usar isCancelledStatus en lugar de comparar con string literal
       is_cancelled: isCancelledStatus,
       cancel_reason: isCancelledStatus ? cancelReason : null,
