@@ -1,7 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const VERSION = "v902-provider-variable";
+const VERSION = "v910-fix-user_id-column";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -107,6 +107,116 @@ async function resolveCasetillaPhotos(supabase: any, reservationId: string, stat
   return `<div style="margin:12px 0;"><p style="font-size:13px;font-weight:600;color:#374151;margin-bottom:8px;">Fotos del punto de control (${fotos.length} imagen${fotos.length !== 1 ? "es" : ""}):</p>${imgs}</div>`.trim();
 }
 
+async function resolveRecipients(
+  rule: any,
+  orgId: string,
+  supabase: any
+): Promise<{ toEmails: string[]; ccEmails: string[]; bccEmails: string[] }> {
+  let toEmails: string[] = [];
+  let ccEmails: string[] = [];
+  let bccEmails: string[] = [];
+
+  const asEmailArr = (v: any): string[] =>
+    Array.isArray(v) ? v.filter((x: any) => typeof x === "string" && x.includes("@")) : [];
+
+  if (rule.recipients_mode === "manual") {
+    const newEmails = asEmailArr(rule.recipients_emails);
+    const legacyEmails = asEmailArr(rule.recipient_external_emails);
+    toEmails = [...new Set([...newEmails, ...legacyEmails])];
+
+    const roleIds: string[] = Array.isArray(rule.recipient_roles)
+      ? rule.recipient_roles.filter((x: any) => typeof x === "string" && x.includes("-"))
+      : [];
+
+    if (roleIds.length > 0) {
+      const { data: rolesData } = await supabase
+        .from("roles")
+        .select("id")
+        .in("id", roleIds);
+
+      if ((rolesData ?? []).length > 0) {
+        const resolvedRoleIds = rolesData!.map((r: any) => r.id);
+        const { data: uor } = await supabase
+          .from("user_org_roles")
+          .select("user_id, profiles(email)")
+          .eq("org_id", orgId)
+          .in("role_id", resolvedRoleIds);
+
+        const roleEmails = (uor ?? [])
+          .map((u: any) => u.profiles?.email)
+          .filter((e: any): e is string => typeof e === "string" && e.includes("@"));
+
+        toEmails = [...new Set([...toEmails, ...roleEmails])];
+      }
+    }
+
+    const userIds: string[] = Array.isArray(rule.recipient_users)
+      ? rule.recipient_users.filter((x: any) => typeof x === "string" && x.includes("-"))
+      : [];
+
+    if (userIds.length > 0) {
+      const { data: ps } = await supabase
+        .from("profiles")
+        .select("email")
+        .in("id", userIds);
+      const userEmails = (ps ?? [])
+        .map((x: any) => x.email)
+        .filter((e: any): e is string => typeof e === "string" && e.includes("@"));
+      toEmails = [...new Set([...toEmails, ...userEmails])];
+    }
+
+    ccEmails = asEmailArr(rule.cc_emails);
+    bccEmails = asEmailArr(rule.bcc_emails);
+
+  } else if (rule.recipients_mode === "users") {
+    const newUserIds: string[] = Array.isArray(rule.recipients_user_ids)
+      ? rule.recipients_user_ids.filter((x: any) => typeof x === "string" && x.includes("-"))
+      : [];
+    const legacyUserIds: string[] = Array.isArray(rule.recipient_users)
+      ? rule.recipient_users.filter((x: any) => typeof x === "string" && x.includes("-"))
+      : [];
+    const allUserIds = [...new Set([...newUserIds, ...legacyUserIds])];
+
+    if (allUserIds.length > 0) {
+      const { data: ps } = await supabase.from("profiles").select("email").in("id", allUserIds);
+      toEmails = (ps ?? []).map((x: any) => x.email).filter(Boolean);
+    }
+
+  } else if (rule.recipients_mode === "roles") {
+    const newRoleNames: string[] = Array.isArray(rule.recipients_roles)
+      ? rule.recipients_roles.filter((x: any) => typeof x === "string" && x.length > 0)
+      : [];
+    const legacyRoleIds: string[] = Array.isArray(rule.recipient_roles)
+      ? rule.recipient_roles.filter((x: any) => typeof x === "string" && x.includes("-"))
+      : [];
+
+    let resolvedRoleIds: string[] = [...legacyRoleIds];
+
+    if (newRoleNames.length > 0) {
+      const { data: rolesData } = await supabase
+        .from("roles")
+        .select("id,name")
+        .in("name", newRoleNames);
+      resolvedRoleIds = [...new Set([...resolvedRoleIds, ...((rolesData ?? []).map((r: any) => r.id))])];
+    }
+
+    if (resolvedRoleIds.length > 0) {
+      const { data: uor } = await supabase
+        .from("user_org_roles")
+        .select("user_id, profiles(email)")
+        .eq("org_id", orgId)
+        .in("role_id", resolvedRoleIds);
+      toEmails = (uor ?? []).map((u: any) => u.profiles?.email).filter(Boolean);
+    }
+  }
+
+  return {
+    toEmails: [...new Set(toEmails.filter(Boolean))],
+    ccEmails: [...new Set(ccEmails.filter(Boolean))],
+    bccEmails: [...new Set(bccEmails.filter(Boolean))],
+  };
+}
+
 serve(async (req) => {
   const reqId = crypto.randomUUID();
   try {
@@ -137,11 +247,10 @@ serve(async (req) => {
     }
     if (actorUserId !== userData.user.id) return json(403, { error: "Forbidden", reqId });
 
-    // ── Step 1: Fetch reservation ────────────────────────────────────────────
-    // Added shipper_provider to the select for the {{provider}} variable
+    // ── Step 1: Fetch reservation (sin user_id — columna no existe) ──────────
     const { data: reservation, error: resErr } = await supabase
       .from("reservations")
-      .select("id, dock_id, dua, invoice, driver, truck_plate, shipper_provider, start_datetime, end_datetime, created_by, user_id, status_id")
+      .select("id, dock_id, dua, invoice, driver, truck_plate, shipper_provider, start_datetime, end_datetime, created_by, status_id")
       .eq("id", reservationId)
       .maybeSingle();
 
@@ -150,7 +259,7 @@ serve(async (req) => {
       return json(500, { error: "Failed to fetch reservation", details: resErr?.message ?? "not found", reqId });
     }
 
-    // ── Step 2: Resolve dock → warehouse_id explicitly ───────────────────────
+    // ── Step 2: Resolve dock → warehouse_id ─────────────────────────────────
     let dockWarehouseId: string | null = null;
     let dockName = "";
 
@@ -182,9 +291,7 @@ serve(async (req) => {
       currentStatusName = statusData?.name ?? "";
     }
 
-    console.log("[correspondence-process-event][WAREHOUSE_RESOLVED]", { reqId, reservationId, dockWarehouseId });
-
-    // ── Step 4: Fetch candidate rules with strict warehouse isolation ─────────
+    // ── Step 4: Fetch candidate rules ────────────────────────────────────────
     let allCandidateRules: any[] = [];
 
     if (dockWarehouseId) {
@@ -247,7 +354,8 @@ serve(async (req) => {
     // ── Step 7: Resolve helper data ──────────────────────────────────────────
     const reservationDua: string = ((reservation as any)?.dua ?? "").trim();
 
-    const createdById = (reservation as any).created_by ?? (reservation as any).user_id ?? null;
+    // created_by es la columna real (user_id no existe en reservations)
+    const createdById = (reservation as any).created_by ?? null;
     let createdByName = "";
     if (createdById) {
       const { data: creator } = await supabase.from("profiles").select("name, email").eq("id", createdById).maybeSingle();
@@ -266,9 +374,6 @@ serve(async (req) => {
     const startDatetime = (reservation as any)?.start_datetime;
     const endDatetime = (reservation as any)?.end_datetime;
 
-    // ── {{provider}}: resolved from shipper_provider (plain text field) ──────
-    // shipper_provider is stored directly on the reservation row as free text.
-    // If empty/null, falls back to "" so the template doesn't break.
     const providerName: string = ((reservation as any)?.shipper_provider ?? "").trim();
 
     const templateCtx: Record<string, any> = {
@@ -284,7 +389,6 @@ serve(async (req) => {
       truck_plate: (reservation as any)?.truck_plate ?? "",
       dua: (reservation as any)?.dua ?? "",
       invoice: (reservation as any)?.invoice ?? "",
-      // NEW: provider variable — resolves to shipper_provider field value
       provider: providerName,
       created_by: createdByName,
       actor: actorName,
@@ -318,27 +422,16 @@ serve(async (req) => {
       if (rule.sender_mode === "actor") senderUserId = actorUserId;
       if (rule.sender_mode === "fixed" && rule.sender_user_id) senderUserId = rule.sender_user_id;
 
-      let toEmails: string[] = [], ccEmails: string[] = [], bccEmails: string[] = [];
+      const { toEmails, ccEmails, bccEmails } = await resolveRecipients(rule, orgId, supabase);
 
-      if (rule.recipients_mode === "manual") {
-        toEmails = Array.isArray(rule.recipients_emails) ? rule.recipients_emails.filter(Boolean) : [];
-        ccEmails = Array.isArray(rule.cc_emails) ? rule.cc_emails.filter(Boolean) : [];
-        bccEmails = Array.isArray(rule.bcc_emails) ? rule.bcc_emails.filter(Boolean) : [];
-      } else if (rule.recipients_mode === "users" && Array.isArray(rule.recipients_user_ids) && rule.recipients_user_ids.length > 0) {
-        const { data: ps } = await supabase.from("profiles").select("email").in("id", rule.recipients_user_ids);
-        toEmails = (ps ?? []).map((x: any) => x.email).filter(Boolean);
-      } else if (rule.recipients_mode === "roles" && Array.isArray(rule.recipients_roles) && rule.recipients_roles.length > 0) {
-        const { data: rolesData } = await supabase.from("roles").select("id,name").in("name", rule.recipients_roles);
-        if ((rolesData ?? []).length > 0) {
-          const roleIds = rolesData!.map((r: any) => r.id);
-          const { data: uor } = await supabase.from("user_org_roles").select("user_id, profiles(email)").eq("org_id", orgId).in("role_id", roleIds);
-          toEmails = (uor ?? []).map((u: any) => u.profiles?.email).filter(Boolean);
-        }
-      }
-
-      toEmails = [...new Set(toEmails.filter(Boolean))];
-      ccEmails = [...new Set(ccEmails.filter(Boolean))];
-      bccEmails = [...new Set(bccEmails.filter(Boolean))];
+      console.log("[correspondence-process-event][RECIPIENTS_RESOLVED]", {
+        reqId,
+        ruleId: rule.id,
+        ruleName: rule.name,
+        recipientsMode: rule.recipients_mode,
+        toCount: toEmails.length,
+        toEmails,
+      });
 
       if (toEmails.length === 0) {
         failed++;
@@ -393,7 +486,7 @@ serve(async (req) => {
         if (smtpResp.ok && smtpData?.success) {
           await supabase.from("correspondence_outbox").update({ status: "sent", sent_at: new Date().toISOString(), error: null }).eq("id", outbox.id);
           sent++;
-          results.push({ ruleId: rule.id, outboxId: outbox.id, status: "sent", warehouseId: dockWarehouseId });
+          results.push({ ruleId: rule.id, outboxId: outbox.id, status: "sent", warehouseId: dockWarehouseId, toCount: toEmails.length });
         } else {
           const smtpError = smtpData?.error ?? smtpData?.details ?? `smtp-send HTTP ${smtpResp.status}`;
           await supabase.from("correspondence_outbox").update({ status: "failed", error: smtpError }).eq("id", outbox.id);

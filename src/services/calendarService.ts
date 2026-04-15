@@ -681,6 +681,52 @@ export const calendarService = {
       .eq('id', id)
       .maybeSingle();
 
+    // ✅ CRÍTICO: Disparar emailTrigger SIEMPRE que el status haya cambiado,
+    // independientemente de si pudimos leer el full row o no.
+    // Si hay fetchErr/RLS, construimos un objeto mínimo con los datos disponibles.
+    if (updates.status_id !== undefined && oldStatusId !== updates.status_id) {
+      const reservationForTrigger = full ?? ({
+        id,
+        org_id: updates.org_id || oldOrgId || '',
+        dock_id: updates.dock_id || '',
+        start_datetime: updates.start_datetime || '',
+        end_datetime: updates.end_datetime || '',
+        dua: updates.dua || null,
+        invoice: updates.invoice || null,
+        driver: updates.driver || null,
+        status_id: updates.status_id || null,
+        notes: updates.notes || null,
+        transport_type: updates.transport_type || null,
+        cargo_type: updates.cargo_type || null,
+        operation_type: updates.operation_type || null,
+        is_cancelled: updates.is_cancelled ?? false,
+        cancel_reason: updates.cancel_reason || null,
+        cancelled_by: null,
+        cancelled_at: null,
+        created_by: '',
+        created_at: '',
+        updated_by: user.id,
+        updated_at: new Date().toISOString(),
+        purchase_order: updates.purchase_order || null,
+        truck_plate: updates.truck_plate || null,
+        order_request_number: updates.order_request_number || null,
+        shipper_provider: updates.shipper_provider || null,
+        recurrence: updates.recurrence || null,
+      } as Reservation);
+
+      const triggerOrgId = reservationForTrigger.org_id || oldOrgId || updates.org_id || '';
+      if (triggerOrgId) {
+        emailTriggerService.onReservationStatusChanged(
+          triggerOrgId,
+          reservationForTrigger,
+          oldStatusId,
+          updates.status_id || null
+        ).catch(() => {
+          // non-blocking
+        });
+      }
+    }
+
     // Si RLS no permite leer (ej. usuario sin acceso directo), devolver objeto mínimo
     if (fetchErr || !full) {
       const fallback: Reservation = {
@@ -713,18 +759,6 @@ export const calendarService = {
       };
 
       return fallback;
-    }
-
-    // ✅ Disparar evento de cambio de estado si cambió
-    if (updates.status_id !== undefined && oldStatusId !== updates.status_id) {
-      emailTriggerService.onReservationStatusChanged(
-        full.org_id,
-        full,
-        oldStatusId,
-        updates.status_id || null
-      ).catch(() => {
-        // non-blocking
-      });
     }
 
     return full;
