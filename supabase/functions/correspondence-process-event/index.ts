@@ -1,7 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const VERSION = "v889-warehouse-isolation";
+const VERSION = "v902-provider-variable";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -14,10 +14,6 @@ function json(status: number, data: unknown) {
     status,
     headers: { ...corsHeaders, "Content-Type": "application/json" },
   });
-}
-
-function asNull(value: string | null | undefined): string {
-  return value === null || value === undefined ? "null" : value;
 }
 
 type Body = {
@@ -55,15 +51,10 @@ function formatDateInWarehouseTimezone(value: any, timezone: string): string {
     }).format(d);
   } catch {
     try {
-      const d = new Date(value);
       return new Intl.DateTimeFormat("es-ES", {
-        year: "numeric",
-        month: "long",
-        day: "numeric",
-        hour: "2-digit",
-        minute: "2-digit",
-        hour12: false,
-      }).format(d);
+        year: "numeric", month: "long", day: "numeric",
+        hour: "2-digit", minute: "2-digit", hour12: false,
+      }).format(new Date(value));
     } catch {
       return String(value);
     }
@@ -76,10 +67,7 @@ function formatTimeInWarehouseTimezone(value: any, timezone: string): string {
     const d = new Date(value);
     if (Number.isNaN(d.getTime())) return String(value);
     return new Intl.DateTimeFormat("es-ES", {
-      timeZone: timezone,
-      hour: "2-digit",
-      minute: "2-digit",
-      hour12: false,
+      timeZone: timezone, hour: "2-digit", minute: "2-digit", hour12: false,
     }).format(d);
   } catch {
     return String(value);
@@ -149,87 +137,114 @@ serve(async (req) => {
     }
     if (actorUserId !== userData.user.id) return json(403, { error: "Forbidden", reqId });
 
-    // ── Fetch reservation FIRST (needed to resolve warehouseId for rule filtering) ─
+    // ── Step 1: Fetch reservation ────────────────────────────────────────────
+    // Added shipper_provider to the select for the {{provider}} variable
     const { data: reservation, error: resErr } = await supabase
       .from("reservations")
-      .select("*, docks(id, name, warehouse_id), reservation_statuses(name)")
+      .select("id, dock_id, dua, invoice, driver, truck_plate, shipper_provider, start_datetime, end_datetime, created_by, user_id, status_id")
       .eq("id", reservationId)
       .maybeSingle();
 
-    console.log("[correspondence-process-event][RESERVATION_FETCH]", {
-      reqId, reservationId, found: !!reservation,
-      dua: (reservation as any)?.dua ?? null,
-      dockWarehouseId: (reservation as any)?.docks?.warehouse_id ?? null,
-      resErr: resErr?.message ?? null,
-    });
+    if (resErr || !reservation) {
+      console.error("[correspondence-process-event][RESERVATION_FETCH_ERROR]", { reqId, reservationId, error: resErr?.message });
+      return json(500, { error: "Failed to fetch reservation", details: resErr?.message ?? "not found", reqId });
+    }
 
-    if (resErr || !reservation) return json(500, { error: "Failed to fetch reservation", details: resErr?.message ?? "not found", reqId });
+    // ── Step 2: Resolve dock → warehouse_id explicitly ───────────────────────
+    let dockWarehouseId: string | null = null;
+    let dockName = "";
 
-    // ── Resolve warehouseId from reservation's dock ──────────────────────────
-    const dockWarehouseId: string | null = (reservation as any)?.docks?.warehouse_id ?? null;
+    if (reservation.dock_id) {
+      const { data: dock, error: dockErr } = await supabase
+        .from("docks")
+        .select("id, name, warehouse_id")
+        .eq("id", reservation.dock_id)
+        .maybeSingle();
 
-    console.log("[correspondence-process-event][WAREHOUSE_RESOLVED]", {
-      reqId, reservationId, dockWarehouseId,
-    });
+      if (!dockErr && dock) {
+        dockWarehouseId = dock.warehouse_id ?? null;
+        dockName = dock.name ?? "";
+      }
 
-    // ── Fetch rules — filtered by org + eventType + warehouse isolation ──────
-    // KEY FIX: Only evaluate rules that belong to the reservation's warehouse
-    // OR rules that are global (warehouse_id = null / legacy rules).
-    // This prevents rules from other warehouses in the same org from firing.
-    let rulesQuery = supabase
-      .from("correspondence_rules")
-      .select("*")
-      .eq("org_id", orgId)
-      .eq("is_active", true)
-      .eq("event_type", eventType);
+      console.log("[correspondence-process-event][DOCK_RESOLVED]", {
+        reqId, reservationId, dock_id: reservation.dock_id, dockWarehouseId, dockName,
+        dockErr: dockErr?.message ?? null,
+      });
+    } else {
+      console.warn("[correspondence-process-event][DOCK_ID_NULL]", { reqId, reservationId });
+    }
+
+    // ── Step 3: Resolve current status name ─────────────────────────────────
+    let currentStatusName = "";
+    if (reservation.status_id) {
+      const { data: statusData } = await supabase
+        .from("reservation_statuses").select("name").eq("id", reservation.status_id).maybeSingle();
+      currentStatusName = statusData?.name ?? "";
+    }
+
+    console.log("[correspondence-process-event][WAREHOUSE_RESOLVED]", { reqId, reservationId, dockWarehouseId });
+
+    // ── Step 4: Fetch candidate rules with strict warehouse isolation ─────────
+    let allCandidateRules: any[] = [];
 
     if (dockWarehouseId) {
-      // Only rules matching this warehouse OR global legacy rules (warehouse_id IS NULL)
-      rulesQuery = rulesQuery.or(`warehouse_id.eq.${dockWarehouseId},warehouse_id.is.null`);
+      const { data: warehouseRules, error: wrErr } = await supabase
+        .from("correspondence_rules").select("*")
+        .eq("org_id", orgId).eq("is_active", true).eq("event_type", eventType)
+        .eq("warehouse_id", dockWarehouseId);
+
+      if (!wrErr) allCandidateRules = [...(warehouseRules ?? [])];
+
+      const { data: globalRules, error: grErr } = await supabase
+        .from("correspondence_rules").select("*")
+        .eq("org_id", orgId).eq("is_active", true).eq("event_type", eventType)
+        .is("warehouse_id", null);
+
+      if (!grErr) allCandidateRules = [...allCandidateRules, ...(globalRules ?? [])];
+    } else {
+      console.warn("[correspondence-process-event][WAREHOUSE_FALLBACK]", { reqId, reservationId });
+      const { data: orgRules, error: orgRulesErr } = await supabase
+        .from("correspondence_rules").select("*")
+        .eq("org_id", orgId).eq("is_active", true).eq("event_type", eventType);
+      if (!orgRulesErr) allCandidateRules = orgRules ?? [];
     }
-    // If we can't resolve a warehouse (no dock), fall back to org-wide rules
-    // (original behavior) to avoid swallowing legitimate events
+
+    // ── Step 5: For status_changed — apply status filter in JS ───────────────
+    let rules: any[] = allCandidateRules;
 
     if (eventType === "reservation_status_changed") {
-      rulesQuery = rulesQuery.or([
-        "and(status_from_id.is.null,status_to_id.is.null)",
-        `and(status_from_id.eq.${asNull(statusFromId)},status_to_id.is.null)`,
-        `and(status_from_id.is.null,status_to_id.eq.${asNull(statusToId)})`,
-        `and(status_from_id.eq.${asNull(statusFromId)},status_to_id.eq.${asNull(statusToId)})`,
-      ].join(","));
+      rules = allCandidateRules.filter((rule: any) => {
+        const fromMatch = !rule.status_from_id || rule.status_from_id === statusFromId;
+        const toMatch = !rule.status_to_id || rule.status_to_id === statusToId;
+        return fromMatch && toMatch;
+      });
     }
 
-    const { data: rules, error: rulesErr } = await rulesQuery;
-
     console.log("[correspondence-process-event][RULES_FOUND]", {
-      reqId,
-      reservationId,
-      dockWarehouseId,
-      eventType,
-      rulesCount: rules?.length ?? 0,
-      ruleIds: (rules ?? []).map((r: any) => ({ id: r.id, name: r.name, warehouse_id: r.warehouse_id })),
+      reqId, reservationId, dockWarehouseId, eventType,
+      candidatesBeforeFilter: allCandidateRules.length,
+      rulesAfterFilter: rules.length,
+      ruleIds: rules.map((r: any) => ({ id: r.id, name: r.name, warehouse_id: r.warehouse_id })),
     });
 
-    if (rulesErr) return json(500, { error: "Failed to fetch rules", details: rulesErr.message, reqId });
-    if (!rules || rules.length === 0) return json(200, { success: true, message: "No active rules found", queued: 0, sent: 0, failed: 0, results: [], reqId });
+    if (!rules || rules.length === 0) {
+      return json(200, { success: true, message: "No active rules found", queued: 0, sent: 0, failed: 0, results: [], reqId });
+    }
 
-    // ── Resolve warehouse timezone ───────────────────────────────────────────
+    // ── Step 6: Resolve warehouse timezone ──────────────────────────────────
     const FALLBACK_TZ = "America/Costa_Rica";
     let warehouseTimezone = FALLBACK_TZ;
 
     if (dockWarehouseId) {
       try {
-        const { data: wh, error: whErr } = await supabase.from("warehouses").select("timezone, name").eq("id", dockWarehouseId).maybeSingle();
-        if (!whErr && wh?.timezone) {
-          warehouseTimezone = wh.timezone;
-          console.log("[correspondence-process-event][TIMEZONE_RESOLVED]", { reqId, timezone: warehouseTimezone });
-        }
+        const { data: wh } = await supabase.from("warehouses").select("timezone, name").eq("id", dockWarehouseId).maybeSingle();
+        if (wh?.timezone) warehouseTimezone = wh.timezone;
       } catch (e: any) {
         console.warn("[correspondence-process-event][WAREHOUSE_TZ_EXCEPTION]", { reqId, error: e?.message });
       }
     }
 
-    // ── Helper data ──────────────────────────────────────────────────────────
+    // ── Step 7: Resolve helper data ──────────────────────────────────────────
     const reservationDua: string = ((reservation as any)?.dua ?? "").trim();
 
     const createdById = (reservation as any).created_by ?? (reservation as any).user_id ?? null;
@@ -251,19 +266,26 @@ serve(async (req) => {
     const startDatetime = (reservation as any)?.start_datetime;
     const endDatetime = (reservation as any)?.end_datetime;
 
+    // ── {{provider}}: resolved from shipper_provider (plain text field) ──────
+    // shipper_provider is stored directly on the reservation row as free text.
+    // If empty/null, falls back to "" so the template doesn't break.
+    const providerName: string = ((reservation as any)?.shipper_provider ?? "").trim();
+
     const templateCtx: Record<string, any> = {
-      reservation_id: (reservation as any)?.id ?? "",
-      dock: (reservation as any)?.docks?.name ?? "",
+      reservation_id: reservation.id ?? "",
+      dock: dockName,
       start_datetime: formatDateInWarehouseTimezone(startDatetime, warehouseTimezone),
       end_datetime: formatDateInWarehouseTimezone(endDatetime, warehouseTimezone),
       start_time: formatTimeInWarehouseTimezone(startDatetime, warehouseTimezone),
       end_time: formatTimeInWarehouseTimezone(endDatetime, warehouseTimezone),
       warehouse_timezone: warehouseTimezone,
-      status: (reservation as any)?.reservation_statuses?.name ?? "",
+      status: currentStatusName,
       driver: (reservation as any)?.driver ?? "",
       truck_plate: (reservation as any)?.truck_plate ?? "",
       dua: (reservation as any)?.dua ?? "",
       invoice: (reservation as any)?.invoice ?? "",
+      // NEW: provider variable — resolves to shipper_provider field value
+      provider: providerName,
       created_by: createdByName,
       actor: actorName,
       fotos: "",
@@ -275,19 +297,15 @@ serve(async (req) => {
     let queued = 0, sent = 0, failed = 0;
     const results: any[] = [];
 
+    // ── Step 8: Process each rule ────────────────────────────────────────────
     for (const rule of rules as any[]) {
-      // ── CONDICIÓN DUA ────────────────────────────────────────────────────
+
       if (rule.require_dua === true) {
         if (!reservationDua) {
-          console.log("[correspondence-process-event][DUA_SKIP]", {
-            reqId, ruleId: rule.id, ruleName: rule.name,
-            reason: "require_dua=true but reservation has no DUA",
-            reservationDua,
-          });
+          console.log("[correspondence-process-event][DUA_SKIP]", { reqId, ruleId: rule.id, ruleName: rule.name });
           results.push({ ruleId: rule.id, outboxId: null, status: "skipped", reason: "require_dua: reservation has no DUA" });
           continue;
         }
-        console.log("[correspondence-process-event][DUA_MATCH]", { reqId, ruleId: rule.id, dua: reservationDua });
       }
 
       let ruleCtx = { ...templateCtx };
@@ -334,7 +352,23 @@ serve(async (req) => {
 
       const { data: outbox, error: outboxErr } = await supabase
         .from("correspondence_outbox")
-        .insert({ org_id: orgId, rule_id: rule.id, event_type: eventType, reservation_id: reservationId, actor_user_id: actorUserId, sender_user_id: senderUserId, sender_email: smtpFrom, to_emails: toEmails, cc_emails: ccEmails, bcc_emails: bccEmails, subject, body: bodyHtml, status: "queued", created_at: new Date().toISOString() })
+        .insert({
+          org_id: orgId,
+          warehouse_id: dockWarehouseId ?? null,
+          rule_id: rule.id,
+          event_type: eventType,
+          reservation_id: reservationId,
+          actor_user_id: actorUserId,
+          sender_user_id: senderUserId,
+          sender_email: smtpFrom,
+          to_emails: toEmails,
+          cc_emails: ccEmails,
+          bcc_emails: bccEmails,
+          subject,
+          body: bodyHtml,
+          status: "queued",
+          created_at: new Date().toISOString(),
+        })
         .select("id")
         .maybeSingle();
 
@@ -359,7 +393,7 @@ serve(async (req) => {
         if (smtpResp.ok && smtpData?.success) {
           await supabase.from("correspondence_outbox").update({ status: "sent", sent_at: new Date().toISOString(), error: null }).eq("id", outbox.id);
           sent++;
-          results.push({ ruleId: rule.id, outboxId: outbox.id, status: "sent" });
+          results.push({ ruleId: rule.id, outboxId: outbox.id, status: "sent", warehouseId: dockWarehouseId });
         } else {
           const smtpError = smtpData?.error ?? smtpData?.details ?? `smtp-send HTTP ${smtpResp.status}`;
           await supabase.from("correspondence_outbox").update({ status: "failed", error: smtpError }).eq("id", outbox.id);

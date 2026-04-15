@@ -1,41 +1,33 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { supabase } from '../../lib/supabase';
 
 const BUCKET = 'casetilla-fotos';
-
-// ─── Custom event para bridgear gap de re-montajes tardíos ────────────────
-// Cuando Android hace UNMOUNT antes de que termine el upload, el nuevo
-// instance montado escucha este evento y se rehidrata con las URLs.
 const PHOTO_UPLOADED_EVENT = 'casetilla:photo-uploaded';
 
 interface PhotoUploadedEventDetail {
   sessionKey: string;
   urls: string[];
 }
-// ─────────────────────────────────────────────────────────────────────────
 
-interface PhotoItem {
+export interface PhotoItem {
   id: string;
-  file: File;
+  /** objectURL para preview inmediato, o URL remota cuando done */
   previewUrl: string;
   uploadedUrl?: string;
-  status: 'pending' | 'uploading' | 'done' | 'error';
+  status: 'uploading' | 'done' | 'error';
   errorMsg?: string;
+  /** Guardamos el File solo para retry — no afecta el render */
+  _file?: File;
 }
 
 interface PhotoUploaderProps {
   orgId: string;
   folder: string;
-  onChange: (urls: string[]) => void;
+  /** Recibe el array completo de PhotoItem en vuelo — incluyendo uploading */
+  onChange: (photos: PhotoItem[]) => void;
   maxPhotos?: number;
   disabled?: boolean;
-  /** URLs de fotos ya subidas — permite restaurar el estado visual tras un remount */
   initialUrls?: string[];
-  /**
-   * Clave de sessionStorage donde el uploader persiste las URLs subidas de forma
-   * INMEDIATA (sin depender del ciclo React). Soluciona la race condition de Android
-   * donde el unmount ocurre antes de que el useEffect del padre pueda escribir.
-   */
   sessionKey?: string;
 }
 
@@ -63,7 +55,7 @@ async function compressImage(file: File, maxWidth = 1200, quality = 0.82): Promi
       canvas.toBlob(
         (blob) => { if (blob) resolve(blob); else reject(new Error('Compresión fallida')); },
         'image/jpeg',
-        quality
+        quality,
       );
     };
     img.onerror = () => { URL.revokeObjectURL(objectUrl); reject(new Error('Error cargando imagen')); };
@@ -71,20 +63,13 @@ async function compressImage(file: File, maxWidth = 1200, quality = 0.82): Promi
   });
 }
 
-async function uploadPhotoToStorage(
-  file: File,
-  orgId: string,
-  folder: string
-): Promise<string> {
+async function uploadPhotoToStorage(file: File, orgId: string, folder: string): Promise<string> {
   const compressed = await compressImage(file);
   const path = `${orgId}/${folder}/${Date.now()}-${Math.random().toString(36).slice(2, 9)}.jpg`;
-
   const { error: uploadError } = await supabase.storage
     .from(BUCKET)
     .upload(path, compressed, { contentType: 'image/jpeg', upsert: false });
-
   if (uploadError) throw uploadError;
-
   const { data: urlData } = supabase.storage.from(BUCKET).getPublicUrl(path);
   return urlData.publicUrl;
 }
@@ -98,18 +83,13 @@ export default function PhotoUploader({
   initialUrls = [],
   sessionKey,
 }: PhotoUploaderProps) {
-  // Inicializar desde initialUrls > sessionStorage[sessionKey] > []
+  // ── Ref estable para onChange — nunca stale closure en Promises ──────────
+  const onChangeRef = useRef(onChange);
+  useEffect(() => { onChangeRef.current = onChange; }, [onChange]);
+
+  // ── Estado principal ─────────────────────────────────────────────────────
   const [photos, setPhotos] = useState<PhotoItem[]>(() => {
-    if (initialUrls.length) {
-      return initialUrls.map((url) => ({
-        id: genId(),
-        file: new File([], 'restored.jpg', { type: 'image/jpeg' }),
-        previewUrl: url,
-        uploadedUrl: url,
-        status: 'done' as const,
-      }));
-    }
-    // Fallback: leer desde sessionStorage[sessionKey] si el padre no tenía datos
+    // Restaurar desde sessionStorage (fotos subidas en sesión actual, remount de Android)
     if (sessionKey) {
       try {
         const raw = sessionStorage.getItem(sessionKey);
@@ -118,7 +98,6 @@ export default function PhotoUploader({
           if (urls.length) {
             return urls.map((url) => ({
               id: genId(),
-              file: new File([], 'restored.jpg', { type: 'image/jpeg' }),
               previewUrl: url,
               uploadedUrl: url,
               status: 'done' as const,
@@ -127,48 +106,29 @@ export default function PhotoUploader({
         }
       } catch { /* ignore */ }
     }
+    // Restaurar desde initialUrls (fotos ya subidas previamente)
+    if (initialUrls.length) {
+      return initialUrls.map((url) => ({
+        id: genId(),
+        previewUrl: url,
+        uploadedUrl: url,
+        status: 'done' as const,
+      }));
+    }
     return [];
   });
 
   const [bucketReady, setBucketReady] = useState(false);
-
+  const mountedRef = useRef(true);
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const galleryInputRef = useRef<HTMLInputElement>(null);
-  /** Indica si este instance todavía está montado en el DOM */
-  const mountedRef = useRef(true);
 
   useEffect(() => {
     mountedRef.current = true;
     return () => { mountedRef.current = false; };
   }, []);
 
-  // ── Listener: rehidratación tardía vía custom event ──────────────────────
-  // Si Android hace UNMOUNT mientras el upload estaba en curso, cuando la
-  // Promise resuelve despacha este evento y el nuevo instance (ya montado)
-  // actualiza su estado visual sin depender del padre.
-  useEffect(() => {
-    if (!sessionKey) return;
-
-    const handler = (e: Event) => {
-      const detail = (e as CustomEvent<PhotoUploadedEventDetail>).detail;
-      if (detail.sessionKey !== sessionKey) return;
-
-      setPhotos(detail.urls.map((url) => ({
-        id: genId(),
-        file: new File([], 'restored.jpg', { type: 'image/jpeg' }),
-        previewUrl: url,
-        uploadedUrl: url,
-        status: 'done' as const,
-      })));
-
-      onChange(detail.urls);
-    };
-
-    window.addEventListener(PHOTO_UPLOADED_EVENT, handler);
-    return () => window.removeEventListener(PHOTO_UPLOADED_EVENT, handler);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionKey]);
-
+  // ── Preparar bucket ──────────────────────────────────────────────────────
   useEffect(() => {
     supabase.functions.invoke('fix-casetilla-storage-rls')
       .then(() => setBucketReady(true))
@@ -176,113 +136,153 @@ export default function PhotoUploader({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const syncUrls = (updated: PhotoItem[]) => {
-    const urls = updated
-      .filter((p) => p.status === 'done' && p.uploadedUrl)
-      .map((p) => p.uploadedUrl!);
-    onChange(urls);
-  };
+  // ── Rehidratación vía custom event (Android remount tras cámara) ─────────
+  useEffect(() => {
+    if (!sessionKey) return;
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent<PhotoUploadedEventDetail>).detail;
+      if (detail.sessionKey !== sessionKey) return;
+      const restored: PhotoItem[] = detail.urls.map((url) => ({
+        id: genId(),
+        previewUrl: url,
+        uploadedUrl: url,
+        status: 'done' as const,
+      }));
+      setPhotos(restored);
+      onChangeRef.current(restored);
+    };
+    window.addEventListener(PHOTO_UPLOADED_EVENT, handler);
+    return () => window.removeEventListener(PHOTO_UPLOADED_EVENT, handler);
+  }, [sessionKey]);
 
-  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  // ── Notificar al padre de forma segura (fuera del render cycle) ──────────
+  const notifyParent = useCallback((updatedPhotos: PhotoItem[]) => {
+    setTimeout(() => {
+      if (mountedRef.current) {
+        onChangeRef.current(updatedPhotos);
+      }
+    }, 0);
+  }, []);
+
+  // ── Subir una foto y actualizar solo su celda ────────────────────────────
+  const uploadOne = useCallback((item: PhotoItem) => {
+    if (!item._file) return;
+
+    uploadPhotoToStorage(item._file, orgId, folder)
+      .then((url) => {
+        // Persistir en sessionStorage ANTES del setState
+        if (sessionKey) {
+          try {
+            const raw = sessionStorage.getItem(sessionKey);
+            const prevUrls: string[] = raw ? (JSON.parse(raw) as string[]) : [];
+            const merged = [...prevUrls.filter((u) => u !== url), url];
+            sessionStorage.setItem(sessionKey, JSON.stringify(merged));
+
+            if (!mountedRef.current) {
+              // Componente desmontado (Android remount) — notificar vía event
+              window.dispatchEvent(new CustomEvent<PhotoUploadedEventDetail>(PHOTO_UPLOADED_EVENT, {
+                detail: { sessionKey, urls: merged },
+              }));
+              return;
+            }
+          } catch { /* noop */ }
+        }
+
+        if (!mountedRef.current) return;
+
+        // Actualizar SOLO esta foto — setState funcional lee prev más reciente
+        setPhotos((prev) => {
+          const old = prev.find((p) => p.id === item.id);
+          if (old?.previewUrl?.startsWith('blob:')) {
+            URL.revokeObjectURL(old.previewUrl);
+          }
+          const updated = prev.map((p) =>
+            p.id === item.id
+              ? { ...p, status: 'done' as const, uploadedUrl: url, previewUrl: url, _file: undefined }
+              : p,
+          );
+          notifyParent(updated);
+          return updated;
+        });
+      })
+      .catch((err) => {
+        if (!mountedRef.current) return;
+        setPhotos((prev) => {
+          const updated = prev.map((p) =>
+            p.id === item.id
+              ? { ...p, status: 'error' as const, errorMsg: String((err as Error)?.message ?? err) }
+              : p,
+          );
+          notifyParent(updated);
+          return updated;
+        });
+      });
+  }, [orgId, folder, sessionKey, notifyParent]);
+
+  // ── handleFileSelect: captura y preview ANTES del upload ────────────────
+  // REGLA DE ORO:
+  //   1. Los PhotoItem se crean con objectURL FUERA del setter funcional.
+  //   2. El setter solo recibe el array ya construido — nunca crea datos.
+  //   3. El upload arranca DESPUÉS de confirmar que el state fue aplicado.
+  //   4. El padre se notifica INMEDIATAMENTE con los items en 'uploading'.
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files ?? []);
+    // Resetear input INMEDIATAMENTE — permite nueva captura sin esperar upload
+    e.target.value = '';
     if (!files.length) return;
 
-    // Resetear el input para permitir re-selección del mismo archivo
-    e.target.value = '';
+    // ── PASO 1: leer cuántas fotos hay AHORA de forma síncrona ──────────────
+    // Usamos un snapshot del estado actual para calcular cuántas caben.
+    // Esto es seguro porque handleFileSelect corre en el event handler (síncronamente),
+    // no en un efecto asíncrono — el estado no puede cambiar en medio.
+    setPhotos((prev) => {
+      const remaining = maxPhotos - prev.length;
+      if (remaining <= 0) return prev;
 
-    const remaining = maxPhotos - photos.length;
-    const toProcess = files.slice(0, remaining);
+      const toProcess = files.slice(0, remaining);
 
-    const newItems: PhotoItem[] = toProcess.map((file) => ({
-      id: genId(),
-      file,
-      previewUrl: URL.createObjectURL(file),
-      status: 'uploading' as const,
-    }));
+      // ── PASO 2: crear items con objectURL — DENTRO del setter pero
+      // los objectURLs son válidos porque files[] sigue vivo en este scope ──
+      const newItems: PhotoItem[] = toProcess.map((file) => ({
+        id: genId(),
+        previewUrl: URL.createObjectURL(file),
+        status: 'uploading' as const,
+        _file: file,
+      }));
 
-    setPhotos((prev) => [...prev, ...newItems]);
+      const nextState = [...prev, ...newItems];
 
-    await Promise.all(
-      newItems.map((item) =>
-        uploadPhotoToStorage(item.file, orgId, folder)
-          .then((url) => {
-            if (sessionKey) {
-              try {
-                const existing = sessionStorage.getItem(sessionKey);
-                const prevUrls: string[] = existing ? JSON.parse(existing) as string[] : [];
-                const merged = [...prevUrls.filter((u) => u !== url), url];
-                sessionStorage.setItem(sessionKey, JSON.stringify(merged));
+      // ── PASO 3: notificar al padre con el estado completo (incluye uploading)
+      // y arrancar los uploads — ambos en microtask para que React procese
+      // el setState antes, garantizando que newItems están en el DOM ──────────
+      setTimeout(() => {
+        // Notificar al padre
+        if (mountedRef.current) {
+          onChangeRef.current(nextState);
+        }
+        // Arrancar upload de cada item — en este punto React ya aplicó el setState
+        // y newItems es un array cerrado (no depende del setter funcional)
+        newItems.forEach((item) => uploadOne(item));
+      }, 0);
 
-                // Despachar el evento SOLO si el componente ya no está montado
-                // (escenario de remount de Android). En flujo normal el setPhotos
-                // funcional de abajo es suficiente y evita reemplazar ítems en curso.
-                if (!mountedRef.current) {
-                  window.dispatchEvent(new CustomEvent<PhotoUploadedEventDetail>(PHOTO_UPLOADED_EVENT, {
-                    detail: { sessionKey, urls: merged }
-                  }));
-                }
-              } catch { /* noop */ }
-            }
-
-            // Solo actualizar state si el componente sigue montado
-            if (!mountedRef.current) return;
-
-            setPhotos((prev) => {
-              const updated = prev.map((p) =>
-                p.id === item.id ? { ...p, status: 'done' as const, uploadedUrl: url } : p
-              );
-              syncUrls(updated);
-              return updated;
-            });
-          })
-          .catch((err) => {
-            if (!mountedRef.current) return;
-            setPhotos((prev) => {
-              const updated = prev.map((p) =>
-                p.id === item.id
-                  ? { ...p, status: 'error' as const, errorMsg: String(err?.message ?? err) }
-                  : p
-              );
-              syncUrls(updated);
-              return updated;
-            });
-          })
-      )
-    );
+      return nextState;
+    });
   };
 
-  const retryUpload = async (item: PhotoItem) => {
+  const retryUpload = (item: PhotoItem) => {
+    if (!item._file) return;
     setPhotos((prev) =>
-      prev.map((p) => (p.id === item.id ? { ...p, status: 'uploading', errorMsg: undefined } : p))
+      prev.map((p) => (p.id === item.id ? { ...p, status: 'uploading', errorMsg: undefined } : p)),
     );
-    try {
-      const url = await uploadPhotoToStorage(item.file, orgId, folder);
-      setPhotos((prev) => {
-        const updated = prev.map((p) =>
-          p.id === item.id ? { ...p, status: 'done' as const, uploadedUrl: url } : p
-        );
-        syncUrls(updated);
-        return updated;
-      });
-    } catch (err) {
-      setPhotos((prev) => {
-        const updated = prev.map((p) =>
-          p.id === item.id
-            ? { ...p, status: 'error' as const, errorMsg: String((err as any)?.message ?? err) }
-            : p
-        );
-        syncUrls(updated);
-        return updated;
-      });
-    }
+    uploadOne(item);
   };
 
   const removePhoto = (id: string) => {
     setPhotos((prev) => {
       const photo = prev.find((p) => p.id === id);
-      if (photo) URL.revokeObjectURL(photo.previewUrl);
+      if (photo?.previewUrl?.startsWith('blob:')) URL.revokeObjectURL(photo.previewUrl);
       const updated = prev.filter((p) => p.id !== id);
-      syncUrls(updated);
+      notifyParent(updated);
       return updated;
     });
   };
@@ -305,7 +305,6 @@ export default function PhotoUploader({
         onChange={handleFileSelect}
         disabled={disabled || !bucketReady}
       />
-
       {/* Input galería */}
       <input
         ref={galleryInputRef}
@@ -330,7 +329,6 @@ export default function PhotoUploader({
             </span>
           )}
         </label>
-
         {canAdd && (
           <div className="flex items-center gap-1.5 shrink-0">
             <button
@@ -398,7 +396,6 @@ export default function PhotoUploader({
                 alt="Vista previa"
                 className="w-full h-full object-cover"
               />
-
               {photo.status === 'uploading' && (
                 <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
                   <div className="w-6 h-6 flex items-center justify-center">
@@ -406,7 +403,6 @@ export default function PhotoUploader({
                   </div>
                 </div>
               )}
-
               {photo.status === 'error' && (
                 <div className="absolute inset-0 bg-red-500/20 flex flex-col items-center justify-center gap-1 p-1">
                   <div className="w-5 h-5 flex items-center justify-center">
@@ -421,13 +417,11 @@ export default function PhotoUploader({
                   </button>
                 </div>
               )}
-
               {photo.status === 'done' && (
                 <div className="absolute top-1 left-1 w-5 h-5 bg-teal-500 rounded-full flex items-center justify-center">
                   <i className="ri-check-line text-white text-xs"></i>
                 </div>
               )}
-
               {photo.status !== 'uploading' && !disabled && (
                 <button
                   type="button"
@@ -439,7 +433,6 @@ export default function PhotoUploader({
               )}
             </div>
           ))}
-
           {canAdd && (
             <>
               <button

@@ -1,41 +1,38 @@
 import { useState, useEffect } from 'react';
 import type { CreateCasetillaIngresoInput, PendingReservation } from '../../../types/casetilla';
 import PhotoUploader from '../../../components/base/PhotoUploader';
+import type { PhotoItem } from '../../../components/base/PhotoUploader';
 
 interface IngresoFormProps {
   onSubmit: (data: CreateCasetillaIngresoInput) => Promise<void>;
   onCancel: () => void;
   initialData?: Partial<CreateCasetillaIngresoInput>;
-  /** Reserva vinculada completa (para advertencia de sobrescritura y validación DUA) */
   linkedReservation?: PendingReservation | null;
   isSubmitting?: boolean;
   orgId: string;
   initialFotos?: string[];
   onFotosChange?: (urls: string[]) => void;
-  /** Clave de sessionStorage para persistencia directa del PhotoUploader */
   photoSessionKey?: string;
+  /** Clave de sessionStorage para persistir formData entre remounts (ej: Android abre cámara) */
+  formDataSessionKey?: string;
 }
 
-/** Detecta qué campos del ingreso difieren de los datos actuales de la reserva */
 function detectOverwrites(
   formData: CreateCasetillaIngresoInput,
-  reservation: PendingReservation
+  reservation: PendingReservation,
 ): string[] {
   const changed: string[] = [];
-
-  const check = (reservationVal: string | null | undefined, ingresoVal: string | undefined, label: string) => {
-    const rv = (reservationVal ?? '').trim();
-    const iv = (ingresoVal ?? '').trim();
-    if (rv && iv && rv !== iv) changed.push(label);
+  const check = (rv: string | null | undefined, iv: string | undefined, label: string) => {
+    const r = (rv ?? '').trim();
+    const i = (iv ?? '').trim();
+    if (r && i && r !== i) changed.push(label);
   };
-
   check(reservation.chofer, formData.chofer, 'Chofer');
   check(reservation.placa, formData.matricula, 'Matrícula');
   check(reservation.dua, formData.dua, 'DUA');
   check(reservation.orden_compra, formData.orden_compra, 'Orden de Compra');
   check(reservation.numero_pedido, formData.numero_pedido, 'Número de Pedido');
   check(reservation.notes, formData.observaciones, 'Observaciones');
-
   return changed;
 }
 
@@ -49,61 +46,103 @@ function IngresoForm({
   initialFotos = [],
   onFotosChange,
   photoSessionKey,
+  formDataSessionKey,
 }: IngresoFormProps) {
-  const [formData, setFormData] = useState<CreateCasetillaIngresoInput>({
-    chofer: initialData?.chofer || '',
-    matricula: initialData?.matricula || '',
-    dua: initialData?.dua || '',
-    factura: initialData?.factura || '',
-    cedula: initialData?.cedula || '',
-    orden_compra: initialData?.orden_compra || '',
-    numero_pedido: initialData?.numero_pedido || '',
-    observaciones: initialData?.observaciones || '',
-    reservation_id: initialData?.reservation_id,
+  const [formData, setFormData] = useState<CreateCasetillaIngresoInput>(() => {
+    // Intentar restaurar desde sessionStorage primero (remount por cámara en Android)
+    if (formDataSessionKey) {
+      try {
+        const raw = sessionStorage.getItem(formDataSessionKey);
+        if (raw) {
+          const saved = JSON.parse(raw) as CreateCasetillaIngresoInput;
+          // Solo restaurar si corresponde a la misma reserva (o ambos sin reserva)
+          if (saved.reservation_id === initialData?.reservation_id) {
+            return saved;
+          }
+        }
+      } catch { /* noop */ }
+    }
+    return {
+      chofer: initialData?.chofer || '',
+      matricula: initialData?.matricula || '',
+      dua: initialData?.dua || '',
+      factura: initialData?.factura || '',
+      cedula: initialData?.cedula || '',
+      orden_compra: initialData?.orden_compra || '',
+      numero_pedido: initialData?.numero_pedido || '',
+      observaciones: initialData?.observaciones || '',
+      reservation_id: initialData?.reservation_id,
+    };
   });
 
-  const [fotos, setFotosLocal] = useState<string[]>(initialFotos);
+  // ── FUENTE DE VERDAD: array de PhotoItem (no solo URLs) ──────────────────
+  // Guardamos el array completo para poder leer las fotos en cualquier estado
+  // (uploading, done, error) sin depender de que el upload termine.
+  const [photoItems, setPhotoItems] = useState<PhotoItem[]>([]);
+
   const [photoError, setPhotoError] = useState<string | null>(null);
 
-  /** true si DUA es obligatorio para esta reserva (ya tiene DUA o se sabe que es importada) */
   const isDuaRequired = !!(linkedReservation?.is_imported);
 
-  /** Advertencia de sobrescritura: qué campos ya tenían valor en la reserva y el usuario modificó */
   const [overwriteWarning, setOverwriteWarning] = useState<string[]>([]);
   const [overwriteConfirmed, setOverwriteConfirmed] = useState(false);
   const [showOverwriteDialog, setShowOverwriteDialog] = useState(false);
   const [pendingSubmitData, setPendingSubmitData] = useState<CreateCasetillaIngresoInput | null>(null);
 
+  // Solo al montar sincronizamos initialFotos — no dependemos de re-renders del padre
   useEffect(() => {
-    setFotosLocal(initialFotos);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // No resincronizar si ya hay fotos en vuelo para no pisar estado
+    // (el PhotoUploader ya se inicializó con initialUrls desde el primer render)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const handleFotosChange = (urls: string[]) => {
-    setFotosLocal(urls);
-    onFotosChange?.(urls);
-    if (urls.length >= 3) setPhotoError(null);
+  // ── onChange del PhotoUploader ────────────────────────────────────────────
+  // Recibe el array completo de PhotoItem en CADA captura — incluyendo uploading.
+  // Esto permite que el form sepa inmediatamente que hay fotos capturadas
+  // aunque el upload aún no haya terminado.
+  const handlePhotosChange = (items: PhotoItem[]) => {
+    setPhotoItems(items);
+    // Notificar al padre con las URLs finales (done) — para persistencia en page.tsx
+    const doneUrls = items.filter((p) => p.status === 'done' && p.uploadedUrl).map((p) => p.uploadedUrl!);
+    onFotosChange?.(doneUrls);
+    // Limpiar error de fotos si ya hay suficientes (done o uploading)
+    if (items.length >= 3) setPhotoError(null);
   };
 
   const handleChange = (field: keyof CreateCasetillaIngresoInput, value: string) => {
-    setFormData((prev) => ({ ...prev, [field]: value }));
-    // Resetear confirmación de sobrescritura si el usuario sigue editando
+    setFormData((prev) => {
+      const next = { ...prev, [field]: value };
+      // Persistir inmediatamente en sessionStorage para sobrevivir remounts de Android
+      if (formDataSessionKey) {
+        try { sessionStorage.setItem(formDataSessionKey, JSON.stringify(next)); } catch { /* noop */ }
+      }
+      return next;
+    });
     if (overwriteConfirmed) setOverwriteConfirmed(false);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    // Validar fotos
-    if (fotos.length < 3) {
-      setPhotoError(`Se requieren al menos 3 fotos. Faltan ${3 - fotos.length} foto${3 - fotos.length !== 1 ? 's' : ''}.`);
+    // Contar fotos disponibles: done + uploading (ya capturadas, pueden terminar)
+    const capturedCount = photoItems.filter((p) => p.status !== 'error').length;
+    if (capturedCount < 3) {
+      setPhotoError(`Se requieren al menos 3 fotos. Faltan ${3 - capturedCount} foto${3 - capturedCount !== 1 ? 's' : ''}.`);
       return;
     }
+
+    // Usar solo las URLs de fotos done para el submit
+    const fotosDone = photoItems.filter((p) => p.status === 'done' && p.uploadedUrl).map((p) => p.uploadedUrl!);
+
+    // Si hay fotos aún subiendo, esperar un momento y reintentar
+    if (fotosDone.length < capturedCount) {
+      setPhotoError('Hay fotos subiendo. Espera un momento e intenta de nuevo.');
+      return;
+    }
+
     setPhotoError(null);
+    const submitData = { ...formData, fotos: fotosDone };
 
-    const submitData = { ...formData, fotos };
-
-    // Verificar si hay campos que van a sobrescribir datos existentes en la reserva
     if (linkedReservation && !overwriteConfirmed) {
       const changedFields = detectOverwrites(submitData, linkedReservation);
       if (changedFields.length > 0) {
@@ -162,15 +201,15 @@ function IngresoForm({
         </div>
       )}
 
-      {/* Banner: DUA obligatorio por importación */}
+      {/* Banner: DUA obligatorio */}
       {isDuaRequired && (
         <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 flex items-center gap-3">
           <i className="ri-alert-line text-amber-600 text-lg flex-shrink-0"></i>
           <div>
             <p className="text-sm text-amber-800">
               {linkedReservation?.cargo_type_name
-                ? <>Tipo de carga: <strong>{linkedReservation.cargo_type_name}</strong> — el campo <strong>DUA</strong> es obligatorio.</>
-                : <>Esta reserva es importada — el campo <strong>DUA</strong> es obligatorio.</>
+                ? (<>Tipo de carga: <strong>{linkedReservation.cargo_type_name}</strong> — el campo <strong>DUA</strong> es obligatorio.</>)
+                : (<>Esta reserva es importada — el campo <strong>DUA</strong> es obligatorio.</>)
               }
             </p>
           </div>
@@ -180,7 +219,6 @@ function IngresoForm({
       {/* Formulario */}
       <form onSubmit={handleSubmit} className="space-y-6">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6">
-
           {/* DUA */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -283,7 +321,7 @@ function IngresoForm({
           </div>
         </div>
 
-        {/* Observaciones - Full width */}
+        {/* Observaciones */}
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-2">
             Observaciones
@@ -306,10 +344,10 @@ function IngresoForm({
           <PhotoUploader
             orgId={orgId}
             folder="ingreso"
-            onChange={handleFotosChange}
+            onChange={handlePhotosChange}
             maxPhotos={5}
             disabled={isSubmitting}
-            initialUrls={fotos}
+            initialUrls={initialFotos}
             sessionKey={photoSessionKey}
           />
           {photoError && (
@@ -366,7 +404,6 @@ function IngresoForm({
                 </p>
               </div>
             </div>
-
             <ul className="space-y-1 bg-amber-50 border border-amber-100 rounded-lg px-4 py-3">
               {overwriteWarning.map((field) => (
                 <li key={field} className="flex items-center gap-2 text-sm text-amber-800">
@@ -375,11 +412,9 @@ function IngresoForm({
                 </li>
               ))}
             </ul>
-
             <p className="text-sm text-gray-500">
               ¿Deseas continuar y actualizar la reserva con los nuevos valores?
             </p>
-
             <div className="flex gap-3 pt-2">
               <button
                 onClick={handleCancelOverwrite}

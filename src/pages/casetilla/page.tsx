@@ -17,6 +17,7 @@ import type { PendingReservation, ExitEligibleReservation } from '../../types/ca
 const SESSION_KEY = 'casetilla_ui_state';
 const FOTOS_INGRESO_KEY = 'casetilla_fotos_ingreso';
 const FOTOS_SALIDA_KEY  = 'casetilla_fotos_salida';
+const FORM_DATA_INGRESO_KEY = 'casetilla_form_ingreso';
 
 type ViewMode = 'HOME' | 'INGRESO' | 'PENDIENTES' | 'SALIDA' | 'DURACION';
 
@@ -39,6 +40,7 @@ const clearSession = () => {
     sessionStorage.removeItem(SESSION_KEY);
     sessionStorage.removeItem(FOTOS_INGRESO_KEY);
     sessionStorage.removeItem(FOTOS_SALIDA_KEY);
+    sessionStorage.removeItem(FORM_DATA_INGRESO_KEY);
   } catch { /* noop */ }
 };
 
@@ -158,7 +160,10 @@ export default function CasetillaPage() {
     if (!orgId || !user?.id) return;
     setIsSubmitting(true);
     try {
-      await casetillaService.createIngreso(orgId, user.id, { ...data, fotos: fotosIngreso });
+      // Usar data.fotos (del estado local del form) como fuente de verdad.
+      // fotosIngreso del padre puede tener lag si el último onChange aún no se procesó.
+      const fotosFinales: string[] = (data.fotos?.length ? data.fotos : fotosIngreso);
+      await casetillaService.createIngreso(orgId, user.id, { ...data, fotos: fotosFinales });
       setModal({ isOpen: true, type: 'success', title: 'Éxito', message: 'Ingreso registrado correctamente', showCancel: false,
         onConfirm: () => { setModal(prev => ({ ...prev, isOpen: false })); setSelectedReservation(null); setFotosIngresoRaw([]); clearSession(); setViewModeRaw('HOME'); }, onCancel: undefined });
     } catch (error: any) { showModal('error', 'Error', error.message || 'No se pudo registrar el ingreso'); }
@@ -308,6 +313,7 @@ export default function CasetillaPage() {
               }}
               linkedReservation={selectedReservation}
               initialFotos={fotosIngreso} onFotosChange={setFotosIngreso} photoSessionKey={FOTOS_INGRESO_KEY}
+              formDataSessionKey={FORM_DATA_INGRESO_KEY}
               onSubmit={handleSubmitIngreso}
               onCancel={() => { setSelectedReservation(null); setFotosIngresoRaw([]); clearSession(); setViewModeRaw('HOME'); }}
               isSubmitting={isSubmitting}

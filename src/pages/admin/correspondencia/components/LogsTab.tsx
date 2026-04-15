@@ -184,11 +184,18 @@ export function LogsTab() {
       />
 
       {/* Banner de filtro por almacén */}
-      {activeWarehouseId && activeWarehouse && (
+      {activeWarehouseId && activeWarehouse ? (
         <div className="p-3 bg-teal-50 border border-teal-200 rounded-lg flex items-center gap-2">
           <i className="ri-store-2-line text-teal-600 text-sm w-4 h-4 flex items-center justify-center"></i>
           <p className="text-sm text-teal-800">
-            Mostrando envíos del almacén <strong>{activeWarehouse.name}</strong> + reglas globales (legacy).
+            Mostrando envíos del almacén <strong>{activeWarehouse.name}</strong>.
+          </p>
+        </div>
+      ) : (
+        <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg flex items-center gap-2">
+          <i className="ri-information-line text-amber-600 text-sm w-4 h-4 flex items-center justify-center"></i>
+          <p className="text-sm text-amber-800">
+            Mostrando envíos de todos los almacenes. Seleccioná un almacén para filtrar.
           </p>
         </div>
       )}
@@ -371,9 +378,10 @@ export function LogsTab() {
                 </tr>
               ) : (
                 filteredLogs.map((log) => {
-                  const ruleWarehouseId = (log.rule as any)?.warehouse_id ?? null;
-                  const warehouseName = ruleWarehouseId
-                    ? allowedWarehouses.find(w => w.id === ruleWarehouseId)?.name || 'Almacén'
+                  // Use outbox.warehouse_id as source of truth (not rule.warehouse_id)
+                  const logWarehouseId = (log as any).warehouse_id ?? null;
+                  const warehouseName = logWarehouseId
+                    ? allowedWarehouses.find(w => w.id === logWarehouseId)?.name || 'Almacén'
                     : null;
                   return (
                     <tr key={log.id} className="hover:bg-gray-50">
@@ -390,9 +398,9 @@ export function LogsTab() {
                             {warehouseName}
                           </span>
                         ) : (
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-gray-100 text-gray-500">
-                            <i className="ri-global-line text-xs"></i>
-                            Global
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-amber-50 text-amber-600">
+                            <i className="ri-time-line text-xs"></i>
+                            Previo
                           </span>
                         )}
                       </td>

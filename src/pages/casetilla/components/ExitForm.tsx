@@ -1,5 +1,6 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import PhotoUploader from '../../../components/base/PhotoUploader';
+import type { PhotoItem } from '../../../components/base/PhotoUploader';
 
 interface ExitFormProps {
   reservation: {
@@ -31,23 +32,26 @@ export default function ExitForm({
   photoSessionKey
 }: ExitFormProps) {
   const [showConfirm, setShowConfirm] = useState(false);
-  const [fotos, setFotosLocal] = useState<string[]>(initialFotos);
+  // Fuente de verdad: array completo de PhotoItem (incluye uploading)
+  const [photoItems, setPhotoItems] = useState<PhotoItem[]>([]);
   const [photoError, setPhotoError] = useState<string | null>(null);
 
-  useEffect(() => {
-    setFotosLocal(initialFotos);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  const handleFotosChange = (urls: string[]) => {
-    setFotosLocal(urls);
-    onFotosChange?.(urls);
-    if (urls.length >= 3) setPhotoError(null);
+  const handlePhotosChange = (items: PhotoItem[]) => {
+    setPhotoItems(items);
+    const doneUrls = items.filter((p) => p.status === 'done' && p.uploadedUrl).map((p) => p.uploadedUrl!);
+    onFotosChange?.(doneUrls);
+    if (items.length >= 3) setPhotoError(null);
   };
 
   const handleSubmitClick = () => {
-    if (fotos.length < 3) {
-      setPhotoError(`Se requieren al menos 3 fotos. Faltan ${3 - fotos.length} foto${3 - fotos.length !== 1 ? 's' : ''}.`);
+    const capturedCount = photoItems.filter((p) => p.status !== 'error').length;
+    if (capturedCount < 3) {
+      setPhotoError(`Se requieren al menos 3 fotos. Faltan ${3 - capturedCount} foto${3 - capturedCount !== 1 ? 's' : ''}.`);
+      return;
+    }
+    const doneCount = photoItems.filter((p) => p.status === 'done').length;
+    if (doneCount < capturedCount) {
+      setPhotoError('Hay fotos subiendo. Espera un momento e intenta de nuevo.');
       return;
     }
     setPhotoError(null);
@@ -209,10 +213,10 @@ export default function ExitForm({
           <PhotoUploader
             orgId={orgId}
             folder="salida"
-            onChange={handleFotosChange}
+            onChange={handlePhotosChange}
             maxPhotos={5}
             disabled={isSubmitting}
-            initialUrls={fotos}
+            initialUrls={initialFotos}
             sessionKey={photoSessionKey}
           />
           {photoError && (

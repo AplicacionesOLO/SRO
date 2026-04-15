@@ -67,6 +67,8 @@ export interface CorrespondenceLog {
   id: string;
   org_id: string;
   rule_id: string | null;
+  /** warehouse_id of the reservation at send time — source of truth for filtering */
+  warehouse_id: string | null;
   event_type: string;
   reservation_id: string | null;
   actor_user_id: string | null;
@@ -84,6 +86,7 @@ export interface CorrespondenceLog {
   sent_at: string | null;
   rule?: {
     name: string;
+    warehouse_id?: string | null;
   };
   actor_user?: {
     full_name: string;
@@ -156,6 +159,7 @@ export const TEMPLATE_VARIABLES = [
   { key: '{{truck_plate}}', label: 'Placa del camión' },
   { key: '{{dua}}', label: 'DUA' },
   { key: '{{invoice}}', label: 'Factura' },
+  { key: '{{provider}}', label: 'Proveedor / Expedidor' },
   { key: '{{created_by}}', label: 'Creado por' },
   { key: '{{actor}}', label: 'Usuario que ejecutó la acción' },
   { key: '{{fotos}}', label: 'Fotos del punto de control (In/Out)' },

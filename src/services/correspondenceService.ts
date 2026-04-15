@@ -551,36 +551,24 @@ export const correspondenceService = {
   async retryAllFailedEmails(orgId: string, warehouseId?: string | null): Promise<{ attempted: number; succeeded: number; failed: number }> {
     const supabaseUrl = import.meta.env.VITE_PUBLIC_SUPABASE_URL as string;
 
-    // 1. Fetch all failed rows for the org
-    const { data: rows, error: fetchErr } = await supabase
+    // 1. Fetch failed rows — filter by outbox.warehouse_id directly (no rule join needed)
+    let failedQuery = supabase
       .from('correspondence_outbox')
-      .select('id, to_emails, cc_emails, bcc_emails, subject, body, sender_email, rule_id')
+      .select('id, to_emails, cc_emails, bcc_emails, subject, body, sender_email')
       .eq('org_id', orgId)
       .eq('status', 'failed');
+
+    if (warehouseId) {
+      // Include rows matching this warehouse OR legacy rows (warehouse_id IS NULL)
+      failedQuery = failedQuery.or(`warehouse_id.eq.${warehouseId},warehouse_id.is.null`);
+    }
+
+    const { data: rows, error: fetchErr } = await failedQuery;
 
     if (fetchErr) throw new Error(fetchErr.message);
     if (!rows || rows.length === 0) return { attempted: 0, succeeded: 0, failed: 0 };
 
-    // 2. If warehouseId filter is active, filter by warehouse
     let targetRows = rows;
-    if (warehouseId) {
-      const ruleIds = [...new Set(rows.map((r: any) => r.rule_id).filter(Boolean))];
-      let rulesMap: Record<string, string | null> = {};
-      if (ruleIds.length > 0) {
-        const { data: rulesData } = await supabase
-          .from('correspondence_rules')
-          .select('id, warehouse_id')
-          .in('id', ruleIds);
-        if (rulesData) {
-          rulesMap = Object.fromEntries(rulesData.map((r: any) => [r.id, r.warehouse_id ?? null]));
-        }
-      }
-      targetRows = rows.filter((r: any) => {
-        if (!r.rule_id) return true;
-        const wid = rulesMap[r.rule_id];
-        return wid === warehouseId || wid === null;
-      });
-    }
 
     if (targetRows.length === 0) return { attempted: 0, succeeded: 0, failed: 0 };
 
@@ -633,20 +621,24 @@ export const correspondenceService = {
 
   /**
    * Retrieves the correspondence logs for a given organisation,
-   * optionally filtered by warehouseId (via rule's warehouse_id).
-   * Logs from rules with warehouse_id = null are treated as global/legacy.
+   * filtered by the outbox.warehouse_id column (the actual warehouse of the
+   * reservation at send time — NOT the rule's warehouse_id).
+   * 
+   * Filtering logic:
+   *  - warehouseId provided → rows WHERE outbox.warehouse_id = warehouseId OR outbox.warehouse_id IS NULL (legacy rows)
+   *  - warehouseId null/undefined → all rows for the org
    */
   async getLogs(orgId: string, warehouseId?: string | null): Promise<CorrespondenceLog[]> {
     try {
-      //console.log("[correspondenceService] getLogs start", { orgId });
-
-      const { data, error } = await supabase
+      // Build query — filter at DB level using outbox.warehouse_id directly
+      let query = supabase
         .from("correspondence_outbox")
         .select(
           `
           id,
           org_id,
           rule_id,
+          warehouse_id,
           reservation_id,
           event_type,
           actor_user_id,
@@ -669,25 +661,19 @@ export const correspondenceService = {
         .eq("org_id", orgId)
         .order("created_at", { ascending: false });
 
-      /**console.log("[correspondenceService] getLogs result", {
-        orgId,
-        hasData: !!data,
-        count: data?.length ?? 0,
-        error: error
-          ? {
-              code: (error as any).code,
-              message: (error as any).message,
-              details: (error as any).details,
-              hint: (error as any).hint,
-            }
-          : null,
-      });*/
+      // Filter by warehouse_id at the DB level:
+      // - exact match OR null (legacy rows that predate the column)
+      if (warehouseId) {
+        query = query.or(`warehouse_id.eq.${warehouseId},warehouse_id.is.null`);
+      }
+
+      const { data, error } = await query;
 
       if (error) {
         return [];
       }
 
-      // Resolve rule names + warehouse_id for filtering
+      // Resolve rule names (for display only — no longer used for filtering)
       const ruleIds = [
         ...new Set(
           (data ?? [])
@@ -706,28 +692,20 @@ export const correspondenceService = {
 
         if (!rulesError && rulesData) {
           rulesMap = Object.fromEntries(
-            (rulesData as any[]).map((rule) => [rule.id, { name: rule.name, warehouse_id: rule.warehouse_id ?? null }])
+            (rulesData as any[]).map((rule) => [
+              rule.id,
+              { name: rule.name, warehouse_id: rule.warehouse_id ?? null },
+            ])
           );
         }
       }
 
-      // Filter logs by warehouseId if provided:
-      // - Show logs from rules matching the active warehouse
-      // - Also show logs from rules with warehouse_id = null (global/legacy)
-      let filteredData = data ?? [];
-      if (warehouseId) {
-        filteredData = filteredData.filter((row: any) => {
-          if (!row.rule_id) return true; // no rule → show always
-          const rule = rulesMap[row.rule_id];
-          if (!rule) return true; // rule not found → show
-          return rule.warehouse_id === warehouseId || rule.warehouse_id === null;
-        });
-      }
-
-      const logs: CorrespondenceLog[] = filteredData.map((row: any) => ({
+      const logs: CorrespondenceLog[] = (data ?? []).map((row: any) => ({
         id: row.id,
         org_id: row.org_id,
         rule_id: row.rule_id,
+        // outbox.warehouse_id is now the source of truth
+        warehouse_id: row.warehouse_id ?? null,
         reservation_id: row.reservation_id,
         event_type: row.event_type,
         actor_user_id: row.actor_user_id,
@@ -743,18 +721,14 @@ export const correspondenceService = {
         error: row.error,
         created_at: row.created_at,
         sent_at: row.sent_at,
-        rule: row.rule_id && rulesMap[row.rule_id] ? { name: rulesMap[row.rule_id].name, warehouse_id: rulesMap[row.rule_id].warehouse_id } : undefined,
+        rule: row.rule_id && rulesMap[row.rule_id]
+          ? { name: rulesMap[row.rule_id].name, warehouse_id: rulesMap[row.rule_id].warehouse_id }
+          : undefined,
         actor_user: row.actor_user
-          ? {
-              full_name: row.actor_user.name,
-              email: row.actor_user.email,
-            }
+          ? { full_name: row.actor_user.name, email: row.actor_user.email }
           : undefined,
         sender_user: row.sender_user
-          ? {
-              full_name: row.sender_user.name,
-              email: row.sender_user.email,
-            }
+          ? { full_name: row.sender_user.name, email: row.sender_user.email }
           : undefined,
       }));
 
