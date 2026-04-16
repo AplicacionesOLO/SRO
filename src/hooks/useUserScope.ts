@@ -221,16 +221,54 @@ export function useUserScope(): UserScope {
         const { data: wcRows } = await clientQuery;
         if (cancelled) return;
 
+        // Clientes disponibles por almacén (universo base)
         const seenClients = new Set<string>();
+        const warehouseClientIds: string[] = [];
+
+        for (const row of (wcRows ?? []) as any[]) {
+          const c = (row as any).clients;
+          if (c && !seenClients.has(c.id)) {
+            seenClients.add(c.id);
+            warehouseClientIds.push(c.id);
+          }
+        }
+
+        // ── Restricción de cliente: si el usuario tiene asignaciones en user_clients
+        //    solo puede ver esos clientes (intersectados con los del almacén).
+        //    Si no tiene ninguna, hereda todos los del almacén (compatibilidad).
+        const { data: ucRows } = await supabase
+          .from('user_clients')
+          .select('client_id')
+          .eq('org_id', orgId)
+          .eq('user_id', userId);
+
+        if (cancelled) return;
+
+        const explicitClientIds = (ucRows ?? []).map((r: any) => r.client_id as string);
+        const hasClientRestriction = explicitClientIds.length > 0;
+
+        // Si hay restricción explícita → intersección; si no → todos los del almacén
+        const finalClientIds = hasClientRestriction
+          ? warehouseClientIds.filter((id) => explicitClientIds.includes(id))
+          : warehouseClientIds;
+
+        // Cargar nombres de los clientes finales
         const clients: UserScopeClient[] = [];
         const clientIds: string[] = [];
 
-        for (const row of (wcRows ?? []) as any[]) {
-          const c = row.clients;
-          if (c && !seenClients.has(c.id)) {
-            seenClients.add(c.id);
-            clients.push({ id: c.id, name: c.name });
-            clientIds.push(c.id);
+        if (finalClientIds.length > 0) {
+          const { data: clientData } = await supabase
+            .from('clients')
+            .select('id, name')
+            .eq('org_id', orgId)
+            .in('id', finalClientIds)
+            .eq('is_active', true);
+
+          if (!cancelled) {
+            for (const c of (clientData ?? []) as any[]) {
+              clients.push({ id: c.id, name: c.name });
+              clientIds.push(c.id);
+            }
           }
         }
 

@@ -147,17 +147,27 @@ export const cargoTypesService = {
   },
 
   // Alias para compatibilidad con CargoTypeModal
-  async createCargoType(orgId: string, name: string, defaultMinutes?: number | null, isDynamic?: boolean): Promise<CargoType> {
-    //console.log('[CargoTypes] Creating cargo type', { orgId, name, defaultMinutes, isDynamic });
-    
+  async createCargoType(
+    orgId: string,
+    name: string,
+    defaultMinutes?: number | null,
+    isDynamic?: boolean,
+    measurementKey?: string | null,
+    unitLabel?: string | null,
+    secondsPerUnit?: number | null
+  ): Promise<CargoType> {
     // Payload exacto que se va a insertar
-    const payload = {
+    const payload: any = {
       org_id: orgId,
       name,
       default_minutes: defaultMinutes || undefined,
       is_dynamic: isDynamic || false,
-      active: true
+      active: true,
     };
+
+    if (measurementKey !== undefined) payload.measurement_key = measurementKey || null;
+    if (unitLabel !== undefined) payload.unit_label = unitLabel || null;
+    if (secondsPerUnit !== undefined) payload.seconds_per_unit = secondsPerUnit ?? null;
     
     //console.log('[CargoTypes] INSERT payload:', JSON.stringify(payload, null, 2));
     
@@ -210,15 +220,16 @@ export const cargoTypesService = {
   },
 
   // Alias para compatibilidad con CargoTypeModal
-  async updateCargoType(id: string, updates: Partial<Pick<CargoType, 'name' | 'default_minutes' | 'is_dynamic' | 'is_active'>>): Promise<CargoType> {
-    //console.log('[CargoTypes] Updating cargo type', { id, updates });
-    
+  async updateCargoType(id: string, updates: Partial<Pick<CargoType, 'name' | 'default_minutes' | 'is_dynamic' | 'is_active' | 'measurement_key' | 'unit_label' | 'seconds_per_unit'>>): Promise<CargoType> {
     // Mapeo correcto: is_active del modal → active en la tabla
     const updateData: any = {};
     if (updates.name !== undefined) updateData.name = updates.name;
     if (updates.default_minutes !== undefined) updateData.default_minutes = updates.default_minutes;
     if (updates.is_dynamic !== undefined) updateData.is_dynamic = updates.is_dynamic;
     if (updates.is_active !== undefined) updateData.active = updates.is_active; // ✅ Mapeo correcto
+    if (updates.measurement_key !== undefined) updateData.measurement_key = updates.measurement_key || null;
+    if (updates.unit_label !== undefined) updateData.unit_label = updates.unit_label || null;
+    if (updates.seconds_per_unit !== undefined) updateData.seconds_per_unit = updates.seconds_per_unit ?? null;
     
     //console.log('[CargoTypes] UPDATE payload:', JSON.stringify(updateData, null, 2));
     

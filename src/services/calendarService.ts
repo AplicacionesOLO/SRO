@@ -396,7 +396,8 @@ export const calendarService = {
   async getDocks(
     orgId: string,
     warehouseId?: string | null,
-    allowedWarehouseIds?: string[] | null
+    allowedWarehouseIds?: string[] | null,
+    allowedClientIds?: string[] | null
   ): Promise<Dock[]> {
     let query = supabase
       .from('docks')
@@ -424,9 +425,36 @@ export const calendarService = {
 
     if (!data || data.length === 0) return [];
 
+    let filteredData = data as any[];
+
+    // ── SEGREGACIÓN por clientes asignados al usuario ─────────────────────
+    // Si el usuario tiene clientes explícitos (allowedClientIds), solo mostrar
+    // los andenes que estén en client_docks para esos clientes.
+    // Regla de compatibilidad: si allowedClientIds es null → sin restricción.
+    if (allowedClientIds && allowedClientIds.length > 0) {
+      const allDockIds = filteredData.map((d: any) => d.id);
+
+      const { data: clientDockRows } = await supabase
+        .from('client_docks')
+        .select('dock_id')
+        .eq('org_id', orgId)
+        .in('client_id', allowedClientIds)
+        .in('dock_id', allDockIds);
+
+      if (clientDockRows && clientDockRows.length > 0) {
+        const allowedDockIds = new Set(clientDockRows.map((r: any) => r.dock_id as string));
+        filteredData = filteredData.filter((d: any) => allowedDockIds.has(d.id));
+      } else {
+        // No hay andenes asignados a esos clientes → retornar vacío
+        filteredData = [];
+      }
+    }
+
+    if (filteredData.length === 0) return [];
+
     // ✅ Enriquecer cada dock con el timezone de su almacén
     const warehouseIds = [...new Set(
-      data.map((d: any) => d.warehouse_id).filter(Boolean)
+      filteredData.map((d: any) => d.warehouse_id).filter(Boolean)
     )] as string[];
 
     let warehouseTimezoneMap = new Map<string, string>();
@@ -440,7 +468,7 @@ export const calendarService = {
       });
     }
 
-    return data.map((dock: any) => ({
+    return filteredData.map((dock: any) => ({
       ...dock,
       warehouse_timezone: dock.warehouse_id
         ? (warehouseTimezoneMap.get(dock.warehouse_id) || null)

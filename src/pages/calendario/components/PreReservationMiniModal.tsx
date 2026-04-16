@@ -21,6 +21,7 @@ interface PreReservationMiniModalProps {
     providerId: string;
     clientId: string;
     requiredMinutes: number;
+    quantityValue?: number | null;
   }) => void;
 }
 
@@ -45,9 +46,12 @@ export default function PreReservationMiniModal({
   // duración calculada por perfil o fallback
   const [requiredMinutes, setRequiredMinutes] = useState<number>(30);
   const [durationSource, setDurationSource] = useState<
-    'profile' | 'cargo_default' | 'fallback_30' | 'none'
+    'dynamic_calc' | 'profile' | 'cargo_default' | 'fallback_30' | 'none'
   >('none');
   const [loadingDuration, setLoadingDuration] = useState(false);
+
+  // Campo dinámico: cantidad capturada en este primer modal
+  const [quantityValue, setQuantityValue] = useState<string>('');
 
   // clientId resuelto desde el proveedor seleccionado
   const [resolvedClientId, setResolvedClientId] = useState<string>('');
@@ -215,22 +219,32 @@ export default function PreReservationMiniModal({
       setResolvedClientId('');
       setLoadingClient(false);
       setClientError('');
+      setQuantityValue('');
       reqKeyRef.current = '';
     }
   }, [isOpen]);
 
   const selectedCargoType = cargoTypes.find(ct => ct.id === selectedCargoTypeId);
+  const isDynamic = selectedCargoType?.is_dynamic === true;
 
-  // Buscar avg_minutes del perfil cuando hay combinación
+  // Buscar perfil de tiempo y calcular duración requerida
   useEffect(() => {
     if (!isOpen) return;
 
     const cargoTypeId = selectedCargoTypeId;
     const providerId = selectedProviderId;
 
+    // Sin tipo+proveedor: intentar usar default del tipo si existe
     if (!cargoTypeId || !providerId) {
+      // Para tipos dinámicos sin proveedor elegido, no calcular aún
+      if (selectedCargoType?.is_dynamic) {
+        setRequiredMinutes(30);
+        setDurationSource('none');
+        setLoadingDuration(false);
+        reqKeyRef.current = '';
+        return;
+      }
       const def = selectedCargoType?.default_minutes ?? null;
-
       if (typeof def === 'number' && def >= 5) {
         setRequiredMinutes(def);
         setDurationSource('cargo_default');
@@ -238,26 +252,47 @@ export default function PreReservationMiniModal({
         setRequiredMinutes(30);
         setDurationSource(selectedCargoType ? 'fallback_30' : 'none');
       }
-
       setLoadingDuration(false);
       reqKeyRef.current = '';
       return;
     }
 
-    const reqKey = `${orgId}:${providerId}:${cargoTypeId}`;
+    // Para tipos dinámicos: recalcular cuando cambia quantityValue también
+    const qty = isDynamic ? (quantityValue.trim() ? Number(quantityValue) : null) : null;
+
+    const reqKey = `${orgId}:${providerId}:${cargoTypeId}:${qty ?? ''}`;
     reqKeyRef.current = reqKey;
 
     const run = async () => {
       setLoadingDuration(true);
       try {
-        const profile = await timeProfilesService.findMatchingProfile(
-          orgId,
-          providerId,
-          cargoTypeId,
-        );
+        const profile = await timeProfilesService.findMatchingProfile(orgId, providerId, cargoTypeId, warehouseId);
 
         if (reqKeyRef.current !== reqKey) return;
 
+        // ── TIPO DINÁMICO ────────────────────────────────────────────────
+        if (isDynamic && qty != null && Number.isFinite(qty) && qty > 0) {
+          // Rate efectivo: perfil específico > tipo de carga > fallback avg_minutes
+          const effectiveSpu =
+            (profile?.seconds_per_unit != null ? Number(profile.seconds_per_unit) : null) ??
+            (selectedCargoType?.seconds_per_unit != null ? Number(selectedCargoType.seconds_per_unit) : null);
+
+          if (effectiveSpu != null) {
+            const dynamicMin = Math.ceil((effectiveSpu * qty) / 60);
+            setRequiredMinutes(Math.max(dynamicMin, 5));
+            setDurationSource('dynamic_calc');
+            return;
+          }
+
+          // Sin seconds_per_unit configurado → fallback a avg_minutes del perfil
+          if (profile?.avg_minutes && profile.avg_minutes >= 5) {
+            setRequiredMinutes(profile.avg_minutes);
+            setDurationSource('profile');
+            return;
+          }
+        }
+
+        // ── TIPO FIJO (o dinámico sin qty aún) ──────────────────────────
         if (profile?.avg_minutes && profile.avg_minutes >= 5) {
           setRequiredMinutes(profile.avg_minutes);
           setDurationSource('profile');
@@ -274,7 +309,6 @@ export default function PreReservationMiniModal({
         }
       } catch (error: any) {
         console.error('Error al cargar perfil de tiempo:', error);
-
         const def = selectedCargoType?.default_minutes ?? null;
         if (typeof def === 'number' && def >= 5) {
           setRequiredMinutes(def);
@@ -295,31 +329,37 @@ export default function PreReservationMiniModal({
     selectedCargoTypeId,
     selectedProviderId,
     selectedCargoType?.default_minutes,
+    selectedCargoType?.seconds_per_unit,
+    isDynamic,
+    quantityValue,
+    warehouseId,
   ]);
+
+  // Para dinámicos: requerir cantidad válida antes de habilitar Continuar
+  const dynamicQuantityValid = !isDynamic || (
+    quantityValue.trim() !== '' &&
+    Number.isFinite(Number(quantityValue)) &&
+    Number(quantityValue) > 0
+  );
 
   const canContinue =
     Boolean(selectedCargoTypeId && selectedProviderId) &&
+    dynamicQuantityValid &&
     requiredMinutes >= 5 &&
-    !loadingClient;
+    !loadingClient &&
+    !loadingDuration;
 
   const handleConfirm = () => {
     if (!canContinue || !selectedCargoTypeId || !selectedProviderId) return;
 
-    // Si no hay clientId resuelto, permitir continuar pero sin reglas de andenes
-    /**console.log('[PreReservationMiniModal] Confirming', {
-      cargoTypeId: selectedCargoTypeId,
-      providerId: selectedProviderId,
-      clientId: resolvedClientId || '(none)',
-      requiredMinutes,
-      durationSource,
-    });*/
-
     clearGenericDraft(DRAFT_KEY);
+    const qty = isDynamic && quantityValue.trim() ? Number(quantityValue) : null;
     onConfirm({
       cargoTypeId: selectedCargoTypeId,
       providerId: selectedProviderId,
       clientId: resolvedClientId,
       requiredMinutes,
+      quantityValue: qty,
     });
   };
 
@@ -471,6 +511,49 @@ export default function PreReservationMiniModal({
                 )}
               </div>
 
+              {/* ── Campo dinámico: aparece solo si el tipo lo requiere ── */}
+              {isDynamic && (
+                <div className="bg-amber-50 border border-amber-200 rounded-md p-3 space-y-2">
+                  <div className="flex items-center gap-2">
+                    <i className="ri-flashlight-line text-amber-600 text-sm flex-shrink-0"></i>
+                    <p className="text-xs font-semibold text-amber-900">
+                      Este tipo de carga requiere un dato adicional para calcular la duración
+                    </p>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      {selectedCargoType?.unit_label || selectedCargoType?.measurement_key || 'Cantidad'}{' '}
+                      <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      type="number"
+                      min="1"
+                      step="1"
+                      value={quantityValue}
+                      onChange={e => {
+                        setQuantityValue(e.target.value);
+                      }}
+                      placeholder="Ej: 100"
+                      className="w-full px-3 py-2 border border-amber-300 rounded-md focus:outline-none focus:ring-2 focus:ring-amber-400 focus:border-transparent text-sm"
+                    />
+                    {quantityValue && Number(quantityValue) > 0 && (() => {
+                      const effectiveSpu =
+                        selectedCargoType?.seconds_per_unit != null
+                          ? Number(selectedCargoType.seconds_per_unit)
+                          : null;
+                      if (effectiveSpu == null) return null;
+                      const calcMin = Math.ceil((effectiveSpu * Number(quantityValue)) / 60);
+                      return (
+                        <p className="text-xs text-amber-700 mt-1">
+                          ceil({effectiveSpu} seg × {quantityValue} / 60) ={' '}
+                          <span className="font-semibold">{calcMin} min</span>
+                        </p>
+                      );
+                    })()}
+                  </div>
+                </div>
+              )}
+
               {/* Info de Duración */}
               <div className="bg-teal-50 border border-teal-200 rounded-md p-3">
                 <div className="flex items-start gap-2">
@@ -481,12 +564,16 @@ export default function PreReservationMiniModal({
                       {selectedCargoType
                         ? loadingDuration
                           ? 'calculando...'
-                          : `${requiredMinutes} min`
+                          : isDynamic && !dynamicQuantityValid
+                            ? 'ingresá la cantidad para calcular'
+                            : `${requiredMinutes} min`
                         : '—'}
                     </p>
                     <p className="text-teal-700">
                       {loadingDuration
-                        ? 'Buscando tiempo promedio para esta combinación...'
+                        ? 'Calculando duración...'
+                        : durationSource === 'dynamic_calc'
+                        ? `Calculado: ceil(seg/unidad × cantidad / 60) = ${requiredMinutes} min`
                         : durationSource === 'profile'
                         ? 'Usando tiempo promedio del perfil (Proveedor x Tipo de carga).'
                         : durationSource === 'cargo_default'

@@ -8,6 +8,7 @@ import { warehousesService } from '../../../services/warehousesService';
 import { userAccessService } from '../../../services/userAccessService';
 import { providersService } from '../../../services/providersService';
 import { userProvidersService } from '../../../services/userProvidersService';
+import { userClientsService } from '../../../services/userClientsService';
 import { ConfirmModal } from '../../../components/base/ConfirmModal';
 import WarehousePageHeader from '../../../components/feature/WarehousePageHeader';
 import { useFormDraft, saveGenericDraft } from '../../../hooks/useReservationDraft';
@@ -104,6 +105,12 @@ export default function UsuariosPage() {
   const [selectedProviderIds, setSelectedProviderIds] = useState<string[]>([]);
   const [providerSearchTerm, setProviderSearchTerm] = useState('');
   const [providersLoading, setProvidersLoading] = useState(false);
+
+  // Estados para clientes asignados
+  const [availableClients, setAvailableClients] = useState<{ id: string; name: string }[]>([]);
+  const [selectedClientIds, setSelectedClientIds] = useState<string[]>([]);
+  const [clientSearchTerm, setClientSearchTerm] = useState('');
+  const [clientsLoading, setClientsLoading] = useState(false);
 
   // ✅ NUEVO: Estados para popups y confirmaciones
   const [popup, setPopup] = useState<{
@@ -306,6 +313,45 @@ export default function UsuariosPage() {
     }
   }, [orgId]);
 
+  // Cargar clientes disponibles filtrados por almacenes seleccionados
+  const loadAvailableClients = useCallback(async (warehouseIds: string[]) => {
+    if (!orgId || warehouseIds.length === 0) {
+      setAvailableClients([]);
+      return;
+    }
+
+    try {
+      setClientsLoading(true);
+
+      // Obtener clientes de los almacenes permitidos (vía warehouse_clients)
+      const { data: wcRows, error } = await supabase
+        .from('warehouse_clients')
+        .select('client_id, clients!warehouse_clients_client_id_fkey(id, name, is_active)')
+        .eq('org_id', orgId)
+        .in('warehouse_id', warehouseIds);
+
+      if (error) throw error;
+
+      const seen = new Set<string>();
+      const list: { id: string; name: string }[] = [];
+
+      for (const row of (wcRows ?? []) as any[]) {
+        const c = row.clients;
+        if (c && c.is_active && !seen.has(c.id)) {
+          seen.add(c.id);
+          list.push({ id: c.id, name: c.name });
+        }
+      }
+
+      list.sort((a, b) => a.name.localeCompare(b.name));
+      setAvailableClients(list);
+    } catch {
+      setAvailableClients([]);
+    } finally {
+      setClientsLoading(false);
+    }
+  }, [orgId]);
+
   const loadUserAccess = useCallback(async (targetUserId: string) => {
     if (!orgId || !targetUserId) {
       return;
@@ -327,7 +373,14 @@ export default function UsuariosPage() {
         const userProviders = await userProvidersService.getUserProviders(orgId, targetUserId);
         const providerIds = userProviders.map(up => up.id);
         setSelectedProviderIds(providerIds);
-      } catch (providerError: any) {
+      } catch {
+        // non-blocking
+      }
+
+      try {
+        const userClients = await userClientsService.getUserClients(orgId, targetUserId);
+        setSelectedClientIds(userClients.map(c => c.id));
+      } catch {
         // non-blocking
       }
     } catch (error: any) {
@@ -349,11 +402,11 @@ export default function UsuariosPage() {
       loadUsers();
       loadRoles();
       loadCountriesAndWarehouses();
-      loadProviders(); // ✅ NUEVO
+      loadProviders();
     };
 
     run();
-  }, [permissionsLoading, orgId, loadUsers, loadRoles, loadCountriesAndWarehouses, loadProviders]);
+  }, [permissionsLoading, orgId, loadUsers, loadRoles, loadCountriesAndWarehouses, loadProviders, loadAvailableClients]);
 
   useEffect(() => {
     // console.log('[UsersPage] button permissions (final render)', {
@@ -489,7 +542,9 @@ export default function UsuariosPage() {
 
           // ✅ NUEVO: Guardar proveedores
           await userProvidersService.setUserProviders(orgId, editingUser.id, selectedProviderIds);
-          // console.log('[UsersPage] ✅ User providers saved');
+
+          // Guardar clientes asignados
+          await userClientsService.setUserClients(orgId, editingUser.id, selectedClientIds);
         }
 
         setShowModal(false);
@@ -498,8 +553,11 @@ export default function UsuariosPage() {
         setSelectedCountryIds([]);
         setRestrictedByWarehouse(false);
         setSelectedWarehouseIds([]);
-        setSelectedProviderIds([]); // ✅ NUEVO
-        setProviderSearchTerm(''); // ✅ NUEVO
+        setSelectedProviderIds([]);
+        setProviderSearchTerm('');
+        setSelectedClientIds([]);
+        setClientSearchTerm('');
+        setAvailableClients([]);
         setNewlyCreatedUserId(null);
         loadUsers401RetryRef.current = false;
         loadUsers();
@@ -633,8 +691,12 @@ export default function UsuariosPage() {
 
           // ✅ NUEVO: Guardar proveedores si hay seleccionados
           if (selectedProviderIds.length > 0) {
-            // console.log('[UsersPage] 🚚 Asignando proveedores al nuevo usuario...');
             await userProvidersService.setUserProviders(orgId, createdUserId, selectedProviderIds);
+          }
+
+          // Guardar clientes asignados si hay seleccionados
+          if (selectedClientIds.length > 0) {
+            await userClientsService.setUserClients(orgId, createdUserId, selectedClientIds);
           }
         }
 
@@ -648,8 +710,11 @@ export default function UsuariosPage() {
         setSelectedCountryIds([]);
         setRestrictedByWarehouse(false);
         setSelectedWarehouseIds([]);
-        setSelectedProviderIds([]); // ✅ NUEVO
-        setProviderSearchTerm(''); // ✅ NUEVO
+        setSelectedProviderIds([]);
+        setProviderSearchTerm('');
+        setSelectedClientIds([]);
+        setClientSearchTerm('');
+        setAvailableClients([]);
         setNewlyCreatedUserId(null);
         loadUsers401RetryRef.current = false;
         loadUsers();
@@ -677,8 +742,6 @@ export default function UsuariosPage() {
   };
 
   const handleEdit = async (user: User) => {
-    // console.log('[UsersPage] 🔄 Opening edit modal for user:', { userId: user.id, email: user.email });
-    
     setEditingUser(user);
     setFormData({
       email: user.email,
@@ -687,11 +750,15 @@ export default function UsuariosPage() {
       password: '',
       phone_e164: user.phone_e164 ?? ''
     });
-    
-    // ✅ CORREGIDO: Primero mostrar el modal, luego cargar accesos
+    // Limpiar estado de clientes antes de abrir
+    setSelectedClientIds([]);
+    setClientSearchTerm('');
+    setAvailableClients([]);
+
+    // Primero mostrar el modal, luego cargar accesos
     setShowModal(true);
 
-    // ✅ Cargar accesos después de mostrar el modal (sin race condition)
+    // Cargar accesos después de mostrar el modal (sin race condition)
     if (canAssignAccess) {
       await loadUserAccess(user.id);
     }
@@ -878,9 +945,11 @@ export default function UsuariosPage() {
       }
     }
     
-    // ✅ NUEVO: Si es un usuario nuevo (no editingUser), solo cambiar el estado local
+    // Si es un usuario nuevo (no editingUser), solo cambiar el estado local
     if (!editingUser && !newValue) {
       setSelectedWarehouseIds([]);
+      setSelectedClientIds([]);
+      setAvailableClients([]);
     }
   };
 
@@ -894,6 +963,33 @@ export default function UsuariosPage() {
       }
     });
   };
+
+  // Handler para clientes
+  const handleToggleClient = (clientId: string) => {
+    setSelectedClientIds(prev =>
+      prev.includes(clientId) ? prev.filter(id => id !== clientId) : [...prev, clientId]
+    );
+  };
+
+  // Recargar clientes disponibles cuando cambian los almacenes seleccionados
+  // Solo cuando el modal está abierto para evitar queries innecesarias
+  useEffect(() => {
+    if (!showModal) return;
+    if (restrictedByWarehouse && selectedWarehouseIds.length > 0) {
+      loadAvailableClients(selectedWarehouseIds);
+    } else if (!restrictedByWarehouse) {
+      // Sin restricción de almacén → cargar de todos los almacenes del usuario
+      const allWhs = warehouses.map(w => w.id);
+      if (allWhs.length > 0) {
+        loadAvailableClients(allWhs);
+      } else {
+        setAvailableClients([]);
+      }
+    } else {
+      setAvailableClients([]);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showModal, restrictedByWarehouse, selectedWarehouseIds.join(','), warehouses.length]);
 
   const filteredWarehouses = warehouses.filter(w =>
     selectedCountryIds.includes(w.country_id)
@@ -1003,6 +1099,9 @@ export default function UsuariosPage() {
               setFormData({ email: '', full_name: '', role_id: '', password: '', phone_e164: '' });
               setSelectedProviderIds([]);
               setProviderSearchTerm('');
+              setSelectedClientIds([]);
+              setClientSearchTerm('');
+              setAvailableClients([]);
               setNewlyCreatedUserId(null);
               setAccessError(null);
 
@@ -1516,6 +1615,120 @@ export default function UsuariosPage() {
                 )}
               </div>
 
+              {/* Sección de Clientes Asignados */}
+              {canAssignAccess && (
+                <div className="space-y-4 border-t border-gray-200 pt-6">
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-lg font-semibold text-gray-900">Clientes Asignados</h3>
+                    {clientsLoading && (
+                      <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-teal-600"></div>
+                    )}
+                  </div>
+
+                  <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg">
+                    <div className="flex items-start gap-2">
+                      <i className="ri-information-line text-amber-600 text-lg mt-0.5"></i>
+                      <p className="text-sm text-amber-800">
+                        Seleccioná los clientes que este usuario podrá gestionar. Los andenes visibles se calcularán como la intersección entre sus almacenes y los andenes permitidos para estos clientes. Si no seleccionás ninguno, el usuario verá todos los clientes de sus almacenes.
+                      </p>
+                    </div>
+                  </div>
+
+                  {availableClients.length === 0 && !clientsLoading ? (
+                    <div className="p-4 bg-gray-50 border border-gray-200 rounded-lg text-center">
+                      <i className="ri-user-2-line text-3xl text-gray-300 mb-2"></i>
+                      <p className="text-sm text-gray-600">
+                        {selectedWarehouseIds.length === 0 && restrictedByWarehouse
+                          ? 'Seleccioná al menos un almacén para ver los clientes disponibles'
+                          : 'No hay clientes disponibles en los almacenes seleccionados'}
+                      </p>
+                    </div>
+                  ) : (
+                    <>
+                      {/* Buscador */}
+                      <div className="relative">
+                        <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"></i>
+                        <input
+                          type="text"
+                          placeholder="Buscar cliente..."
+                          value={clientSearchTerm}
+                          onChange={(e) => setClientSearchTerm(e.target.value)}
+                          className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent text-sm"
+                        />
+                      </div>
+
+                      {/* Contador */}
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="text-gray-600">
+                          {selectedClientIds.length === 0
+                            ? 'Sin restricción de cliente (verá todos)'
+                            : <>Seleccionados: <span className="font-semibold text-teal-600">{selectedClientIds.length}</span></>}
+                        </span>
+                        <div className="flex items-center gap-3">
+                          {selectedClientIds.length < availableClients.filter(c => c.name.toLowerCase().includes(clientSearchTerm.toLowerCase())).length && (
+                            <button
+                              type="button"
+                              onClick={() => setSelectedClientIds(availableClients.filter(c => c.name.toLowerCase().includes(clientSearchTerm.toLowerCase())).map(c => c.id))}
+                              className="text-teal-600 hover:text-teal-700 font-medium"
+                            >
+                              Seleccionar todo
+                            </button>
+                          )}
+                          {selectedClientIds.length > 0 && (
+                            <button
+                              type="button"
+                              onClick={() => setSelectedClientIds([])}
+                              className="text-red-600 hover:text-red-700 font-medium"
+                            >
+                              Limpiar selección
+                            </button>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Lista */}
+                      <div className="border border-gray-200 rounded-lg max-h-56 overflow-y-auto">
+                        {availableClients
+                          .filter(c => c.name.toLowerCase().includes(clientSearchTerm.toLowerCase()))
+                          .length === 0 ? (
+                          <div className="p-4 text-center text-sm text-gray-500">
+                            No se encontraron clientes
+                          </div>
+                        ) : (
+                          <div className="divide-y divide-gray-100">
+                            {availableClients
+                              .filter(c => c.name.toLowerCase().includes(clientSearchTerm.toLowerCase()))
+                              .map(client => (
+                                <label
+                                  key={client.id}
+                                  className="flex items-center gap-3 p-3 hover:bg-gray-50 cursor-pointer transition-colors"
+                                >
+                                  <input
+                                    type="checkbox"
+                                    checked={selectedClientIds.includes(client.id)}
+                                    onChange={() => handleToggleClient(client.id)}
+                                    disabled={accessLoading}
+                                    className="w-4 h-4 text-teal-600 border-gray-300 rounded focus:ring-teal-500"
+                                  />
+                                  <div className="flex-1">
+                                    <span className="text-sm font-medium text-gray-900">{client.name}</span>
+                                  </div>
+                                </label>
+                              ))}
+                          </div>
+                        )}
+                      </div>
+
+                      {!editingUser && selectedClientIds.length > 0 && (
+                        <p className="text-xs text-gray-500">
+                          Los clientes se asignarán al crear el usuario
+                        </p>
+                      )}
+                    </>
+                  )}
+                </div>
+              )}
+
               {/* ✅ NUEVO: Sección de Proveedores Asignados */}
               {canAssignAccess && (
                 <div className="space-y-4 border-t border-gray-200 pt-6">
@@ -1637,8 +1850,11 @@ export default function UsuariosPage() {
                     setSelectedCountryIds([]);
                     setRestrictedByWarehouse(false);
                     setSelectedWarehouseIds([]);
-                    setSelectedProviderIds([]); // ✅ NUEVO
-                    setProviderSearchTerm(''); // ✅ NUEVO
+                    setSelectedProviderIds([]);
+                    setProviderSearchTerm('');
+                    setSelectedClientIds([]);
+                    setClientSearchTerm('');
+                    setAvailableClients([]);
                     setNewlyCreatedUserId(null);
                   }}
                   className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors whitespace-nowrap"

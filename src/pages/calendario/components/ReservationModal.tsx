@@ -139,6 +139,8 @@ export default function ReservationModal({
   const [cargoTypes, setCargoTypes] = useState<CargoType[]>([]);
   const [suggestedMinutes, setSuggestedMinutes] = useState<number | null>(null);
   const [manualOverride, setManualOverride] = useState(false);
+  /** Cantidad capturada para tipos de carga dinámicos */
+  const [cargoQuantity, setCargoQuantity] = useState<string>('');
 
   const [allowedProviders, setAllowedProviders] = useState<UserProvider[]>([]);
   const [loadingProviders, setLoadingProviders] = useState(false);
@@ -240,6 +242,8 @@ export default function ReservationModal({
     setCancelReason('');
     setManualOverride(false);
     setSuggestedMinutes(null);
+    // Recibir quantity_value desde el pre-modal si ya viene pre-calculado
+    setCargoQuantity(defaults?.quantity_value != null ? String(defaults.quantity_value) : '');
     setShowDraftBanner(false);
     setDraftWarnings([]);
     setDraftAgeLabel('');
@@ -385,6 +389,7 @@ export default function ReservationModal({
       setCancelReason(reservation.cancel_reason || '');
       setManualOverride(false);
       setSuggestedMinutes(null);
+      setCargoQuantity((reservation as any).quantity_value != null ? String((reservation as any).quantity_value) : '');
       setShowDraftBanner(false);
       setDraftWarnings([]);
       setDraftAgeLabel('');
@@ -475,7 +480,9 @@ export default function ReservationModal({
     ) {
       updateSuggestedDuration();
     }
-  }, [formData.shipperProvider, formData.cargoType, formData.startDate, formData.startTime, manualOverride]);
+  // cargoQuantity añadido: recalcula cuando cambia la cantidad en tipos dinámicos
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [formData.shipperProvider, formData.cargoType, formData.startDate, formData.startTime, manualOverride, cargoQuantity]);
 
   const updateSuggestedDuration = async () => {
     const provider = providers.find(p => p.id === formData.shipperProvider);
@@ -485,8 +492,33 @@ export default function ReservationModal({
     const startDatetime = `${formData.startDate}T${formData.startTime}:00`;
 
     try {
-      const profile = await timeProfilesService.getMatchingProfile(orgId, provider.id, cargoType.id, startDatetime);
+      const profile = await timeProfilesService.getMatchingProfile(orgId, provider.id, cargoType.id, startDatetime, warehouseId);
 
+      // ── TIPO DINÁMICO ─────────────────────────────────────────────────────
+      // Gate: is_dynamic === true Y hay perfil con base_minutes + minutes_per_unit Y hay cantidad capturada
+      if (
+        cargoType.is_dynamic === true &&
+        profile &&
+        profile.base_minutes != null &&
+        profile.minutes_per_unit != null &&
+        cargoQuantity.trim() !== ''
+      ) {
+        const qty = Number(cargoQuantity);
+        if (Number.isFinite(qty) && qty > 0) {
+          const dynamicMinutes = Math.round(profile.base_minutes + qty * Number(profile.minutes_per_unit));
+          setSuggestedMinutes(dynamicMinutes);
+          const startDate = fromWarehouseLocalToUtc(formData.startDate, formData.startTime, tz);
+          const endDate = new Date(startDate.getTime() + dynamicMinutes * 60 * 1000);
+          setFormData(prev => ({
+            ...prev,
+            endDate: toWarehouseDateString(endDate, tz),
+            endTime: toWarehouseTimeString(endDate, tz),
+          }));
+          return;
+        }
+      }
+
+      // ── TIPO FIJO (comportamiento actual intacto) ─────────────────────────
       if (profile) {
         setSuggestedMinutes(profile.avg_minutes);
         const startDate = fromWarehouseLocalToUtc(formData.startDate, formData.startTime, tz);
@@ -711,6 +743,15 @@ export default function ReservationModal({
       bl_number: (formData.operationType === 'zona_franca' && isImported)
         ? (formData.blNumber?.trim() || null)
         : null,
+      // Cantidad dinámica: viene del pre-modal (solo lectura en este modal)
+      quantity_value: (() => {
+        const ct = cargoTypes.find(c => c.id === formData.cargoType);
+        if (ct?.is_dynamic && cargoQuantity.trim()) {
+          const q = parseInt(cargoQuantity, 10);
+          return Number.isFinite(q) && q > 0 ? q : null;
+        }
+        return null;
+      })(),
     };
 
     try {
@@ -1304,6 +1345,34 @@ export default function ReservationModal({
                           )}
                         </div>
 
+                        {/* ── Campo dinámico: solo lectura (la cantidad se capturó en el primer modal) ── */}
+                        {(() => {
+                          const selectedCT = cargoTypes.find(ct => ct.id === formData.cargoType);
+                          if (!selectedCT?.is_dynamic) return null;
+                          const label = selectedCT.unit_label || selectedCT.measurement_key || 'Cantidad';
+                          return (
+                            <div className="bg-teal-50 border border-teal-200 rounded-xl p-4">
+                              <div className="flex items-center gap-2 mb-3">
+                                <i className="ri-flashlight-line text-teal-700 w-4 h-4 flex items-center justify-center"></i>
+                                <span className="text-sm font-semibold text-teal-900">Datos del tipo de carga dinámico</span>
+                              </div>
+                              <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                                {label}
+                              </label>
+                              <input
+                                type="number"
+                                value={cargoQuantity}
+                                readOnly
+                                className="w-full px-3 py-2.5 border border-teal-200 rounded-lg text-sm bg-teal-50/80 text-teal-900 cursor-default select-none"
+                              />
+                              <p className="text-xs text-teal-600 mt-1.5 flex items-center gap-1">
+                                <i className="ri-lock-line text-xs"></i>
+                                Valor capturado en el primer paso. Para modificarlo, cerrá este modal y creá una nueva reserva.
+                              </p>
+                            </div>
+                          );
+                        })()}
+
                         {!isReadOnly && suggestedMinutes && (
                           <div className="bg-white border border-teal-200 rounded-lg p-3">
                             <div className="flex items-start gap-2">
@@ -1311,6 +1380,9 @@ export default function ReservationModal({
                               <div className="min-w-0">
                                 <p className="text-sm text-teal-900">
                                   <span className="font-semibold">Tiempo sugerido:</span> {suggestedMinutes} minutos
+                                  {cargoTypes.find(ct => ct.id === formData.cargoType)?.is_dynamic && cargoQuantity && (
+                                    <span className="text-teal-600 ml-1 text-xs">(calculado por cantidad)</span>
+                                  )}
                                 </p>
                                 <p className="text-xs text-teal-700 mt-0.5">
                                   Si editás manualmente la hora fin, se desactiva la sugerencia.

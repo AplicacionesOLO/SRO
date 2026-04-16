@@ -107,6 +107,7 @@ export default function CalendarioPage() {
   const { isPrivileged: isPrivilegedUser } = useBlockedStatuses(orgId);
   const {
     allowedWarehouseIds,
+    allowedClientIds,
     availableWarehouses: scopeWarehouses,
     isGlobalAccess,
     loading: scopeLoading,
@@ -198,6 +199,7 @@ export default function CalendarioPage() {
   const [requiredMinutes, setRequiredMinutes] = useState(0);
   const [preCargoTypeId, setPreCargoTypeId] = useState('');
   const [preProviderId, setPreProviderId] = useState('');
+  const [preQuantityValue, setPreQuantityValue] = useState<number | null>(null);
 
   // ✅ NUEVO: Estado para reglas de asignación de andenes
   const [allocationRule, setAllocationRule] = useState<DockAllocationRule | null>(null);
@@ -646,9 +648,9 @@ export default function CalendarioPage() {
         }
       }
 
-      // Cargar datos en paralelo — pasar allowedWarehouseIds para segregación
+      // Cargar datos en paralelo — pasar allowedWarehouseIds y allowedClientIds para segregación
       const [docksData, reservationsData, blocksData, statusesData, categoriesData] = await Promise.all([
-        calendarService.getDocks(orgId, warehouseId, allowedWarehouseIds),
+        calendarService.getDocks(orgId, warehouseId, allowedWarehouseIds, allowedClientIds),
         calendarService.getReservations(orgId, bufferStart.toISOString(), bufferEnd.toISOString(), allowedWarehouseIds),
         calendarService.getDockTimeBlocks(orgId, bufferStart.toISOString(), bufferEnd.toISOString()),
         calendarService.getReservationStatuses(orgId),
@@ -704,7 +706,7 @@ export default function CalendarioPage() {
     } finally {
       setLoading(false);
     }
-  }, [orgId, dateRange, rangeDays, warehouseId, filterCategory]); // ✅ REMOVIDO: searchTerm
+  }, [orgId, dateRange, rangeDays, warehouseId, filterCategory, allowedClientIds]); // ✅ REMOVIDO: searchTerm
 
   // ── Mantener refs sincronizados con valores actuales ─────────────────────
   useEffect(() => { loadDataRef.current = loadData; }, [loadData]);
@@ -1107,6 +1109,7 @@ export default function CalendarioPage() {
             end_datetime: calculatedEnd.toISOString(),
             cargo_type: preCargoTypeId,
             shipper_provider: preProviderId,
+            quantity_value: preQuantityValue,
           });
         }
 
@@ -1118,6 +1121,7 @@ export default function CalendarioPage() {
         setRequiredMinutes(0);
         setPreCargoTypeId('');
         setPreProviderId('');
+        setPreQuantityValue(null);
         return;
       }
 
@@ -1389,10 +1393,11 @@ export default function CalendarioPage() {
   });
 
   // ✅ NUEVO: Handler para confirmar preselección y activar modo selección
-  const handlePreReservationConfirm = useCallback(async (payload: { cargoTypeId: string; providerId: string; clientId: string; requiredMinutes: number }) => {
+  const handlePreReservationConfirm = useCallback(async (payload: { cargoTypeId: string; providerId: string; clientId: string; requiredMinutes: number; quantityValue?: number | null }) => {
     setPreCargoTypeId(payload.cargoTypeId);
     setPreProviderId(payload.providerId);
     setRequiredMinutes(payload.requiredMinutes);
+    setPreQuantityValue(payload.quantityValue ?? null);
     setPreModalOpen(false);
 
     setAllocationLoading(true);
@@ -1436,6 +1441,7 @@ export default function CalendarioPage() {
     setRequiredMinutes(0);
     setPreCargoTypeId('');
     setPreProviderId('');
+    setPreQuantityValue(null);
     setAllocationRule(null);
     setAllocationError('');
     setEnabledDockIds(new Set());

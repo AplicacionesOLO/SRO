@@ -23,6 +23,9 @@ export default function CargoTypeModal({ orgId, warehouseId, cargoType, onClose,
   const [defaultMinutes, setDefaultMinutes] = useState<string>('');
   const [isDynamic, setIsDynamic] = useState(false);
   const [isActive, setIsActive] = useState(true);
+  const [measurementKey, setMeasurementKey] = useState<string>('');
+  const [unitLabel, setUnitLabel] = useState<string>('');
+  const [secondsPerUnit, setSecondsPerUnit] = useState<string>('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -38,7 +41,7 @@ export default function CargoTypeModal({ orgId, warehouseId, cargoType, onClose,
   const [showDiscardConfirm, setShowDiscardConfirm] = useState(false);
   const [draftAgeLabel, setDraftAgeLabel] = useState('');
 
-  interface CargoTypeDraft { name: string; defaultMinutes: string; isDynamic: boolean }
+  interface CargoTypeDraft { name: string; defaultMinutes: string; isDynamic: boolean; measurementKey: string; unitLabel: string; secondsPerUnit: string }
   const { saveDraft, clearDraft, readDraft } = useFormDraft<CargoTypeDraft>({ storageKey: DRAFT_KEY, isNewRecord });
 
   // Cargar almacenes disponibles
@@ -55,8 +58,11 @@ export default function CargoTypeModal({ orgId, warehouseId, cargoType, onClose,
     if (cargoType) {
       setName(cargoType.name);
       setDefaultMinutes(cargoType.default_minutes?.toString() || '');
-      setIsDynamic(cargoType.is_dynamic);
-      setIsActive(cargoType.is_active);
+      setIsDynamic(cargoType.is_dynamic ?? false);
+      setIsActive(cargoType.is_active ?? cargoType.active ?? true);
+      setMeasurementKey(cargoType.measurement_key || '');
+      setUnitLabel(cargoType.unit_label || '');
+      setSecondsPerUnit(cargoType.seconds_per_unit != null ? String(cargoType.seconds_per_unit) : '');
       setShowDraftBanner(false);
       // Cargar warehouses asignados
       cargoTypesService.getCargoTypeWarehouses(orgId, cargoType.id)
@@ -68,12 +74,18 @@ export default function CargoTypeModal({ orgId, warehouseId, cargoType, onClose,
         setName(draft.formData.name);
         setDefaultMinutes(draft.formData.defaultMinutes);
         setIsDynamic(draft.formData.isDynamic);
+        setMeasurementKey(draft.formData.measurementKey || '');
+        setUnitLabel(draft.formData.unitLabel || '');
+        setSecondsPerUnit(draft.formData.secondsPerUnit || '');
         setDraftAgeLabel(getDraftAge(draft.savedAt));
         setShowDraftBanner(true);
       } else {
         setName('');
         setDefaultMinutes('');
         setIsDynamic(false);
+        setMeasurementKey('');
+        setUnitLabel('');
+        setSecondsPerUnit('');
         setShowDraftBanner(false);
       }
       // Pre-seleccionar almacén activo
@@ -88,8 +100,8 @@ export default function CargoTypeModal({ orgId, warehouseId, cargoType, onClose,
   // Auto-save borrador
   useEffect(() => {
     if (!isNewRecord) return;
-    saveDraft({ name, defaultMinutes, isDynamic });
-  }, [name, defaultMinutes, isDynamic, isNewRecord]);
+    saveDraft({ name, defaultMinutes, isDynamic, measurementKey, unitLabel, secondsPerUnit });
+  }, [name, defaultMinutes, isDynamic, measurementKey, unitLabel, secondsPerUnit, isNewRecord]);
 
   const handleClose = useCallback(() => {
     if (isNewRecord && name.trim()) {
@@ -111,6 +123,16 @@ export default function CargoTypeModal({ orgId, warehouseId, cargoType, onClose,
     onClose();
   }, [onClose]);
 
+  // Cuando se activa/desactiva is_dynamic, limpiar campos de configuración dinámica si se desactiva
+  const handleDynamicToggle = (checked: boolean) => {
+    setIsDynamic(checked);
+    if (!checked) {
+      setMeasurementKey('');
+      setUnitLabel('');
+      setSecondsPerUnit('');
+    }
+  };
+
   const handleToggleWarehouse = (wid: string) => {
     setSelectedWarehouseIds(prev =>
       prev.includes(wid) ? prev.filter(id => id !== wid) : [...prev, wid]
@@ -125,6 +147,9 @@ export default function CargoTypeModal({ orgId, warehouseId, cargoType, onClose,
       setSaving(true);
       setError(null);
       const minutes = defaultMinutes ? parseInt(defaultMinutes) : null;
+      const mKey = isDynamic ? (measurementKey.trim() || null) : null;
+      const mLabel = isDynamic ? (unitLabel.trim() || null) : null;
+      const spu = isDynamic && secondsPerUnit.trim() ? Number(secondsPerUnit) : null;
       let savedId: string;
 
       if (cargoType) {
@@ -133,10 +158,13 @@ export default function CargoTypeModal({ orgId, warehouseId, cargoType, onClose,
           default_minutes: minutes,
           is_dynamic: isDynamic,
           is_active: isActive,
+          measurement_key: mKey,
+          unit_label: mLabel,
+          seconds_per_unit: spu,
         });
         savedId = cargoType.id;
       } else {
-        const created = await cargoTypesService.createCargoType(orgId, name.trim(), minutes, isDynamic);
+        const created = await cargoTypesService.createCargoType(orgId, name.trim(), minutes, isDynamic, mKey, mLabel, spu);
         savedId = created.id;
       }
 
@@ -177,7 +205,7 @@ export default function CargoTypeModal({ orgId, warehouseId, cargoType, onClose,
                       className="px-3 py-1 text-xs font-semibold bg-teal-600 text-white rounded-lg hover:bg-teal-700 whitespace-nowrap">
                       Continuar
                     </button>
-                    <button type="button" onClick={() => { clearDraft(); setName(''); setDefaultMinutes(''); setIsDynamic(false); setShowDraftBanner(false); }}
+                    <button type="button" onClick={() => { clearDraft(); setName(''); setDefaultMinutes(''); setIsDynamic(false); setMeasurementKey(''); setUnitLabel(''); setSecondsPerUnit(''); setShowDraftBanner(false); }}
                       className="px-3 py-1 text-xs border border-gray-300 bg-white text-gray-700 rounded-lg hover:bg-gray-50 whitespace-nowrap">
                       Descartar
                     </button>
@@ -212,11 +240,96 @@ export default function CargoTypeModal({ orgId, warehouseId, cargoType, onClose,
           {/* Dinámico */}
           <div>
             <label className="flex items-center gap-2 cursor-pointer">
-              <input type="checkbox" checked={isDynamic} onChange={(e) => setIsDynamic(e.target.checked)}
+              <input type="checkbox" checked={isDynamic} onChange={(e) => handleDynamicToggle(e.target.checked)}
                 className="w-4 h-4 text-teal-600 border-gray-300 rounded focus:ring-teal-500 cursor-pointer" />
-              <span className="text-sm text-gray-700">Dinámico</span>
+              <span className="text-sm text-gray-700 font-medium">Tipo dinámico</span>
             </label>
+            <p className="text-xs text-gray-500 mt-1 ml-6">
+              Permite capturar un valor extra en la reserva para recalcular la duración automáticamente.
+            </p>
           </div>
+
+          {/* Configuración de tipo dinámico */}
+          {isDynamic && (
+            <div className="bg-teal-50 border border-teal-200 rounded-xl p-4 space-y-4">
+              <div className="flex items-center gap-2">
+                <i className="ri-settings-3-line text-teal-700 w-4 h-4 flex items-center justify-center"></i>
+                <h4 className="text-sm font-semibold text-teal-900">Configuración dinámica</h4>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                  Clave de medición <span className="text-red-500">*</span>
+                </label>
+                <select
+                  value={measurementKey}
+                  onChange={(e) => setMeasurementKey(e.target.value)}
+                  className="w-full px-3 py-2 border border-teal-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent text-sm bg-white cursor-pointer"
+                  required={isDynamic}
+                >
+                  <option value="">Seleccionar unidad de medida</option>
+                  <option value="lines">Líneas</option>
+                  <option value="pallets">Pallets</option>
+                  <option value="bultos">Bultos</option>
+                  <option value="weight_kg">Peso (kg)</option>
+                  <option value="units">Unidades</option>
+                  <option value="boxes">Cajas</option>
+                  <option value="containers">Contenedores</option>
+                </select>
+                <p className="text-xs text-teal-700 mt-1">
+                  Define qué se medirá en la reserva para calcular la duración.
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                  Etiqueta del campo en reserva
+                </label>
+                <input
+                  type="text"
+                  value={unitLabel}
+                  onChange={(e) => setUnitLabel(e.target.value)}
+                  className="w-full px-3 py-2 border border-teal-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent text-sm bg-white"
+                  placeholder={
+                    measurementKey === 'lines' ? 'Ej: Cantidad de líneas'
+                    : measurementKey === 'pallets' ? 'Ej: Número de pallets'
+                    : measurementKey === 'bultos' ? 'Ej: Cantidad de bultos'
+                    : 'Ej: Cantidad a ingresar'
+                  }
+                />
+                <p className="text-xs text-teal-700 mt-1">
+                  Este texto aparecerá como etiqueta en el primer paso de la reserva. Si lo dejás vacío, se usará la clave de medición.
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                  Segundos por unidad <span className="text-gray-400 font-normal">(opcional, valor base del tipo)</span>
+                </label>
+                <input
+                  type="number"
+                  value={secondsPerUnit}
+                  onChange={(e) => setSecondsPerUnit(e.target.value)}
+                  className="w-full px-3 py-2 border border-teal-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent text-sm bg-white"
+                  placeholder="Ej: 30"
+                  min="0"
+                  step="0.5"
+                />
+                <p className="text-xs text-teal-700 mt-1">
+                  Fórmula: <span className="font-mono">ceil((seg/unidad × cantidad) / 60)</span>.
+                  Ejemplo: 30 seg/línea × 100 líneas = 50 min. Puede sobreescribirse en cada perfil Proveedor×Tipo.
+                </p>
+                {secondsPerUnit && (
+                  <div className="mt-2 bg-white border border-teal-200 rounded-lg p-2 text-xs text-teal-900">
+                    <span className="font-semibold">Vista previa (100 unidades):</span>{' '}
+                    <span className="font-semibold text-teal-700">
+                      {Math.ceil((Number(secondsPerUnit) * 100) / 60)} min
+                    </span>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
 
           {/* Activo (solo al editar) */}
           {cargoType && (
