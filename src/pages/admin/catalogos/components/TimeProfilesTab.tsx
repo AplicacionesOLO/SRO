@@ -3,7 +3,7 @@ import { usePermissions } from '../../../../hooks/usePermissions';
 import { timeProfilesService } from '../../../../services/timeProfilesService';
 import { providersService } from '../../../../services/providersService';
 import { cargoTypesService } from '../../../../services/cargoTypesService';
-import type { ProviderCargoTimeProfile, Provider, CargoType } from '../../../../types/catalog';
+import type { ProviderCargoTimeProfile, ProviderWithClients, CargoType } from '../../../../types/catalog';
 import TimeProfileModal from './TimeProfileModal';
 
 interface TimeProfilesTabProps {
@@ -14,7 +14,7 @@ interface TimeProfilesTabProps {
 export default function TimeProfilesTab({ orgId, warehouseId }: TimeProfilesTabProps) {
   const { can } = usePermissions();
   const [timeProfiles, setTimeProfiles] = useState<ProviderCargoTimeProfile[]>([]);
-  const [providers, setProviders] = useState<Provider[]>([]);
+  const [providers, setProviders] = useState<ProviderWithClients[]>([]);
   const [cargoTypes, setCargoTypes] = useState<CargoType[]>([]);
   const [loading, setLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -36,7 +36,9 @@ export default function TimeProfilesTab({ orgId, warehouseId }: TimeProfilesTabP
       setLoading(true);
       const [profilesData, providersData, cargoTypesData] = await Promise.all([
         timeProfilesService.getByWarehouse(orgId, warehouseId),
-        providersService.getByWarehouse(orgId, warehouseId, true),
+        warehouseId
+          ? providersService.getByWarehouseWithClientContext(orgId, warehouseId)
+          : providersService.getActive(orgId).then(list => list.map(p => ({ ...p, clientNames: [] }))),
         cargoTypesService.getByWarehouse(orgId, warehouseId, true),
       ]);
       setTimeProfiles(profilesData);

@@ -1,12 +1,13 @@
 import { useState, useEffect } from 'react';
 import { timeProfilesService } from '../../../../services/timeProfilesService';
 import { useActiveWarehouse } from '../../../../contexts/ActiveWarehouseContext';
-import type { ProviderCargoTimeProfile, Provider, CargoType } from '../../../../types/catalog';
+import type { ProviderCargoTimeProfile, ProviderWithClients, CargoType } from '../../../../types/catalog';
+import ProviderSearchSelect from './ProviderSearchSelect';
 
 interface TimeProfileModalProps {
   orgId: string;
   profile: ProviderCargoTimeProfile | null;
-  providers: Provider[];
+  providers: ProviderWithClients[];
   cargoTypes: CargoType[];
   onClose: () => void;
   onSave: () => void;
@@ -159,20 +160,20 @@ export default function TimeProfileModal({
                 No hay proveedores asignados a {activeWarehouse?.name}. Asigná proveedores en Catálogos → Proveedores.
               </div>
             ) : (
-              <select
-                value={providerId}
-                onChange={(e) => setProviderId(e.target.value)}
-                disabled={saving || isEditing || !activeWarehouseId}
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent text-sm cursor-pointer disabled:bg-gray-100 disabled:cursor-not-allowed"
-                required
-              >
-                <option value="">Seleccionar proveedor</option>
-                {providers.map((provider) => (
-                  <option key={provider.id} value={provider.id}>
-                    {provider.name}
-                  </option>
-                ))}
-              </select>
+              <>
+                <ProviderSearchSelect
+                  providers={providers}
+                  value={providerId}
+                  onChange={setProviderId}
+                  disabled={saving || isEditing || !activeWarehouseId}
+                  placeholder="Buscar proveedor…"
+                />
+                {isEditing && (
+                  <p className="text-xs text-gray-400 mt-1">
+                    El proveedor no puede cambiarse en edición.
+                  </p>
+                )}
+              </>
             )}
           </div>
 

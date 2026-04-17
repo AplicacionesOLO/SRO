@@ -9,6 +9,15 @@ export interface Provider {
   updated_at?: string;
 }
 
+/**
+ * Provider enriquecido con los clientes asociados en el contexto de un almacén específico.
+ * Extiende Provider sin romper compatibilidad con código existente.
+ */
+export interface ProviderWithClients extends Provider {
+  /** Nombres de los clientes vinculados a este proveedor en el almacén activo */
+  clientNames: string[];
+}
+
 export interface CargoType {
   id: string;
   org_id: string;

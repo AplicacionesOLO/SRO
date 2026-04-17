@@ -1,5 +1,5 @@
 import { supabase } from '../lib/supabase';
-import type { Provider } from '../types/catalog';
+import type { Provider, ProviderWithClients } from '../types/catalog';
 
 export const providersService = {
   async getAll(orgId: string): Promise<Provider[]> {
@@ -207,30 +207,41 @@ export const providersService = {
   /**
    * Obtener las asignaciones almacén→clientes de una lista de proveedores.
    * Retorna un mapa: providerId → texto legible "Almacén: (Cliente1, Cliente2) / Almacén2: ..."
+   *
+   * ⚠️ IMPORTANTE: No usa .in('provider_id', providerIds) para evitar 414 URI Too Long
+   * con orgs que tienen cientos de proveedores. Se traen todos los registros de la org
+   * y se filtra en memoria contra el Set de IDs. URLs siempre de tamaño fijo.
    */
   async getProviderAssignments(orgId: string, providerIds: string[]): Promise<Record<string, string>> {
     if (providerIds.length === 0) return {};
 
-    // 1. Traer provider_warehouses con nombre del almacén
-    const { data: pwRows, error: pwErr } = await supabase
+    const providerSet = new Set(providerIds);
+
+    // 1. Traer TODOS los provider_warehouses de la org — sin .in() → URL fija, sin 414
+    const { data: allPwRows, error: pwErr } = await supabase
       .from('provider_warehouses')
       .select('provider_id, warehouse_id, warehouses(name)')
-      .eq('org_id', orgId)
-      .in('provider_id', providerIds);
+      .eq('org_id', orgId);
 
     if (pwErr) throw pwErr;
 
-    // 2. Traer client_providers con nombre del cliente
-    const { data: cpRows, error: cpErr } = await supabase
+    // Filtrar en memoria: solo los proveedores que nos importan
+    const pwRows = (allPwRows ?? []).filter((r: any) => providerSet.has(r.provider_id));
+
+    // 2. Traer TODOS los client_providers de la org — sin .in() → URL fija, sin 414
+    const { data: allCpRows, error: cpErr } = await supabase
       .from('client_providers')
       .select('provider_id, client_id, clients(name)')
-      .eq('org_id', orgId)
-      .in('provider_id', providerIds);
+      .eq('org_id', orgId);
 
     if (cpErr) throw cpErr;
 
+    // Filtrar en memoria: solo los proveedores que nos importan
+    const cpRows = (allCpRows ?? []).filter((r: any) => providerSet.has(r.provider_id));
+
     // 3. Traer warehouse_clients para saber qué clientes pertenecen a qué almacén
-    const warehouseIds = [...new Set((pwRows ?? []).map((r: any) => r.warehouse_id as string))];
+    // Los almacenes son pocos (<50 típicamente) — .in(warehouseIds) es seguro aquí
+    const warehouseIds = [...new Set(pwRows.map((r: any) => r.warehouse_id as string))];
     let wcRows: any[] = [];
     if (warehouseIds.length > 0) {
       const { data, error: wcErr } = await supabase
@@ -297,6 +308,66 @@ export const providersService = {
     }
 
     return result;
+  },
+
+  /**
+   * Obtener proveedores del almacén activo enriquecidos con sus clientes asociados
+   * en ese mismo almacén.
+   *
+   * Clientes mostrados = intersección de:
+   *   - client_providers (proveedor vinculado al cliente)
+   *   - warehouse_clients (cliente pertenece al almacén)
+   *
+   * ⚠️ IMPORTANTE: No usa .in(providerIds) para evitar el error 414 URI Too Long
+   * cuando hay muchos proveedores. Filtra en memoria usando el Set de IDs ya cargado.
+   * Las 3 queries tienen URLs de tamaño fijo sin importar el volumen de datos.
+   */
+  async getByWarehouseWithClientContext(
+    orgId: string,
+    warehouseId: string
+  ): Promise<ProviderWithClients[]> {
+    // Query 1: Proveedores activos del almacén — usa !inner join (sin .in(), sin 414)
+    const providers = await this.getByWarehouse(orgId, warehouseId, true);
+    if (providers.length === 0) return [];
+
+    const providerSet = new Set(providers.map(p => p.id));
+
+    // Query 2: TODOS los client_providers de la org — sin .in() → URL fija, sin 414
+    // Filtramos en memoria contra providerSet para quedarnos solo con los del almacén
+    const { data: cpRows, error: cpErr } = await supabase
+      .from('client_providers')
+      .select('provider_id, client_id, clients(name)')
+      .eq('org_id', orgId);
+
+    if (cpErr) throw cpErr;
+
+    // Query 3: Clientes del almacén activo — URL fija (single warehouseId)
+    const { data: wcRows, error: wcErr } = await supabase
+      .from('warehouse_clients')
+      .select('client_id')
+      .eq('org_id', orgId)
+      .eq('warehouse_id', warehouseId);
+
+    if (wcErr) throw wcErr;
+
+    const warehouseClientSet = new Set((wcRows ?? []).map((r: any) => r.client_id as string));
+
+    // Filtrado en memoria: proveedor del almacén + cliente del almacén
+    const providerClientMap: Record<string, string[]> = {};
+    for (const cp of (cpRows ?? []) as any[]) {
+      if (!providerSet.has(cp.provider_id)) continue;       // proveedor no es del almacén
+      if (!warehouseClientSet.has(cp.client_id)) continue;  // cliente no es del almacén
+      const clientName: string = (cp.clients as any)?.name ?? cp.client_id;
+      if (!providerClientMap[cp.provider_id]) providerClientMap[cp.provider_id] = [];
+      if (!providerClientMap[cp.provider_id].includes(clientName)) {
+        providerClientMap[cp.provider_id].push(clientName);
+      }
+    }
+
+    return providers.map(p => ({
+      ...p,
+      clientNames: (providerClientMap[p.id] ?? []).sort(),
+    }));
   },
 
   /**
