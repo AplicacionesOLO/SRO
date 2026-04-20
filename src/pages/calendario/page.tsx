@@ -1330,16 +1330,28 @@ export default function CalendarioPage() {
   }, [daysInView, filteredDocks.length, COL_W]);
 
   // ✅ Recalcular posición de etiquetas de fecha en el render inicial y cuando cambian días/docks.
-  // Se usa un doble rAF para garantizar que el browser haya completado el layout y los
-  // offsetWidth de los spans de fecha sean correctos antes de calcular posiciones.
-  // Sin esto, en el primer paint los spans tienen offsetWidth=0 y las etiquetas quedan en left=0.
+  // Estrategia: intentar sincronizar en cada rAF, pero si el contenedor aún no tiene ancho
+  // válido (offsetWidth === 0, layout flex todavía no calculado), volver a encolar el intento.
+  // Esto resuelve el bug donde las etiquetas aparecen apiladas en left=0 al cargar la página
+  // y solo se arreglan después de hacer scroll (que disparaba el handler con offsetWidth correcto).
   React.useLayoutEffect(() => {
-    const container = bodyScrollRef.current;
-    if (!container) return;
+    let cancelled = false;
 
     const syncLayout = () => {
-      const scrollLeft = container.scrollLeft;
+      if (cancelled) return;
+
+      const container = bodyScrollRef.current;
+      if (!container) return;
+
       const viewportW = container.offsetWidth;
+
+      // Si el contenedor aún no tiene un ancho real (layout flex pendiente), reintentar
+      if (viewportW === 0) {
+        requestAnimationFrame(syncLayout);
+        return;
+      }
+
+      const scrollLeft = container.scrollLeft;
 
       // Sincronizar header de andenes
       if (headerInnerRef.current) {
@@ -1353,15 +1365,10 @@ export default function CalendarioPage() {
       updateDateLabels(scrollLeft, viewportW);
     };
 
-    // Primer rAF: esperar a que el browser complete el paint inicial
-    // Segundo rAF: garantizar que los offsetWidth de los spans estén disponibles
-    const raf1 = requestAnimationFrame(() => {
-      const raf2 = requestAnimationFrame(syncLayout);
-      return raf2;
-    });
+    requestAnimationFrame(syncLayout);
 
     return () => {
-      cancelAnimationFrame(raf1);
+      cancelled = true;
     };
   }, [daysInView, filteredDocks, updateDateLabels]);
 

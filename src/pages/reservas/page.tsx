@@ -10,7 +10,7 @@ import WarehouseSelector from '../../components/feature/WarehouseSelector';
 
 export default function ReservasPage() {
   const { can, orgId, loading: permLoading } = usePermissions();
-  const { allowedWarehouseIds, loading: scopeLoading } = useUserScope();
+  const { allowedWarehouseIds, allowedClientIds, loading: scopeLoading } = useUserScope();
   const {
     activeWarehouseId,
     activeWarehouse,
@@ -64,14 +64,24 @@ export default function ReservasPage() {
       const endDate = new Date();
       endDate.setMonth(endDate.getMonth() + 3);
 
+      // Cargar en paralelo — docks con restricción completa (warehouse + cliente)
       const [reservationsData, docksData, statusesData, providersData] = await Promise.all([
         calendarService.getAllReservations(orgId, startDate.toISOString(), endDate.toISOString(), effectiveWarehouseIds),
-        calendarService.getDocks(orgId, null, effectiveWarehouseIds),
+        // ← allowedClientIds filtra los andenes al subconjunto del cliente asignado
+        calendarService.getDocks(orgId, null, effectiveWarehouseIds, allowedClientIds),
         calendarService.getReservationStatuses(orgId),
         providersService.getActive(orgId),
       ]);
 
-      setReservations(reservationsData);
+      // Filtrar reservas contra los andenes permitidos (mismo mecanismo implícito del calendario)
+      // Si allowedClientIds es null → acceso global, no restringir por andén
+      let filteredReservations = reservationsData;
+      if (allowedClientIds !== null && docksData.length >= 0) {
+        const allowedDockIds = new Set(docksData.map((d) => d.id));
+        filteredReservations = reservationsData.filter((r) => allowedDockIds.has(r.dock_id));
+      }
+
+      setReservations(filteredReservations);
       setDocks(docksData);
       setStatuses(statusesData);
       setProviders(providersData);
@@ -81,7 +91,7 @@ export default function ReservasPage() {
     } finally {
       setLoading(false);
     }
-  }, [orgId, effectiveWarehouseIds]);
+  }, [orgId, effectiveWarehouseIds, allowedClientIds]);
 
   const ready = useMemo(() => !!orgId && !permLoading && !scopeLoading && !activeWhLoading, [orgId, permLoading, scopeLoading, activeWhLoading]);
 

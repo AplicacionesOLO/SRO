@@ -1,7 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const VERSION = "v911-fix-provider-name";
+const VERSION = "v920-fix-legacy-email-merge";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -121,48 +121,56 @@ async function resolveRecipients(
 
   if (rule.recipients_mode === "manual") {
     const newEmails = asEmailArr(rule.recipients_emails);
-    const legacyEmails = asEmailArr(rule.recipient_external_emails);
+
+    // FIX: Si el campo nuevo (recipients_emails) tiene contenido, usarlo EXCLUSIVAMENTE.
+    // Solo caer al campo legacy (recipient_external_emails) si el nuevo está vacío.
+    // Esto evita que correos eliminados en el nuevo campo sigan llegando desde el campo legacy.
+    const legacyEmails = newEmails.length === 0 ? asEmailArr(rule.recipient_external_emails) : [];
     toEmails = [...new Set([...newEmails, ...legacyEmails])];
 
-    const roleIds: string[] = Array.isArray(rule.recipient_roles)
-      ? rule.recipient_roles.filter((x: any) => typeof x === "string" && x.includes("-"))
-      : [];
+    // Legacy: recipient_roles y recipient_users solo se procesan si NO hay recipients_emails
+    // (son reglas totalmente antiguas que nunca fueron migradas al nuevo sistema)
+    if (newEmails.length === 0) {
+      const roleIds: string[] = Array.isArray(rule.recipient_roles)
+        ? rule.recipient_roles.filter((x: any) => typeof x === "string" && x.includes("-"))
+        : [];
 
-    if (roleIds.length > 0) {
-      const { data: rolesData } = await supabase
-        .from("roles")
-        .select("id")
-        .in("id", roleIds);
+      if (roleIds.length > 0) {
+        const { data: rolesData } = await supabase
+          .from("roles")
+          .select("id")
+          .in("id", roleIds);
 
-      if ((rolesData ?? []).length > 0) {
-        const resolvedRoleIds = rolesData!.map((r: any) => r.id);
-        const { data: uor } = await supabase
-          .from("user_org_roles")
-          .select("user_id, profiles(email)")
-          .eq("org_id", orgId)
-          .in("role_id", resolvedRoleIds);
+        if ((rolesData ?? []).length > 0) {
+          const resolvedRoleIds = rolesData!.map((r: any) => r.id);
+          const { data: uor } = await supabase
+            .from("user_org_roles")
+            .select("user_id, profiles(email)")
+            .eq("org_id", orgId)
+            .in("role_id", resolvedRoleIds);
 
-        const roleEmails = (uor ?? [])
-          .map((u: any) => u.profiles?.email)
-          .filter((e: any): e is string => typeof e === "string" && e.includes("@"));
+          const roleEmails = (uor ?? [])
+            .map((u: any) => u.profiles?.email)
+            .filter((e: any): e is string => typeof e === "string" && e.includes("@"));
 
-        toEmails = [...new Set([...toEmails, ...roleEmails])];
+          toEmails = [...new Set([...toEmails, ...roleEmails])];
+        }
       }
-    }
 
-    const userIds: string[] = Array.isArray(rule.recipient_users)
-      ? rule.recipient_users.filter((x: any) => typeof x === "string" && x.includes("-"))
-      : [];
+      const userIds: string[] = Array.isArray(rule.recipient_users)
+        ? rule.recipient_users.filter((x: any) => typeof x === "string" && x.includes("-"))
+        : [];
 
-    if (userIds.length > 0) {
-      const { data: ps } = await supabase
-        .from("profiles")
-        .select("email")
-        .in("id", userIds);
-      const userEmails = (ps ?? [])
-        .map((x: any) => x.email)
-        .filter((e: any): e is string => typeof e === "string" && e.includes("@"));
-      toEmails = [...new Set([...toEmails, ...userEmails])];
+      if (userIds.length > 0) {
+        const { data: ps } = await supabase
+          .from("profiles")
+          .select("email")
+          .in("id", userIds);
+        const userEmails = (ps ?? [])
+          .map((x: any) => x.email)
+          .filter((e: any): e is string => typeof e === "string" && e.includes("@"));
+        toEmails = [...new Set([...toEmails, ...userEmails])];
+      }
     }
 
     ccEmails = asEmailArr(rule.cc_emails);
@@ -172,9 +180,12 @@ async function resolveRecipients(
     const newUserIds: string[] = Array.isArray(rule.recipients_user_ids)
       ? rule.recipients_user_ids.filter((x: any) => typeof x === "string" && x.includes("-"))
       : [];
-    const legacyUserIds: string[] = Array.isArray(rule.recipient_users)
+
+    // FIX: Si el campo nuevo tiene IDs, usarlo EXCLUSIVAMENTE. No mezclar con el campo legacy.
+    const legacyUserIds: string[] = newUserIds.length === 0 && Array.isArray(rule.recipient_users)
       ? rule.recipient_users.filter((x: any) => typeof x === "string" && x.includes("-"))
       : [];
+
     const allUserIds = [...new Set([...newUserIds, ...legacyUserIds])];
 
     if (allUserIds.length > 0) {
@@ -354,7 +365,6 @@ serve(async (req) => {
     // ── Step 7: Resolve helper data ──────────────────────────────────────────
     const reservationDua: string = ((reservation as any)?.dua ?? "").trim();
 
-    // Resolve creator name
     const createdById = (reservation as any).created_by ?? null;
     let createdByName = "";
     if (createdById) {
@@ -374,12 +384,10 @@ serve(async (req) => {
     const startDatetime = (reservation as any)?.start_datetime;
     const endDatetime = (reservation as any)?.end_datetime;
 
-    // ── Resolve provider name from shipper_provider UUID ────────────────────
-    // shipper_provider stores the provider UUID — resolve to human-readable name
+    // Resolve provider name from shipper_provider UUID
     const shipperProviderId: string = ((reservation as any)?.shipper_provider ?? "").trim();
     let providerName = "";
     if (shipperProviderId) {
-      // Check if it looks like a UUID (has dashes) → resolve name from providers table
       const looksLikeUuid = /^[0-9a-f-]{36}$/i.test(shipperProviderId);
       if (looksLikeUuid) {
         const { data: providerData } = await supabase
@@ -389,7 +397,6 @@ serve(async (req) => {
           .maybeSingle();
         providerName = providerData?.name ?? shipperProviderId;
       } else {
-        // Already a plain text name (legacy data)
         providerName = shipperProviderId;
       }
     }
