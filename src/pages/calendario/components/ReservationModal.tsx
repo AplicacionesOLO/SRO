@@ -30,6 +30,7 @@ import {
   fromWarehouseLocalToUtc,
   DEFAULT_TIMEZONE,
 } from '../../../utils/timezoneUtils';
+import { sameDayCutoffService } from '../../../services/sameDayCutoffService';
 
 interface ReservationModalProps {
   isOpen: boolean;
@@ -753,6 +754,55 @@ export default function ReservationModal({
         return null;
       })(),
     };
+
+    // ── Validación: corte de reservas del mismo día ──────────────────────
+    // Solo aplica a NUEVAS reservas, cuando se conoce el cliente y el almacén.
+    // POLÍTICA: nunca falla abierto — cualquier error de verificación bloquea
+    // la creación y muestra un aviso explícito al usuario.
+    if (!reservation && defaults?.client_id && warehouseId && user?.id) {
+      const todayStr = toWarehouseDateString(new Date(), tz);
+      if (formData.startDate === todayStr) {
+        try {
+          const cutoffCheck = await sameDayCutoffService.checkCutoff(
+            orgId,
+            defaults.client_id,
+            warehouseId,
+            tz,
+            user.id,
+            isPrivileged
+          );
+
+          if (cutoffCheck.blocked) {
+            setNotifyModal({
+              isOpen: true,
+              type: 'warning',
+              title: 'Fuera del horario de reservas',
+              message: cutoffCheck.message,
+            });
+            return;
+          }
+
+          if (cutoffCheck.verificationFailed) {
+            setNotifyModal({
+              isOpen: true,
+              type: 'error',
+              title: 'No se pudo verificar el corte del mismo día',
+              message: `${cutoffCheck.message} Por seguridad, la reserva no fue creada. Intentá de nuevo o contactá a un administrador si el problema persiste.`,
+            });
+            return;
+          }
+        } catch (cutoffErr) {
+          console.error('[ReservationModal] Error inesperado al verificar cutoff del mismo día:', cutoffErr);
+          setNotifyModal({
+            isOpen: true,
+            type: 'error',
+            title: 'Error al verificar la regla de reservas',
+            message: 'No se pudo verificar la regla de corte del mismo día. Por seguridad, la reserva no fue creada. Intentá de nuevo o contactá a un administrador.',
+          });
+          return;
+        }
+      }
+    }
 
     try {
       setSaving(true);

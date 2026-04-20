@@ -32,8 +32,18 @@ export interface ClientRules {
   blocked_status_ids: string[];
   bypass_role_ids: string[];
   bypass_user_ids: string[];
+  same_day_cutoff_enabled: boolean;
+  same_day_cutoff_hours: number;
   created_at: string;
   updated_at: string;
+}
+
+export interface SameDayBypassUser {
+  id: string;
+  org_id: string;
+  client_id: string;
+  user_id: string;
+  created_at: string;
 }
 
 /** Configuración compuesta de bloqueo por estados para un cliente */

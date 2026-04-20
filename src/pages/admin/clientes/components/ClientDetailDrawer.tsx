@@ -5,6 +5,7 @@ import type { Provider } from '../../../../types/catalog';
 import ClientPickupRulesTab from './ClientPickupRulesTab';
 import BlockedStatusesConfig from '../../../calendario/components/BlockedStatusesConfig';
 import RuleBlock from './RuleBlock';
+import SameDayCutoffRuleBlock from './SameDayCutoffRuleBlock';
 
 interface ClientDetailDrawerProps {
   isOpen: boolean;
@@ -50,6 +51,13 @@ export default function ClientDetailDrawer({
   const [activeTab, setActiveTab] = useState<TabType>('info');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Accordion: solo un bloque abierto a la vez (null = todos cerrados)
+  const [openRuleId, setOpenRuleId] = useState<string | null>('edit-cutoff');
+
+  const toggleRule = (id: string) => {
+    setOpenRuleId((prev) => (prev === id ? null : id));
+  };
 
   // Form data para info
   const [infoForm, setInfoForm] = useState({
@@ -124,6 +132,7 @@ export default function ClientDetailDrawer({
     if (isOpen) {
       setActiveTab('info');
       setError(null);
+      setOpenRuleId('edit-cutoff'); // resetear accordion al abrir drawer
     }
   }, [isOpen]);
 
@@ -650,7 +659,7 @@ export default function ClientDetailDrawer({
 
           {/* Tab: Reglas */}
           {activeTab === 'rules' && (
-            <div className="space-y-4">
+            <div className="space-y-3">
 
               {/* ── BLOQUE 1: Restricción de edición ── */}
               <RuleBlock
@@ -662,6 +671,13 @@ export default function ClientDetailDrawer({
                 badge="Por cliente"
                 badgeColor="bg-teal-100 text-teal-700"
                 scope="client"
+                summary={
+                  rulesForm.edit_cutoff_hours === 0
+                    ? 'Sin restricción'
+                    : `${rulesForm.edit_cutoff_hours}h antes`
+                }
+                isOpen={openRuleId === 'edit-cutoff'}
+                onToggle={() => toggleRule('edit-cutoff')}
               >
                 <div className="space-y-3">
                   <div>
@@ -712,6 +728,15 @@ export default function ClientDetailDrawer({
                 badge="Por cliente"
                 badgeColor="bg-indigo-100 text-indigo-700"
                 scope="client"
+                summary={
+                  rulesForm.allow_all_docks
+                    ? 'Todos los andenes'
+                    : rulesForm.dock_allocation_mode === 'SEQUENTIAL'
+                      ? 'Secuencial'
+                      : 'Intercalado'
+                }
+                isOpen={openRuleId === 'dock-alloc'}
+                onToggle={() => toggleRule('dock-alloc')}
               >
                 <div className="space-y-3">
                   <label className={`flex items-start gap-3 p-3 border rounded-lg transition-colors cursor-pointer ${
@@ -789,6 +814,8 @@ export default function ClientDetailDrawer({
                 badge="Por cliente"
                 badgeColor="bg-emerald-100 text-emerald-700"
                 scope="client"
+                isOpen={openRuleId === 'client-pickup'}
+                onToggle={() => toggleRule('client-pickup')}
               >
                 <ClientPickupRulesTab
                   orgId={client.org_id}
@@ -808,8 +835,30 @@ export default function ClientDetailDrawer({
                 badge="Por cliente"
                 badgeColor="bg-amber-100 text-amber-700"
                 scope="client"
+                isOpen={openRuleId === 'blocked-statuses'}
+                onToggle={() => toggleRule('blocked-statuses')}
               >
                 <BlockedStatusesConfig orgId={client.org_id} clientId={client.id} />
+              </RuleBlock>
+
+              {/* ── BLOQUE 5: Corte de reservas del mismo día ── */}
+              <RuleBlock
+                icon="ri-calendar-close-line"
+                iconBg="bg-orange-100"
+                iconColor="text-orange-600"
+                title="Cutoff de reservas del mismo día"
+                description="Bloquea la creación de reservas para hoy después de un número de horas antes del cierre del almacén. Admin y Full Access siempre pueden crear sin restricción."
+                badge="Por cliente"
+                badgeColor="bg-orange-100 text-orange-700"
+                scope="client"
+                isOpen={openRuleId === 'same-day-cutoff'}
+                onToggle={() => toggleRule('same-day-cutoff')}
+              >
+                <SameDayCutoffRuleBlock
+                  orgId={client.org_id}
+                  clientId={client.id}
+                  canManage={canUpdateRules}
+                />
               </RuleBlock>
 
             </div>
