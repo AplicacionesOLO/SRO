@@ -440,7 +440,6 @@ export default function MatrizPermisosPage() {
         setLoading(false);
       }
     } catch (error: any) {
-      console.error('Error al verificar permisos');
       // ✅ En caso de error, verificar acceso directo como fallback
       if (hasDirectAccess) {
         setRoleName(user?.role || null);
@@ -477,7 +476,6 @@ export default function MatrizPermisosPage() {
       setPermissions(permissionsRes.data || []);
       setRolePermissions(rolePermissionsRes.data || []);
     } catch (error: any) {
-      console.error('Error al cargar datos');
       setRoles([]);
       setPermissions([]);
       setRolePermissions([]);
@@ -523,7 +521,6 @@ export default function MatrizPermisosPage() {
         setRolePermissions((prev) => [...prev, { role_id: roleId, permission_id: permissionId }]);
       }
     } catch (error: any) {
-      console.error('Error al actualizar permiso');
       alert('Error al actualizar el permiso');
     }
   };

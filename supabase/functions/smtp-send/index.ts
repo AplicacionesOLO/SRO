@@ -1,7 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const VERSION = "v675-gmail-auth-starttls";
+const VERSION = "v956-smtp-from-visible";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -139,11 +139,7 @@ async function sendViaSMTP(opts: {
 }): Promise<void> {
   const allRecipients = [...new Set([...opts.to, ...opts.cc, ...opts.bcc])];
 
-  let conn:
-    | Deno.Conn
-    | Deno.TlsConn
-    | null = null;
-
+  let conn: Deno.Conn | Deno.TlsConn | null = null;
   let reader: Deno.Reader & Deno.Closer;
   let writer: Deno.Writer & Deno.Closer;
 
@@ -292,7 +288,10 @@ serve(async (req) => {
     const smtpPort = parseInt(Deno.env.get("SMTP_PORT") ?? "587", 10);
     const smtpUser = (Deno.env.get("SMTP_USER") ?? "").trim();
     const smtpPass = (Deno.env.get("SMTP_PASS") ?? "").replace(/\s+/g, "");
-    const smtpFrom = Deno.env.get("SMTP_FROM") ?? "no-reply-sro@ologistics.com";
+
+    // SMTP_FROM es el remitente visible (From header).
+    // SMTP_USER es la cuenta que autentica (no visible para el destinatario).
+    const smtpFrom = (Deno.env.get("SMTP_FROM") ?? "no-reply-sro@ologistics.com").trim();
 
     if (!smtpUser) {
       return json(500, { success: false, error: "Missing SMTP_USER", reqId });
@@ -331,14 +330,26 @@ serve(async (req) => {
       return json(400, { error: "Missing body", reqId });
     }
 
-    const headerFrom = sender_email || smtpFrom;
+    // headerFrom = remitente visible en el cliente de correo del destinatario (SMTP_FROM)
+    // envelopeFrom = cuenta que autentica en el servidor SMTP (SMTP_USER)
+    const headerFrom = smtpFrom;
+    const envelopeFrom = smtpUser;
+
+    console.log("[smtp-send][CONFIG]", {
+      version: VERSION,
+      smtpUser,
+      smtpFrom,
+      headerFrom,
+      envelopeFrom,
+      reqId,
+    });
 
     await sendViaSMTP({
       host: smtpHost,
       port: smtpPort,
       smtpUser,
       smtpPass,
-      envelopeFrom: smtpUser,
+      envelopeFrom,
       headerFrom,
       to: to_emails,
       cc: cc_emails,

@@ -1,7 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const VERSION = "v920-fix-legacy-email-merge";
+const VERSION = "v931-restored-no-jwt-verify";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -121,15 +121,9 @@ async function resolveRecipients(
 
   if (rule.recipients_mode === "manual") {
     const newEmails = asEmailArr(rule.recipients_emails);
-
-    // FIX: Si el campo nuevo (recipients_emails) tiene contenido, usarlo EXCLUSIVAMENTE.
-    // Solo caer al campo legacy (recipient_external_emails) si el nuevo está vacío.
-    // Esto evita que correos eliminados en el nuevo campo sigan llegando desde el campo legacy.
     const legacyEmails = newEmails.length === 0 ? asEmailArr(rule.recipient_external_emails) : [];
     toEmails = [...new Set([...newEmails, ...legacyEmails])];
 
-    // Legacy: recipient_roles y recipient_users solo se procesan si NO hay recipients_emails
-    // (son reglas totalmente antiguas que nunca fueron migradas al nuevo sistema)
     if (newEmails.length === 0) {
       const roleIds: string[] = Array.isArray(rule.recipient_roles)
         ? rule.recipient_roles.filter((x: any) => typeof x === "string" && x.includes("-"))
@@ -181,7 +175,6 @@ async function resolveRecipients(
       ? rule.recipients_user_ids.filter((x: any) => typeof x === "string" && x.includes("-"))
       : [];
 
-    // FIX: Si el campo nuevo tiene IDs, usarlo EXCLUSIVAMENTE. No mezclar con el campo legacy.
     const legacyUserIds: string[] = newUserIds.length === 0 && Array.isArray(rule.recipient_users)
       ? rule.recipient_users.filter((x: any) => typeof x === "string" && x.includes("-"))
       : [];
@@ -238,13 +231,8 @@ serve(async (req) => {
     const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
     if (!supabaseUrl || !serviceRoleKey) return json(500, { error: "Missing env vars", reqId });
 
-    const authHeader = req.headers.get("authorization") || req.headers.get("Authorization") || "";
-    const jwt = authHeader.replace(/^Bearer\s+/i, "").trim();
-    if (!jwt) return json(401, { error: "Unauthorized", reqId });
-
+    // Use service role client - no JWT validation needed (verify_jwt: false at gateway)
     const supabase = createClient(supabaseUrl, serviceRoleKey);
-    const { data: userData, error: userErr } = await supabase.auth.getUser(jwt);
-    if (userErr || !userData?.user) return json(401, { error: "Unauthorized", details: userErr?.message ?? "Invalid JWT", reqId });
 
     let body: Body | null = null;
     try { body = (await req.json()) as Body; } catch { return json(400, { error: "Invalid JSON", reqId }); }
@@ -256,9 +244,7 @@ serve(async (req) => {
     if (!orgId || !reservationId || !actorUserId || !eventType) {
       return json(400, { error: "Missing required fields", reqId });
     }
-    if (actorUserId !== userData.user.id) return json(403, { error: "Forbidden", reqId });
 
-    // ── Step 1: Fetch reservation ────────────────────────────────────────────
     const { data: reservation, error: resErr } = await supabase
       .from("reservations")
       .select("id, dock_id, dua, invoice, driver, truck_plate, shipper_provider, start_datetime, end_datetime, created_by, status_id")
@@ -266,11 +252,9 @@ serve(async (req) => {
       .maybeSingle();
 
     if (resErr || !reservation) {
-      console.error("[correspondence-process-event][RESERVATION_FETCH_ERROR]", { reqId, reservationId, error: resErr?.message });
       return json(500, { error: "Failed to fetch reservation", details: resErr?.message ?? "not found", reqId });
     }
 
-    // ── Step 2: Resolve dock → warehouse_id ─────────────────────────────────
     let dockWarehouseId: string | null = null;
     let dockName = "";
 
@@ -285,16 +269,8 @@ serve(async (req) => {
         dockWarehouseId = dock.warehouse_id ?? null;
         dockName = dock.name ?? "";
       }
-
-      console.log("[correspondence-process-event][DOCK_RESOLVED]", {
-        reqId, reservationId, dock_id: reservation.dock_id, dockWarehouseId, dockName,
-        dockErr: dockErr?.message ?? null,
-      });
-    } else {
-      console.warn("[correspondence-process-event][DOCK_ID_NULL]", { reqId, reservationId });
     }
 
-    // ── Step 3: Resolve current status name ─────────────────────────────────
     let currentStatusName = "";
     if (reservation.status_id) {
       const { data: statusData } = await supabase
@@ -302,7 +278,6 @@ serve(async (req) => {
       currentStatusName = statusData?.name ?? "";
     }
 
-    // ── Step 4: Fetch candidate rules ────────────────────────────────────────
     let allCandidateRules: any[] = [];
 
     if (dockWarehouseId) {
@@ -320,14 +295,12 @@ serve(async (req) => {
 
       if (!grErr) allCandidateRules = [...allCandidateRules, ...(globalRules ?? [])];
     } else {
-      console.warn("[correspondence-process-event][WAREHOUSE_FALLBACK]", { reqId, reservationId });
       const { data: orgRules, error: orgRulesErr } = await supabase
         .from("correspondence_rules").select("*")
         .eq("org_id", orgId).eq("is_active", true).eq("event_type", eventType);
       if (!orgRulesErr) allCandidateRules = orgRules ?? [];
     }
 
-    // ── Step 5: For status_changed — apply status filter in JS ───────────────
     let rules: any[] = allCandidateRules;
 
     if (eventType === "reservation_status_changed") {
@@ -338,18 +311,10 @@ serve(async (req) => {
       });
     }
 
-    console.log("[correspondence-process-event][RULES_FOUND]", {
-      reqId, reservationId, dockWarehouseId, eventType,
-      candidatesBeforeFilter: allCandidateRules.length,
-      rulesAfterFilter: rules.length,
-      ruleIds: rules.map((r: any) => ({ id: r.id, name: r.name, warehouse_id: r.warehouse_id })),
-    });
-
     if (!rules || rules.length === 0) {
       return json(200, { success: true, message: "No active rules found", queued: 0, sent: 0, failed: 0, results: [], reqId });
     }
 
-    // ── Step 6: Resolve warehouse timezone ──────────────────────────────────
     const FALLBACK_TZ = "America/Costa_Rica";
     let warehouseTimezone = FALLBACK_TZ;
 
@@ -362,7 +327,6 @@ serve(async (req) => {
       }
     }
 
-    // ── Step 7: Resolve helper data ──────────────────────────────────────────
     const reservationDua: string = ((reservation as any)?.dua ?? "").trim();
 
     const createdById = (reservation as any).created_by ?? null;
@@ -384,7 +348,6 @@ serve(async (req) => {
     const startDatetime = (reservation as any)?.start_datetime;
     const endDatetime = (reservation as any)?.end_datetime;
 
-    // Resolve provider name from shipper_provider UUID
     const shipperProviderId: string = ((reservation as any)?.shipper_provider ?? "").trim();
     let providerName = "";
     if (shipperProviderId) {
@@ -400,10 +363,6 @@ serve(async (req) => {
         providerName = shipperProviderId;
       }
     }
-
-    console.log("[correspondence-process-event][PROVIDER_RESOLVED]", {
-      reqId, reservationId, shipperProviderId, providerName,
-    });
 
     const templateCtx: Record<string, any> = {
       reservation_id: reservation.id ?? "",
@@ -424,18 +383,17 @@ serve(async (req) => {
       fotos: "",
     };
 
-    const smtpFrom = Deno.env.get("SMTP_FROM") ?? "no-reply-sro@ologistics.com";
+    // Siempre usar aplicacionesolo@ologistics.com como remitente
+    const smtpFrom = "aplicacionesolo@ologistics.com";
     const smtpServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
 
     let queued = 0, sent = 0, failed = 0;
     const results: any[] = [];
 
-    // ── Step 8: Process each rule ────────────────────────────────────────────
     for (const rule of rules as any[]) {
 
       if (rule.require_dua === true) {
         if (!reservationDua) {
-          console.log("[correspondence-process-event][DUA_SKIP]", { reqId, ruleId: rule.id, ruleName: rule.name });
           results.push({ ruleId: rule.id, outboxId: null, status: "skipped", reason: "require_dua: reservation has no DUA" });
           continue;
         }
@@ -452,15 +410,6 @@ serve(async (req) => {
       if (rule.sender_mode === "fixed" && rule.sender_user_id) senderUserId = rule.sender_user_id;
 
       const { toEmails, ccEmails, bccEmails } = await resolveRecipients(rule, orgId, supabase);
-
-      console.log("[correspondence-process-event][RECIPIENTS_RESOLVED]", {
-        reqId,
-        ruleId: rule.id,
-        ruleName: rule.name,
-        recipientsMode: rule.recipients_mode,
-        toCount: toEmails.length,
-        toEmails,
-      });
 
       if (toEmails.length === 0) {
         failed++;

@@ -792,7 +792,7 @@ export default function ReservationModal({
             return;
           }
         } catch (cutoffErr) {
-          console.error('[ReservationModal] Error inesperado al verificar cutoff del mismo día:', cutoffErr);
+
           setNotifyModal({
             isOpen: true,
             type: 'error',

@@ -512,7 +512,6 @@ export default function UsuariosPage() {
         });
 
         if (error) {
-          console.error('[UsersPage] ❌ Error response:', error);
           throw new Error((error as any).message || 'Error al actualizar usuario');
         }
 
@@ -603,7 +602,7 @@ export default function UsuariosPage() {
           // ignore
         }
 
-        console.error('[UsersPage] ❌ Error response (create):', { msg, raw, server });
+
 
         const serverCode = server?.error;
         if (serverCode === 'DUPLICATE_EMAIL') {
@@ -643,7 +642,7 @@ export default function UsuariosPage() {
 
         if (!createdUserId) {
           // Si supabase.functions.invoke devolvió un error 409, aquí ya habríamos caído en "error".
-          console.error('[UsersPage] ⚠️ Missing user id in response', { data });
+
           throw new Error('No se pudo obtener el ID del usuario (respuesta sin userId).');
         }
 
@@ -792,7 +791,6 @@ export default function UsuariosPage() {
       });
 
       if (error) {
-        console.error('[UsersPage] ❌ Error response:', error);
         throw new Error((error as any).message || 'Error al eliminar usuario');
       }
 
@@ -938,7 +936,7 @@ export default function UsuariosPage() {
 
         // console.log('[UsersPage] ✅ Warehouse restriction removed');
       } catch (error) {
-        console.error('[UsersPage] ❌ Error removing restriction:', error);
+  
         setAccessError(error instanceof Error ? error.message : 'Error al quitar restricción');
       } finally {
         setAccessLoading(false);

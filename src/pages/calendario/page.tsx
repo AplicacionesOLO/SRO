@@ -1756,30 +1756,7 @@ export default function CalendarioPage() {
               <div className="flex items-center gap-2">
                 <button
                   onClick={() => {
-                    console.log('[Availability-DIAG] === DIAGNÓSTICO COMPLETO DE SLOTS ===');
-                    console.log('[Availability-DIAG] requiredMinutes:', requiredMinutes);
-                    console.log('[Availability-DIAG] allocationRule:', allocationRule);
-                    console.log('[Availability-DIAG] enabledDockIds:', [...enabledDockIds]);
-                    console.log('[Availability-DIAG] reservations en rango:', reservations.length);
-                    console.log('[Availability-DIAG] blocks en rango:', blocks.length);
-                    let blockedCount = 0;
-                    let eligibleCount = 0;
-                    daysInView.forEach(day => {
-                      filteredDocks.forEach(dock => {
-                        timeSlots.forEach(slot => {
-                          const eligible = isSlotEligible(dock.id, day, slot);
-                          if (!eligible) {
-                            blockedCount++;
-                            if (blockedCount <= 20) {
-                              isSlotEligible(dock.id, day, slot, true);
-                            }
-                          } else {
-                            eligibleCount++;
-                          }
-                        });
-                      });
-                    });
-                    console.log(`[Availability-DIAG] RESUMEN: ${eligibleCount} elegibles, ${blockedCount} bloqueados (mostrando primeros 20)`);
+                    // Diagnóstico desactivado (console.logs removidos)
                   }}
                   className="px-2.5 py-1.5 bg-white/10 hover:bg-white/20 rounded-md font-medium transition-colors whitespace-nowrap text-xs"
                   title="Diagnóstico: ver en consola por qué los slots están bloqueados"

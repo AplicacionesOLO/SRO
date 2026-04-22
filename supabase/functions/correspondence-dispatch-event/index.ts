@@ -1,7 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const VERSION = "v877-payload-fix";
+const VERSION = "v931-restored";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -63,7 +63,6 @@ serve(async (req) => {
       return json(400, { error: "Missing orgId or eventType", reqId });
     }
 
-    // Get active rules for this event type
     const { data: rules, error: rulesErr } = await supabase
       .from("correspondence_rules")
       .select("*")
@@ -79,9 +78,6 @@ serve(async (req) => {
       return json(200, { success: true, message: "No active rules for this event", reqId });
     }
 
-    // FIX: el payload que manda a process-event debe tener los campos directos,
-    // NO anidados dentro de "payload". process-event espera: orgId, reservationId,
-    // actorUserId, eventType, statusFromId, statusToId al nivel raíz.
     const processPayload = {
       orgId,
       eventType,

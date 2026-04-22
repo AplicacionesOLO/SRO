@@ -348,6 +348,7 @@ class CasetillaService {
       // ✅ 5) TRIGGER: Disparar evento DESPUÉS de insertar el registro
       //       Así la edge function de fotos encuentra el registro en casetilla_ingresos
       if (reservationUpdated && reservationId) {
+
         try {
           const { data: fullReservation, error: resErr } = await supabase
             .from('reservations')
@@ -363,7 +364,7 @@ class CasetillaService {
               statusToId
             );
           }
-        } catch (triggerError) {
+        } catch (triggerError: any) {
           // El trigger de email nunca debe bloquear el flujo principal
         }
       }
@@ -918,11 +919,7 @@ async getExitEligibleReservations(
       if (salidaError) throw salidaError;
 
       // ✅ 6) TRIGGER: Disparar evento de cambio de status a DISPATCHED
-      /**console.log('[CasetillaService][createSalida] Triggering DISPATCHED event', {
-        reservationId,
-        statusFromId,
-        statusToId
-      });*/
+
 
       try {
         // Obtener la reserva completa actualizada para el trigger
@@ -939,11 +936,9 @@ async getExitEligibleReservations(
             statusFromId,
             statusToId
           );
-        } else {
-          // console.error('[CasetillaService][createSalida] Failed to fetch reservation for trigger', resErr);
         }
-      } catch (triggerError) {
-        // console.error('[CasetillaService][createSalida] Email trigger failed', triggerError);
+      } catch (triggerError: any) {
+        // non-blocking
       }
 
       /**console.log('[CasetillaService][createSalida] SUCCESS', {

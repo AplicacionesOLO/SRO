@@ -156,7 +156,7 @@ export default function PreReservationMiniModal({
         });*/
       }
     } catch (error: any) {
-      console.error('Error al cargar catálogos:', error);
+      // non-blocking catalog load error
     } finally {
       setLoading(false);
     }
@@ -194,12 +194,10 @@ export default function PreReservationMiniModal({
           setClientError(
             'No se encontró un cliente vinculado a este proveedor. Las reglas de andenes no se aplicarán.',
           );
-          console.warn('[PreReservationMiniModal] ⚠️ No client found for provider', {
-            providerId: selectedProviderId,
-          });
+
         }
       } catch (err: any) {
-        console.error('Error al resolver cliente:', err);
+
         setResolvedClientId('');
         setClientError('Error al resolver el cliente del proveedor.');
       } finally {
@@ -308,7 +306,7 @@ export default function PreReservationMiniModal({
           setDurationSource('fallback_30');
         }
       } catch (error: any) {
-        console.error('Error al cargar perfil de tiempo:', error);
+  
         const def = selectedCargoType?.default_minutes ?? null;
         if (typeof def === 'number' && def >= 5) {
           setRequiredMinutes(def);

@@ -112,7 +112,7 @@ export default function ClientPickupRulesTab({
       try {
         await clientPickupRulesService.regenerateBlocks(orgId, formData.dock_id);
       } catch (blockErr) {
-        console.warn('[ClientPickupRulesTab] regenerateBlocks failed, calendar will still be notified', blockErr);
+        // regenerateBlocks failed, calendar will still be notified via notifyRuleChanged
       }
 
       await loadData();

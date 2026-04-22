@@ -747,15 +747,21 @@ export const calendarService = {
       } as Reservation);
 
       const triggerOrgId = reservationForTrigger.org_id || oldOrgId || updates.org_id || '';
+
       if (triggerOrgId) {
-        emailTriggerService.onReservationStatusChanged(
-          triggerOrgId,
-          reservationForTrigger,
-          oldStatusId,
-          updates.status_id || null
-        ).catch(() => {
-          // non-blocking
-        });
+        // Usamos IIFE async para poder await y capturar el resultado real
+        (async () => {
+          try {
+            await emailTriggerService.onReservationStatusChanged(
+              triggerOrgId,
+              reservationForTrigger,
+              oldStatusId,
+              updates.status_id || null
+            );
+          } catch (err: any) {
+            // non-blocking
+          }
+        })();
       }
     }
 

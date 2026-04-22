@@ -160,14 +160,7 @@ export default function RuleModal({ isOpen, onClose, onSave, rule, orgId, active
           .select("id, name, email")
           .in("id", userIds);
 
-        if (profilesErr) {
-          console.error("[RuleModal] load profiles error:", {
-            code: profilesErr.code,
-            message: profilesErr.message,
-            details: profilesErr.details,
-            hint: profilesErr.hint,
-          });
-        } else {
+        if (!profilesErr) {
           usersData = profilesData || [];
         }
       }
@@ -175,20 +168,11 @@ export default function RuleModal({ isOpen, onClose, onSave, rule, orgId, active
       // ============================
       // Gmail accounts conectadas (connected/active)
       // ============================
-      const { data: gmailAccounts, error: gmailErr } = await supabase
+      const { data: gmailAccounts } = await supabase
         .from("gmail_accounts")
         .select("user_id")
         .eq("org_id", orgId)
         .in("status", ["connected", "active"]);
-
-      if (gmailErr) {
-        console.error("[RuleModal] load gmail_accounts error:", {
-          code: gmailErr.code,
-          message: gmailErr.message,
-          details: gmailErr.details,
-          hint: gmailErr.hint,
-        });
-      }
 
       const gmailUserIds = new Set((gmailAccounts || []).map((g: any) => g.user_id));
 
@@ -206,19 +190,10 @@ export default function RuleModal({ isOpen, onClose, onSave, rule, orgId, active
       // ============================
       // Roles (globales, no filtrar por org)
       // ============================
-      const { data: rolesData, error: rolesErr } = await supabase
+      const { data: rolesData } = await supabase
         .from("roles")
         .select("id, name")
         .order("name");
-
-      if (rolesErr) {
-        console.error("[RuleModal] load roles error:", {
-          code: rolesErr.code,
-          message: rolesErr.message,
-          details: rolesErr.details,
-          hint: rolesErr.hint,
-        });
-      }
 
       if (!isCancelled() && rolesData) {
         setRoles(rolesData.map((r: any) => ({ id: String(r.id), name: String(r.name ?? "") })));
@@ -227,20 +202,11 @@ export default function RuleModal({ isOpen, onClose, onSave, rule, orgId, active
       // ============================
       // Estados de reserva (filtrados por org)
       // ============================
-      const { data: statusesData, error: statusesErr } = await supabase
+      const { data: statusesData } = await supabase
         .from("reservation_statuses")
         .select("id, name, color")
         .eq("org_id", orgId)
         .order("order_index");
-
-      if (statusesErr) {
-        console.error("[RuleModal] load reservation_statuses error:", {
-          code: statusesErr.code,
-          message: statusesErr.message,
-          details: statusesErr.details,
-          hint: statusesErr.hint,
-        });
-      }
 
       if (!isCancelled() && statusesData) {
         setStatuses(

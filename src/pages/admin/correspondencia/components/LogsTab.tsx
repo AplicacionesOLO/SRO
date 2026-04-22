@@ -6,6 +6,7 @@ import { useActiveWarehouse } from '../../../../contexts/ActiveWarehouseContext'
 import type { CorrespondenceLog } from '../../../../types/correspondence';
 import { CORRESPONDENCE_LOG_STATUS_LABELS, CORRESPONDENCE_EVENT_LABELS } from '../../../../types/correspondence';
 import { ConfirmModal } from '../../../../components/base/ConfirmModal';
+import { WarehouseAnalysisModal } from './WarehouseAnalysisModal';
 
 export function LogsTab() {
   const { user } = useAuth();
@@ -20,6 +21,9 @@ export function LogsTab() {
   const [selectedLog, setSelectedLog] = useState<CorrespondenceLog | null>(null);
   const [retrying, setRetrying] = useState<string | null>(null);
   const [retryingAll, setRetryingAll] = useState(false);
+  const [sendingQueued, setSendingQueued] = useState<string | null>(null);
+  const [sendingAllQueued, setSendingAllQueued] = useState(false);
+  const [showAnalysisModal, setShowAnalysisModal] = useState(false);
 
   // ✅ Estado para popup de errores
   const [popup, setPopup] = useState<{
@@ -40,7 +44,30 @@ export function LogsTab() {
   const [dateFromFilter, setDateFromFilter] = useState<string>('');
   const [dateToFilter, setDateToFilter] = useState<string>('');
 
-  // ✅ FIX: Remover lastOrgLoadedRef - permitir recargas cuando sea necesario
+  // Debug info
+  const debugInfo = useMemo(() => {
+    const today = new Date().toISOString().split('T')[0];
+    const todayLogs = logs.filter(l => l.created_at.startsWith(today));
+    const nullWarehouseLogs = logs.filter(l => !l.warehouse_id);
+    const sanDiegoLogs = logs.filter(l => {
+      const wh = allowedWarehouses.find(w => w.id === l.warehouse_id);
+      return wh?.name?.toLowerCase().includes('san diego');
+    });
+    const sanDiegoToday = sanDiegoLogs.filter(l => l.created_at.startsWith(today));
+    return {
+      total: logs.length,
+      today: todayLogs.length,
+      nullWarehouse: nullWarehouseLogs.length,
+      sanDiego: sanDiegoLogs.length,
+      sanDiegoToday: sanDiegoToday.length,
+      filtered: filteredLogs.length
+    };
+  }, [logs, filteredLogs, allowedWarehouses]);
+
+  // Mostrar registros sin almacén
+  const [showNullWarehouse, setShowNullWarehouse] = useState(false);
+
+  // ✅ Traemos todos los logs y filtramos en el frontend para poder debuggear
   const loadLogs = useCallback(async () => {
     if (!orgId) {
       setLogs([]);
@@ -49,15 +76,16 @@ export function LogsTab() {
     }
     try {
       setLoading(true);
-      // Pasar warehouseId para filtrar logs por almacén activo
-      const data = await correspondenceService.getLogs(orgId, activeWarehouseId);
+      // No pasar warehouseId para traer TODOS los logs de la org
+      // El filtrado lo hacemos en el frontend
+      const data = await correspondenceService.getLogs(orgId, undefined);
       setLogs(data);
     } catch (error) {
       setPopup({ isOpen: true, type: 'error', title: 'Error', message: 'Error al cargar los logs' });
     } finally {
       setLoading(false);
     }
-  }, [orgId, activeWarehouseId]);
+  }, [orgId]);
 
   useEffect(() => {
     loadLogs();
@@ -65,6 +93,18 @@ export function LogsTab() {
 
   const applyFilters = useCallback(() => {
     let filtered = [...logs];
+
+    // Filtro de almacén (si no estamos mostrando todos)
+    if (activeWarehouseId && !showNullWarehouse) {
+      filtered = filtered.filter(log => log.warehouse_id === activeWarehouseId);
+    } else if (activeWarehouseId && showNullWarehouse) {
+      // Mostrar los del almacén activo + los sin almacén
+      filtered = filtered.filter(log => log.warehouse_id === activeWarehouseId || !log.warehouse_id);
+    } else if (!activeWarehouseId && !showNullWarehouse) {
+      // Sin almacén seleccionado, mostrar solo los que tienen almacén
+      filtered = filtered.filter(log => !!log.warehouse_id);
+    }
+    // Si no hay almacén seleccionado y showNullWarehouse=true, mostrar todos
 
     if (statusFilter !== 'all') filtered = filtered.filter(log => log.status === statusFilter);
     if (eventFilter !== 'all') filtered = filtered.filter(log => log.event_type === eventFilter);
@@ -88,7 +128,7 @@ export function LogsTab() {
     }
 
     setFilteredLogs(filtered);
-  }, [logs, statusFilter, eventFilter, senderFilter, dateFromFilter, dateToFilter]);
+  }, [logs, statusFilter, eventFilter, senderFilter, dateFromFilter, dateToFilter, activeWarehouseId, showNullWarehouse]);
 
   useEffect(() => {
     applyFilters();
@@ -116,22 +156,97 @@ export function LogsTab() {
     if (!orgId) return;
     try {
       setRetryingAll(true);
-      const result = await correspondenceService.retryAllFailedEmails(orgId, activeWarehouseId);
+      // Solo reintentar los fallidos visibles en el filtro actual
+      const visibleFailedIds = filteredLogs
+        .filter(l => l.status === 'failed')
+        .map(l => l.id);
+      
+      let succeeded = 0;
+      let failed = 0;
+      
+      for (const logId of visibleFailedIds) {
+        try {
+          await correspondenceService.retryFailedEmail(logId);
+          succeeded++;
+        } catch {
+          failed++;
+        }
+      }
+      
       await loadLogs();
-      if (result.attempted === 0) {
+      
+      if (visibleFailedIds.length === 0) {
         setPopup({ isOpen: true, type: 'info', title: 'Sin fallidos', message: 'No hay correos fallidos para reintentar.' });
       } else {
         setPopup({
           isOpen: true,
-          type: result.failed === 0 ? 'success' : 'warning',
+          type: failed === 0 ? 'success' : 'warning',
           title: 'Reintento masivo completado',
-          message: `${result.attempted} intentados — ${result.succeeded} enviados correctamente, ${result.failed} fallidos.`,
+          message: `${visibleFailedIds.length} intentados — ${succeeded} enviados correctamente, ${failed} fallidos.`,
         });
       }
     } catch (error: any) {
       setPopup({ isOpen: true, type: 'error', title: 'Error al reintentar todos', message: error.message || 'Error inesperado' });
     } finally {
       setRetryingAll(false);
+    }
+  };
+
+  const handleSendQueued = async (logId: string) => {
+    try {
+      setSendingQueued(logId);
+      await correspondenceService.retryQueuedEmail(logId);
+      setPopup({ isOpen: true, type: 'success', title: 'Envío exitoso', message: 'El correo fue enviado correctamente.' });
+      await loadLogs();
+    } catch (error: any) {
+      setPopup({
+        isOpen: true,
+        type: 'error',
+        title: 'Error al enviar',
+        message: error.message || 'Error al enviar correo en cola'
+      });
+    } finally {
+      setSendingQueued(null);
+    }
+  };
+
+  const handleSendAllQueued = async () => {
+    if (!orgId) return;
+    try {
+      setSendingAllQueued(true);
+      // Solo enviar los en cola visibles en el filtro actual
+      const visibleQueuedIds = filteredLogs
+        .filter(l => l.status === 'queued')
+        .map(l => l.id);
+      
+      let succeeded = 0;
+      let failed = 0;
+      
+      for (const logId of visibleQueuedIds) {
+        try {
+          await correspondenceService.retryQueuedEmail(logId);
+          succeeded++;
+        } catch {
+          failed++;
+        }
+      }
+      
+      await loadLogs();
+      
+      if (visibleQueuedIds.length === 0) {
+        setPopup({ isOpen: true, type: 'info', title: 'Sin correos en cola', message: 'No hay correos en cola para enviar.' });
+      } else {
+        setPopup({
+          isOpen: true,
+          type: failed === 0 ? 'success' : 'warning',
+          title: 'Envío masivo completado',
+          message: `${visibleQueuedIds.length} intentados — ${succeeded} enviados correctamente, ${failed} fallidos.`,
+        });
+      }
+    } catch (error: any) {
+      setPopup({ isOpen: true, type: 'error', title: 'Error al enviar todos', message: error.message || 'Error inesperado' });
+    } finally {
+      setSendingAllQueued(false);
     }
   };
 
@@ -183,22 +298,40 @@ export function LogsTab() {
         confirmText="Entendido"
       />
 
+      {/* Modal de Análisis */}
+      <WarehouseAnalysisModal
+        isOpen={showAnalysisModal}
+        onClose={() => setShowAnalysisModal(false)}
+        warehouses={allowedWarehouses}
+      />
+
       {/* Banner de filtro por almacén */}
-      {activeWarehouseId && activeWarehouse ? (
-        <div className="p-3 bg-teal-50 border border-teal-200 rounded-lg flex items-center gap-2">
-          <i className="ri-store-2-line text-teal-600 text-sm w-4 h-4 flex items-center justify-center"></i>
-          <p className="text-sm text-teal-800">
-            Mostrando envíos del almacén <strong>{activeWarehouse.name}</strong>.
-          </p>
-        </div>
-      ) : (
-        <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg flex items-center gap-2">
-          <i className="ri-information-line text-amber-600 text-sm w-4 h-4 flex items-center justify-center"></i>
-          <p className="text-sm text-amber-800">
-            Mostrando envíos de todos los almacenes. Seleccioná un almacén para filtrar.
-          </p>
-        </div>
-      )}
+      <div className="flex items-center justify-between">
+        {activeWarehouseId && activeWarehouse ? (
+          <div className="p-3 bg-teal-50 border border-teal-200 rounded-lg flex items-center gap-2 flex-1">
+            <i className="ri-store-2-line text-teal-600 text-sm w-4 h-4 flex items-center justify-center"></i>
+            <p className="text-sm text-teal-800">
+              Mostrando envíos del almacén <strong>{activeWarehouse.name}</strong>.
+            </p>
+          </div>
+        ) : (
+          <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg flex items-center gap-2 flex-1">
+            <i className="ri-information-line text-amber-600 text-sm w-4 h-4 flex items-center justify-center"></i>
+            <p className="text-sm text-amber-800">
+              Mostrando envíos de todos los almacenes. Seleccioná un almacén para filtrar.
+            </p>
+          </div>
+        )}
+        
+        {/* Botón de Análisis */}
+        <button
+          onClick={() => setShowAnalysisModal(true)}
+          className="ml-4 flex items-center gap-2 px-4 py-2 bg-teal-600 text-white text-sm font-medium rounded-lg hover:bg-teal-700 transition-colors whitespace-nowrap"
+        >
+          <i className="ri-bar-chart-box-line"></i>
+          Análisis por Almacén
+        </button>
+      </div>
 
       {/* Filtros */}
       <div className="bg-white rounded-lg border border-gray-200 p-4">
@@ -280,55 +413,131 @@ export function LogsTab() {
           </div>
         </div>
 
-        {/* Botón limpiar filtros */}
-        {(statusFilter !== 'all' || eventFilter !== 'all' || senderFilter || dateFromFilter || dateToFilter) && (
-          <div className="mt-3 flex justify-end">
+        {/* Botones de acción rápida */}
+        <div className="mt-3 flex items-center justify-between">
+          <div className="flex items-center gap-2">
             <button
               onClick={() => {
-                setStatusFilter('all');
-                setEventFilter('all');
-                setSenderFilter('');
-                setDateFromFilter('');
-                setDateToFilter('');
+                const today = new Date().toISOString().split('T')[0];
+                setDateFromFilter(today);
+                setDateToFilter(today);
               }}
-              className="text-sm text-teal-600 hover:text-teal-700 font-medium"
+              className="text-sm px-3 py-1.5 bg-teal-50 text-teal-700 rounded-lg hover:bg-teal-100 font-medium"
             >
-              Limpiar filtros
+              <i className="ri-calendar-check-line mr-1"></i>
+              Hoy
             </button>
+            <button
+              onClick={() => {
+                const today = new Date();
+                const weekAgo = new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000);
+                setDateFromFilter(weekAgo.toISOString().split('T')[0]);
+                setDateToFilter(today.toISOString().split('T')[0]);
+              }}
+              className="text-sm px-3 py-1.5 bg-gray-50 text-gray-700 rounded-lg hover:bg-gray-100 font-medium"
+            >
+              <i className="ri-calendar-line mr-1"></i>
+              Últimos 7 días
+            </button>
+            {(statusFilter !== 'all' || eventFilter !== 'all' || senderFilter || dateFromFilter || dateToFilter) && (
+              <button
+                onClick={() => {
+                  setStatusFilter('all');
+                  setEventFilter('all');
+                  setSenderFilter('');
+                  setDateFromFilter('');
+                  setDateToFilter('');
+                }}
+                className="text-sm text-teal-600 hover:text-teal-700 font-medium"
+              >
+                Limpiar filtros
+              </button>
+            )}
           </div>
-        )}
+          
+          {/* Debug info */}
+          <div className="flex items-center gap-4">
+            <div className="text-xs text-gray-500">
+              Total: {debugInfo.total} | Hoy: {debugInfo.today} | Sin almacén: {debugInfo.nullWarehouse} | San Diego: {debugInfo.sanDiego} | San Diego Hoy: {debugInfo.sanDiegoToday} | Mostrando: {debugInfo.filtered}
+            </div>
+            <label className="flex items-center gap-2 text-xs text-gray-600 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={showNullWarehouse}
+                onChange={(e) => setShowNullWarehouse(e.target.checked)}
+                className="rounded border-gray-300 text-teal-600 focus:ring-teal-500"
+              />
+              Mostrar registros sin almacén asignado
+            </label>
+          </div>
+        </div>
       </div>
 
-      {/* Barra de acciones bulk */}
+      {/* Barra de acciones bulk - usa filteredLogs para respetar filtros actuales */}
       {(() => {
         const failedCount = filteredLogs.filter(l => l.status === 'failed').length;
-        if (failedCount === 0) return null;
+        const queuedCount = filteredLogs.filter(l => l.status === 'queued').length;
+        
+        if (failedCount === 0 && queuedCount === 0) return null;
+        
         return (
-          <div className="flex items-center justify-between bg-red-50 border border-red-200 rounded-lg px-4 py-3">
-            <div className="flex items-center gap-2 text-sm text-red-700">
-              <i className="ri-error-warning-line text-base w-4 h-4 flex items-center justify-center"></i>
-              <span>
-                Hay <strong>{failedCount}</strong> correo{failedCount !== 1 ? 's' : ''} con estado fallido
-                {activeWarehouseId ? ` en ${activeWarehouse?.name}` : ''}.
-              </span>
-            </div>
-            <button
-              onClick={handleRetryAll}
-              disabled={retryingAll}
-              className="flex items-center gap-2 px-4 py-1.5 bg-red-600 text-white text-sm font-medium rounded-lg hover:bg-red-700 disabled:opacity-50 whitespace-nowrap"
-            >
-              {retryingAll ? (
-                <>
-                  <i className="ri-loader-4-line animate-spin"></i>
-                  Reintentando todos...
-                </>
-              ) : (
-                <>
-                  <i className="ri-refresh-line"></i>
-                  Reintentar todos los fallidos
-                </>
-              )}
-            </button>
+          <div className="space-y-3">
+            {queuedCount > 0 && (
+              <div className="flex items-center justify-between bg-yellow-50 border border-yellow-200 rounded-lg px-4 py-3">
+                <div className="flex items-center gap-2 text-sm text-yellow-800">
+                  <i className="ri-time-line text-base w-4 h-4 flex items-center justify-center"></i>
+                  <span>
+                    Hay <strong>{queuedCount}</strong> correo{queuedCount !== 1 ? 's' : ''} en cola
+                    {activeWarehouseId ? ` en ${activeWarehouse?.name}` : ''}.
+                  </span>
+                </div>
+                <button
+                  onClick={handleSendAllQueued}
+                  disabled={sendingAllQueued}
+                  className="flex items-center gap-2 px-4 py-1.5 bg-yellow-600 text-white text-sm font-medium rounded-lg hover:bg-yellow-700 disabled:opacity-50 whitespace-nowrap"
+                >
+                  {sendingAllQueued ? (
+                    <>
+                      <i className="ri-loader-4-line animate-spin"></i>
+                      Enviando...
+                    </>
+                  ) : (
+                    <>
+                      <i className="ri-send-plane-line"></i>
+                      Enviar visibles en cola
+                    </>
+                  )}
+                </button>
+              </div>
+            )}
+            {failedCount > 0 && (
+              <div className="flex items-center justify-between bg-red-50 border border-red-200 rounded-lg px-4 py-3">
+                <div className="flex items-center gap-2 text-sm text-red-700">
+                  <i className="ri-error-warning-line text-base w-4 h-4 flex items-center justify-center"></i>
+                  <span>
+                    Hay <strong>{failedCount}</strong> correo{failedCount !== 1 ? 's' : ''} con estado fallido
+                    {activeWarehouseId ? ` en ${activeWarehouse?.name}` : ''}.
+                  </span>
+                </div>
+                <button
+                  onClick={handleRetryAll}
+                  disabled={retryingAll}
+                  className="flex items-center gap-2 px-4 py-1.5 bg-red-600 text-white text-sm font-medium rounded-lg hover:bg-red-700 disabled:opacity-50 whitespace-nowrap"
+                >
+                  {retryingAll ? (
+                    <>
+                      <i className="ri-loader-4-line animate-spin"></i>
+                      Reintentando...
+                    </>
+                  ) : (
+                    <>
+                      <i className="ri-refresh-line"></i>
+                      Reintentar visibles fallidos
+                    </>
+                  )}
+                </button>
+              </div>
+            )}
           </div>
         );
       })()}
@@ -398,9 +607,9 @@ export function LogsTab() {
                             {warehouseName}
                           </span>
                         ) : (
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-amber-50 text-amber-600">
-                            <i className="ri-time-line text-xs"></i>
-                            Previo
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-red-50 text-red-600 border border-red-200" title="Este registro no tiene almacén asignado - puede ser de San Diego">
+                            <i className="ri-error-warning-line text-xs"></i>
+                            Sin almacén
                           </span>
                         )}
                       </td>
@@ -443,6 +652,20 @@ export function LogsTab() {
                         >
                           <i className="ri-eye-line text-lg"></i>
                         </button>
+                        {log.status === 'queued' && (
+                          <button
+                            onClick={() => handleSendQueued(log.id)}
+                            disabled={sendingQueued === log.id}
+                            className="text-yellow-600 hover:text-yellow-700 mr-3 disabled:opacity-50"
+                            title="Enviar ahora"
+                          >
+                            {sendingQueued === log.id ? (
+                              <i className="ri-loader-4-line animate-spin text-lg"></i>
+                            ) : (
+                              <i className="ri-send-plane-line text-lg"></i>
+                            )}
+                          </button>
+                        )}
                         {log.status === 'failed' && (
                           <button
                             onClick={() => handleRetry(log.id)}
@@ -634,6 +857,28 @@ export function LogsTab() {
 
             {/* Footer */}
             <div className="px-6 py-4 border-t border-gray-200 flex justify-end gap-3">
+              {selectedLog.status === 'queued' && (
+                <button
+                  onClick={() => {
+                    handleSendQueued(selectedLog.id);
+                    setSelectedLog(null);
+                  }}
+                  disabled={sendingQueued === selectedLog.id}
+                  className="px-4 py-2 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 disabled:opacity-50 whitespace-nowrap"
+                >
+                  {sendingQueued === selectedLog.id ? (
+                    <>
+                      <i className="ri-loader-4-line animate-spin mr-2"></i>
+                      Enviando...
+                    </>
+                  ) : (
+                    <>
+                      <i className="ri-send-plane-line mr-2"></i>
+                      Enviar ahora
+                    </>
+                  )}
+                </button>
+              )}
               {selectedLog.status === 'failed' && (
                 <button
                   onClick={() => {

@@ -186,12 +186,7 @@ export const sameDayCutoffService = {
   ): Promise<CutoffCheckResult> {
     // ── Bypass automático: admin / Full Access ─────────────────────────────
     if (isPrivileged) {
-      console.log(`${LOG} ✅ BYPASS_PRIVILEGIADO`, {
-        usuario: userId,
-        cliente: clientId,
-        org: orgId,
-        motivo: 'isPrivileged=true (admin.users.create | admin.matrix.update)',
-      });
+
       return { blocked: false, cutoffTimeStr: null, message: '' };
     }
 
@@ -200,11 +195,7 @@ export const sameDayCutoffService = {
     try {
       config = await this.getConfig(orgId, clientId);
     } catch (err) {
-      console.error(`${LOG} ❌ FALLO_VERIFICACION — error cargando config del cliente`, {
-        cliente: clientId,
-        org: orgId,
-        error: err,
-      });
+
       return {
         blocked: false,
         cutoffTimeStr: null,
@@ -215,11 +206,7 @@ export const sameDayCutoffService = {
 
     // ── Regla desactivada o sin horas configuradas: pasa libre ────────────
     if (!config.same_day_cutoff_enabled || config.same_day_cutoff_hours <= 0) {
-      console.log(`${LOG} ⏭️ REGLA_INACTIVA`, {
-        cliente: clientId,
-        habilitada: config.same_day_cutoff_enabled,
-        horas: config.same_day_cutoff_hours,
-      });
+
       return { blocked: false, cutoffTimeStr: null, message: '' };
     }
 
@@ -228,11 +215,7 @@ export const sameDayCutoffService = {
     try {
       bypassUsers = await this.getBypassUsers(orgId, clientId);
     } catch (err) {
-      console.error(`${LOG} ❌ FALLO_VERIFICACION — error cargando usuarios bypass`, {
-        cliente: clientId,
-        org: orgId,
-        error: err,
-      });
+
       return {
         blocked: false,
         cutoffTimeStr: null,
@@ -242,12 +225,7 @@ export const sameDayCutoffService = {
     }
 
     const hasBypass = bypassUsers.includes(userId);
-    console.log(`${LOG} 🔑 Verificación bypass individual`, {
-      usuario: userId,
-      cliente: clientId,
-      usuariosBypass: bypassUsers,
-      resultado: hasBypass ? 'BYPASS_ACTIVO' : 'SIN_BYPASS',
-    });
+
 
     if (hasBypass) {
       return { blocked: false, cutoffTimeStr: null, message: '' };
@@ -261,11 +239,7 @@ export const sameDayCutoffService = {
       .maybeSingle();
 
     if (whErr || !wh?.business_end_time) {
-      console.error(`${LOG} ❌ FALLO_VERIFICACION — no se pudo obtener horario del almacén`, {
-        warehouseId,
-        error: whErr,
-        data: wh,
-      });
+
       return {
         blocked: false,
         cutoffTimeStr: null,
@@ -285,18 +259,7 @@ export const sameDayCutoffService = {
 
     const isBlocked = nowMins >= cutoffMins;
 
-    console.log(`${LOG} 🕐 Evaluación de corte`, {
-      cliente: clientId,
-      usuario: userId,
-      timezone: tz,
-      horaActual_enAlmacen: nowTimeStr,
-      cierreAlmacen: wh.business_end_time.slice(0, 5),
-      horasCutoff: config.same_day_cutoff_hours,
-      horaCorteCumplida: cutoffTimeStr,
-      horaActual_minutos: nowMins,
-      horaCorteCumplida_minutos: cutoffMins,
-      resultado: isBlocked ? '🚫 BLOQUEADO' : '✅ PERMITIDO',
-    });
+
 
     if (isBlocked) {
       return {

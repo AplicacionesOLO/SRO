@@ -1,13 +1,42 @@
-
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
 import { useAuth } from '../../contexts/AuthContext';
 import { usePermissions } from '../../hooks/usePermissions';
 import { useActiveWarehouse } from '../../contexts/ActiveWarehouseContext';
-import { dashboardService, DashboardStats } from '../../services/dashboardService';
+import { dashboardService, DashboardStats, DashboardPeriod } from '../../services/dashboardService';
 import WarehousePageHeader from '../../components/feature/WarehousePageHeader';
+
+const PERIOD_OPTIONS: { value: DashboardPeriod; label: string; icon: string }[] = [
+  { value: 'day',   label: 'Hoy',    icon: 'ri-sun-line' },
+  { value: 'week',  label: 'Semana', icon: 'ri-calendar-check-line' },
+  { value: 'month', label: 'Mes',    icon: 'ri-calendar-2-line' },
+  { value: 'year',  label: 'Año',    icon: 'ri-calendar-line' },
+  { value: 'all',   label: 'Todo',   icon: 'ri-history-line' },
+];
+
+function getPeriodLabel(period: DashboardPeriod): string {
+  const map: Record<DashboardPeriod, string> = {
+    day: 'hoy',
+    week: 'esta semana',
+    month: 'este mes',
+    year: 'este año',
+    all: 'en total',
+  };
+  return map[period];
+}
+
+function getPeriodCompareLabel(period: DashboardPeriod): string {
+  const map: Record<DashboardPeriod, string> = {
+    day: 'vs ayer',
+    week: 'vs sem. ant.',
+    month: 'vs mes ant.',
+    year: 'vs año ant.',
+    all: '',
+  };
+  return map[period];
+}
 
 export default function Dashboard() {
   const { user, loading: authLoading, pendingAccess } = useAuth();
@@ -23,38 +52,34 @@ export default function Dashboard() {
   const navigate = useNavigate();
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [loading, setLoading] = useState(true);
+  const [period, setPeriod] = useState<DashboardPeriod>('month');
 
   useEffect(() => {
-    if (!authLoading && !user) {
-      navigate('/login');
-    }
+    if (!authLoading && !user) navigate('/login');
   }, [authLoading, user, navigate]);
 
   useEffect(() => {
-    if (!authLoading && user && pendingAccess) {
-      navigate('/access-pending');
-    }
+    if (!authLoading && user && pendingAccess) navigate('/access-pending');
   }, [authLoading, user, pendingAccess, navigate]);
+
+  const loadDashboardData = useCallback(async () => {
+    if (!orgId) return;
+    setLoading(true);
+    try {
+      const data = await dashboardService.getStats(orgId, activeWarehouseId, period);
+      setStats(data);
+    } catch {
+      // silenced
+    } finally {
+      setLoading(false);
+    }
+  }, [orgId, activeWarehouseId, period]);
 
   useEffect(() => {
     if (orgId && !warehouseLoading) {
       loadDashboardData();
     }
-  }, [orgId, activeWarehouseId, warehouseLoading]);
-
-  const loadDashboardData = async () => {
-    if (!orgId) return;
-    setLoading(true);
-    try {
-      // Pasar warehouseId para filtrar métricas por almacén activo
-      const data = await dashboardService.getStats(orgId, activeWarehouseId);
-      setStats(data);
-    } catch (error) {
-      // silenced
-    } finally {
-      setLoading(false);
-    }
-  };
+  }, [orgId, activeWarehouseId, warehouseLoading, period]);
 
   if (authLoading || permissionsLoading) {
     return (
@@ -108,13 +133,16 @@ export default function Dashboard() {
     );
   }
 
-  const maxDailyCount = Math.max(...(stats?.dailyTrend.map(d => d.count) || [1]));
+  const maxTrend = Math.max(...(stats?.trendData.map(d => d.count) || [1]), 1);
+  const periodLabel = getPeriodLabel(period);
+  const compareLabel = getPeriodCompareLabel(period);
 
   return (
     <div className="min-h-screen bg-gray-50">
       <div className="px-6 py-6">
         <div className="max-w-7xl mx-auto">
-          {/* Header con almacén activo */}
+
+          {/* Header */}
           <WarehousePageHeader
             title="Dashboard"
             subtitle={format(new Date(), "EEEE, d 'de' MMMM yyyy", { locale: es })}
@@ -125,7 +153,25 @@ export default function Dashboard() {
             loading={warehouseLoading}
           />
 
-          <div className="mb-6 flex justify-end">
+          {/* Filtros maestros de período */}
+          <div className="mb-6 flex items-center justify-between gap-4 flex-wrap">
+            <div className="flex items-center gap-1 bg-white border border-gray-200 rounded-xl p-1">
+              {PERIOD_OPTIONS.map(opt => (
+                <button
+                  key={opt.value}
+                  onClick={() => setPeriod(opt.value)}
+                  className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all whitespace-nowrap cursor-pointer ${
+                    period === opt.value
+                      ? 'bg-teal-600 text-white shadow-sm'
+                      : 'text-gray-600 hover:bg-gray-50'
+                  }`}
+                >
+                  <i className={opt.icon}></i>
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+
             <button
               onClick={loadDashboardData}
               disabled={loading}
@@ -144,21 +190,26 @@ export default function Dashboard() {
             <>
               {/* KPIs Principales */}
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-                <div className="bg-white rounded-xl p-5 border border-gray-100 shadow-sm">
+                {/* Reservas del período */}
+                <div className="bg-white rounded-xl p-5 border border-gray-100">
                   <div className="flex items-center justify-between mb-3">
                     <div className="w-10 h-10 bg-teal-50 rounded-lg flex items-center justify-center">
                       <i className="ri-calendar-todo-line text-teal-600 text-lg"></i>
                     </div>
-                    <div className={`flex items-center gap-1 text-xs font-medium ${stats.vsLastMonth >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                      <i className={`ri-arrow-${stats.vsLastMonth >= 0 ? 'up' : 'down'}-s-line`}></i>
-                      {Math.abs(stats.vsLastMonth)}%
-                    </div>
+                    {period !== 'all' && (
+                      <div className={`flex items-center gap-1 text-xs font-medium ${stats.vsLastPeriod >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                        <i className={stats.vsLastPeriod >= 0 ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'}></i>
+                        {Math.abs(stats.vsLastPeriod)}%
+                        <span className="text-gray-400 font-normal ml-0.5">{compareLabel}</span>
+                      </div>
+                    )}
                   </div>
-                  <p className="text-2xl font-bold text-gray-900">{stats.monthCount}</p>
-                  <p className="text-xs text-gray-500 mt-1">Reservas este mes</p>
+                  <p className="text-2xl font-bold text-gray-900">{stats.periodCount}</p>
+                  <p className="text-xs text-gray-500 mt-1 capitalize">Reservas {periodLabel}</p>
                 </div>
 
-                <div className="bg-white rounded-xl p-5 border border-gray-100 shadow-sm">
+                {/* Pendientes */}
+                <div className="bg-white rounded-xl p-5 border border-gray-100">
                   <div className="flex items-center justify-between mb-3">
                     <div className="w-10 h-10 bg-amber-50 rounded-lg flex items-center justify-center">
                       <i className="ri-time-line text-amber-600 text-lg"></i>
@@ -169,7 +220,8 @@ export default function Dashboard() {
                   <p className="text-xs text-gray-500 mt-1">Por confirmar</p>
                 </div>
 
-                <div className="bg-white rounded-xl p-5 border border-gray-100 shadow-sm">
+                {/* Confirmadas */}
+                <div className="bg-white rounded-xl p-5 border border-gray-100">
                   <div className="flex items-center justify-between mb-3">
                     <div className="w-10 h-10 bg-green-50 rounded-lg flex items-center justify-center">
                       <i className="ri-checkbox-circle-line text-green-600 text-lg"></i>
@@ -180,7 +232,8 @@ export default function Dashboard() {
                   <p className="text-xs text-gray-500 mt-1">Confirmadas</p>
                 </div>
 
-                <div className="bg-white rounded-xl p-5 border border-gray-100 shadow-sm">
+                {/* En proceso */}
+                <div className="bg-white rounded-xl p-5 border border-gray-100">
                   <div className="flex items-center justify-between mb-3">
                     <div className="w-10 h-10 bg-indigo-50 rounded-lg flex items-center justify-center">
                       <i className="ri-loader-4-line text-indigo-600 text-lg"></i>
@@ -192,78 +245,133 @@ export default function Dashboard() {
                 </div>
               </div>
 
-              {/* Resumen Operativo + Tendencia */}
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
-                {/* Resumen del día */}
-                <div className="bg-gradient-to-br from-teal-500 to-teal-600 rounded-xl p-5 text-white">
-                  <div className="flex items-center gap-3 mb-4">
-                    <div className="w-10 h-10 bg-white/20 rounded-lg flex items-center justify-center">
-                      <i className="ri-sun-line text-xl"></i>
-                    </div>
-                    <div>
-                      <p className="text-teal-100 text-xs">Hoy</p>
-                      <p className="text-xl font-bold">{stats.todayCount} reservas</p>
-                    </div>
+              {/* Resumen rápido de períodos fijos */}
+              <div className="grid grid-cols-3 gap-4 mb-6">
+                <div className={`rounded-xl p-4 border flex items-center gap-4 ${period === 'day' ? 'bg-teal-50 border-teal-200' : 'bg-white border-gray-100'}`}>
+                  <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${period === 'day' ? 'bg-teal-100' : 'bg-gray-100'}`}>
+                    <i className={`ri-sun-line ${period === 'day' ? 'text-teal-600' : 'text-gray-500'}`}></i>
                   </div>
-                  <div className="grid grid-cols-2 gap-3 pt-3 border-t border-white/20">
-                    <div>
-                      <p className="text-teal-100 text-xs">Esta semana</p>
-                      <p className="text-lg font-semibold">{stats.weekCount}</p>
-                    </div>
-                    <div>
-                      <p className="text-teal-100 text-xs">vs semana ant.</p>
-                      <p className={`text-lg font-semibold ${stats.vsLastWeek >= 0 ? 'text-green-300' : 'text-red-300'}`}>
-                        {stats.vsLastWeek > 0 ? '+' : ''}{stats.vsLastWeek}%
-                      </p>
-                    </div>
+                  <div>
+                    <p className="text-xl font-bold text-gray-900">{stats.todayCount}</p>
+                    <p className="text-xs text-gray-500">Hoy</p>
                   </div>
                 </div>
-
-                {/* Tendencia 7 días */}
-                <div className="lg:col-span-2 bg-white rounded-xl p-5 border border-gray-100 shadow-sm">
-                  <div className="flex items-center justify-between mb-4">
-                    <h3 className="text-sm font-semibold text-gray-900">Tendencia últimos 7 días</h3>
-                    <span className="text-xs text-gray-500">Reservas por día</span>
+                <div className={`rounded-xl p-4 border flex items-center gap-4 ${period === 'week' ? 'bg-teal-50 border-teal-200' : 'bg-white border-gray-100'}`}>
+                  <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${period === 'week' ? 'bg-teal-100' : 'bg-gray-100'}`} >
+                    <i className={`ri-calendar-check-line ${period === 'week' ? 'text-teal-600' : 'text-gray-500'}`}></i>
                   </div>
-                  <div className="flex items-end justify-between gap-2 h-24">
-                    {stats.dailyTrend.map((day, idx) => (
-                      <div key={idx} className="flex-1 flex flex-col items-center gap-1">
-                        <span className="text-xs font-medium text-gray-700">{day.count}</span>
-                        <div 
-                          className="w-full bg-teal-500 rounded-t-sm transition-all hover:bg-teal-600"
-                          style={{ height: `${Math.max((day.count / maxDailyCount) * 100, 8)}%`, minHeight: '4px' }}
-                        ></div>
-                        <span className="text-[10px] text-gray-500">{day.date}</span>
-                      </div>
-                    ))}
+                  <div>
+                    <p className="text-xl font-bold text-gray-900">{stats.weekCount}</p>
+                    <p className="text-xs text-gray-500">Esta semana</p>
+                  </div>
+                </div>
+                <div className={`rounded-xl p-4 border flex items-center gap-4 ${period === 'month' ? 'bg-teal-50 border-teal-200' : 'bg-white border-gray-100'}`}>
+                  <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${period === 'month' ? 'bg-teal-100' : 'bg-gray-100'}`}>
+                    <i className={`ri-calendar-2-line ${period === 'month' ? 'text-teal-600' : 'text-gray-500'}`}></i>
+                  </div>
+                  <div>
+                    <p className="text-xl font-bold text-gray-900">{stats.monthCount}</p>
+                    <p className="text-xs text-gray-500">Este mes</p>
                   </div>
                 </div>
               </div>
 
+              {/* Nacional vs Importado */}
+              <div className="bg-white rounded-xl p-5 border border-gray-100 mb-6">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-sm font-semibold text-gray-900">Reservas por Tipo de Proveedor</h3>
+                  <span className="text-xs text-gray-400 capitalize">{periodLabel} · {stats.providerTypeStats.total} total</span>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="flex items-center gap-4 bg-emerald-50 rounded-xl p-4">
+                    <div className="w-12 h-12 bg-emerald-100 rounded-xl flex items-center justify-center flex-shrink-0">
+                      <i className="ri-home-4-line text-emerald-600 text-xl"></i>
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs text-emerald-700 font-medium mb-1">Nacional</p>
+                      <div className="flex items-end gap-2">
+                        <span className="text-2xl font-bold text-gray-900">{stats.providerTypeStats.nacional}</span>
+                        <span className="text-sm font-semibold text-emerald-600 mb-0.5">{stats.providerTypeStats.nacionalPct}%</span>
+                      </div>
+                      <div className="mt-2 h-1.5 bg-emerald-100 rounded-full overflow-hidden">
+                        <div className="h-full bg-emerald-500 rounded-full transition-all" style={{ width: `${stats.providerTypeStats.nacionalPct}%` }}></div>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-4 bg-orange-50 rounded-xl p-4">
+                    <div className="w-12 h-12 bg-orange-100 rounded-xl flex items-center justify-center flex-shrink-0">
+                      <i className="ri-ship-line text-orange-600 text-xl"></i>
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs text-orange-700 font-medium mb-1">Importado</p>
+                      <div className="flex items-end gap-2">
+                        <span className="text-2xl font-bold text-gray-900">{stats.providerTypeStats.importado}</span>
+                        <span className="text-sm font-semibold text-orange-600 mb-0.5">{stats.providerTypeStats.importadoPct}%</span>
+                      </div>
+                      <div className="mt-2 h-1.5 bg-orange-100 rounded-full overflow-hidden">
+                        <div className="h-full bg-orange-500 rounded-full transition-all" style={{ width: `${stats.providerTypeStats.importadoPct}%` }}></div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Tendencia del período */}
+              <div className="bg-white rounded-xl p-5 border border-gray-100 mb-6">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-sm font-semibold text-gray-900">
+                    Tendencia de reservas
+                    <span className="ml-2 text-xs font-normal text-gray-400 capitalize">— {periodLabel}</span>
+                  </h3>
+                  <span className="text-xs text-gray-500">
+                    {period === 'day' ? 'Por hora' : period === 'week' ? 'Por día' : period === 'month' ? 'Por día' : 'Por mes'}
+                  </span>
+                </div>
+                {stats.trendData.length === 0 ? (
+                  <p className="text-sm text-gray-400 text-center py-8">Sin datos para este período</p>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <div
+                      className="flex items-end gap-1 h-28"
+                      style={{ minWidth: stats.trendData.length > 20 ? `${stats.trendData.length * 28}px` : '100%' }}
+                    >
+                      {stats.trendData.map((item, idx) => (
+                        <div key={idx} className="flex-1 flex flex-col items-center gap-1 min-w-[20px]">
+                          {item.count > 0 && (
+                            <span className="text-[10px] font-medium text-gray-600">{item.count}</span>
+                          )}
+                          <div
+                            className="w-full bg-teal-500 rounded-t-sm transition-all hover:bg-teal-600"
+                            style={{ height: `${Math.max((item.count / maxTrend) * 100, item.count > 0 ? 8 : 2)}%`, minHeight: '2px' }}
+                          ></div>
+                          <span className="text-[9px] text-gray-400 truncate w-full text-center">{item.label}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+
               {/* Distribución por Estado + Recursos */}
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
-                {/* Distribución por estado */}
-                <div className="bg-white rounded-xl p-5 border border-gray-100 shadow-sm">
+                <div className="bg-white rounded-xl p-5 border border-gray-100">
                   <h3 className="text-sm font-semibold text-gray-900 mb-4">Distribución por Estado</h3>
                   <div className="space-y-3">
                     {stats.statusDistribution.map((status, idx) => {
-                      const percentage = stats.totalReservations > 0 
-                        ? Math.round((status.count / stats.totalReservations) * 100) 
+                      const percentage = stats.totalReservations > 0
+                        ? Math.round((status.count / stats.totalReservations) * 100)
                         : 0;
                       return (
                         <div key={idx}>
                           <div className="flex items-center justify-between mb-1">
                             <div className="flex items-center gap-2">
-                              <div 
-                                className="w-3 h-3 rounded-full" 
-                                style={{ backgroundColor: status.color }}
-                              ></div>
+                              <div className="w-3 h-3 rounded-full" style={{ backgroundColor: status.color }}></div>
                               <span className="text-sm text-gray-700">{status.name}</span>
                             </div>
                             <span className="text-sm font-medium text-gray-900">{status.count}</span>
                           </div>
                           <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
-                            <div 
+                            <div
                               className="h-full rounded-full transition-all"
                               style={{ width: `${percentage}%`, backgroundColor: status.color }}
                             ></div>
@@ -274,8 +382,7 @@ export default function Dashboard() {
                   </div>
                 </div>
 
-                {/* Recursos operativos */}
-                <div className="bg-white rounded-xl p-5 border border-gray-100 shadow-sm">
+                <div className="bg-white rounded-xl p-5 border border-gray-100">
                   <h3 className="text-sm font-semibold text-gray-900 mb-4">Recursos Operativos</h3>
                   <div className="grid grid-cols-2 gap-4">
                     <div className="bg-gray-50 rounded-lg p-4">
@@ -326,9 +433,11 @@ export default function Dashboard() {
 
               {/* Top Proveedores + Horas Pico + Andenes */}
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
-                {/* Top Proveedores */}
-                <div className="bg-white rounded-xl p-5 border border-gray-100 shadow-sm">
-                  <h3 className="text-sm font-semibold text-gray-900 mb-4">Top Proveedores</h3>
+                <div className="bg-white rounded-xl p-5 border border-gray-100">
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-sm font-semibold text-gray-900">Top Proveedores</h3>
+                    <span className="text-xs text-gray-400 capitalize">{periodLabel}</span>
+                  </div>
                   {stats.topProviders.length === 0 ? (
                     <p className="text-sm text-gray-400 text-center py-4">Sin datos</p>
                   ) : (
@@ -341,9 +450,7 @@ export default function Dashboard() {
                               idx === 1 ? 'bg-gray-200 text-gray-600' :
                               idx === 2 ? 'bg-orange-100 text-orange-700' :
                               'bg-gray-100 text-gray-500'
-                            }`}>
-                              {idx + 1}
-                            </span>
+                            }`}>{idx + 1}</span>
                             <span className="text-sm text-gray-700 truncate max-w-[140px]">{provider.name}</span>
                           </div>
                           <span className="text-sm font-semibold text-gray-900">{provider.count}</span>
@@ -353,9 +460,11 @@ export default function Dashboard() {
                   )}
                 </div>
 
-                {/* Horas Pico */}
-                <div className="bg-white rounded-xl p-5 border border-gray-100 shadow-sm">
-                  <h3 className="text-sm font-semibold text-gray-900 mb-4">Horas Pico</h3>
+                <div className="bg-white rounded-xl p-5 border border-gray-100">
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-sm font-semibold text-gray-900">Horas Pico</h3>
+                    <span className="text-xs text-gray-400 capitalize">{periodLabel}</span>
+                  </div>
                   {stats.peakHours.length === 0 ? (
                     <p className="text-sm text-gray-400 text-center py-4">Sin datos</p>
                   ) : (
@@ -363,16 +472,14 @@ export default function Dashboard() {
                       {stats.peakHours.map((hour, idx) => (
                         <div key={idx} className="flex items-center justify-between">
                           <div className="flex items-center gap-3">
-                            <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${
-                              idx === 0 ? 'bg-red-100' : 'bg-gray-100'
-                            }`}>
+                            <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${idx === 0 ? 'bg-red-100' : 'bg-gray-100'}`}>
                               <i className={`ri-time-line ${idx === 0 ? 'text-red-600' : 'text-gray-500'}`}></i>
                             </div>
                             <span className="text-sm text-gray-700">{hour.hour}</span>
                           </div>
                           <div className="flex items-center gap-2">
                             <div className="w-16 h-2 bg-gray-100 rounded-full overflow-hidden">
-                              <div 
+                              <div
                                 className={`h-full rounded-full ${idx === 0 ? 'bg-red-500' : 'bg-gray-400'}`}
                                 style={{ width: `${(hour.count / stats.peakHours[0].count) * 100}%` }}
                               ></div>
@@ -385,9 +492,11 @@ export default function Dashboard() {
                   )}
                 </div>
 
-                {/* Top Andenes */}
-                <div className="bg-white rounded-xl p-5 border border-gray-100 shadow-sm">
-                  <h3 className="text-sm font-semibold text-gray-900 mb-4">Andenes más Usados</h3>
+                <div className="bg-white rounded-xl p-5 border border-gray-100">
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-sm font-semibold text-gray-900">Andenes más Usados</h3>
+                    <span className="text-xs text-gray-400 capitalize">{periodLabel}</span>
+                  </div>
                   {stats.topDocks.length === 0 ? (
                     <p className="text-sm text-gray-400 text-center py-4">Sin datos</p>
                   ) : (
@@ -395,9 +504,7 @@ export default function Dashboard() {
                       {stats.topDocks.map((dock, idx) => (
                         <div key={idx} className="flex items-center justify-between">
                           <div className="flex items-center gap-3">
-                            <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${
-                              idx === 0 ? 'bg-teal-100' : 'bg-gray-100'
-                            }`}>
+                            <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${idx === 0 ? 'bg-teal-100' : 'bg-gray-100'}`}>
                               <i className={`ri-truck-line ${idx === 0 ? 'text-teal-600' : 'text-gray-500'}`}></i>
                             </div>
                             <span className="text-sm text-gray-700">{dock.name}</span>
@@ -412,8 +519,11 @@ export default function Dashboard() {
 
               {/* Rendimiento por Almacén */}
               {stats.warehouseStats.length > 0 && (
-                <div className="bg-white rounded-xl p-5 border border-gray-100 shadow-sm mb-6">
-                  <h3 className="text-sm font-semibold text-gray-900 mb-4">Rendimiento por Almacén</h3>
+                <div className="bg-white rounded-xl p-5 border border-gray-100 mb-6">
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-sm font-semibold text-gray-900">Rendimiento por Almacén</h3>
+                    <span className="text-xs text-gray-400 capitalize">{periodLabel}</span>
+                  </div>
                   <div className="overflow-x-auto">
                     <table className="w-full">
                       <thead>
@@ -426,8 +536,8 @@ export default function Dashboard() {
                       </thead>
                       <tbody>
                         {stats.warehouseStats.map((warehouse, idx) => {
-                          const maxReservations = Math.max(...stats.warehouseStats.map(w => w.reservations));
-                          const occupancy = maxReservations > 0 ? Math.round((warehouse.reservations / maxReservations) * 100) : 0;
+                          const maxReservations = Math.max(...stats.warehouseStats.map(w => w.reservations), 1);
+                          const occupancy = Math.round((warehouse.reservations / maxReservations) * 100);
                           return (
                             <tr key={idx} className="border-b border-gray-50 last:border-0">
                               <td className="py-3">
@@ -447,10 +557,7 @@ export default function Dashboard() {
                               <td className="py-3">
                                 <div className="flex items-center justify-end gap-2">
                                   <div className="w-20 h-2 bg-gray-100 rounded-full overflow-hidden">
-                                    <div 
-                                      className="h-full bg-teal-500 rounded-full"
-                                      style={{ width: `${occupancy}%` }}
-                                    ></div>
+                                    <div className="h-full bg-teal-500 rounded-full" style={{ width: `${occupancy}%` }}></div>
                                   </div>
                                   <span className="text-xs text-gray-500 w-8 text-right">{occupancy}%</span>
                                 </div>
@@ -468,7 +575,7 @@ export default function Dashboard() {
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <button
                   onClick={() => navigate('/calendario')}
-                  className="flex items-center gap-4 bg-white rounded-xl p-5 border border-gray-100 shadow-sm hover:border-teal-200 hover:shadow-md transition-all cursor-pointer group"
+                  className="flex items-center gap-4 bg-white rounded-xl p-5 border border-gray-100 hover:border-teal-200 transition-all cursor-pointer group"
                 >
                   <div className="w-12 h-12 bg-teal-50 rounded-xl flex items-center justify-center group-hover:bg-teal-100 transition-colors">
                     <i className="ri-add-line text-teal-600 text-xl"></i>
@@ -482,7 +589,7 @@ export default function Dashboard() {
 
                 <button
                   onClick={() => navigate('/andenes')}
-                  className="flex items-center gap-4 bg-white rounded-xl p-5 border border-gray-100 shadow-sm hover:border-indigo-200 hover:shadow-md transition-all cursor-pointer group"
+                  className="flex items-center gap-4 bg-white rounded-xl p-5 border border-gray-100 hover:border-indigo-200 transition-all cursor-pointer group"
                 >
                   <div className="w-12 h-12 bg-indigo-50 rounded-xl flex items-center justify-center group-hover:bg-indigo-100 transition-colors">
                     <i className="ri-truck-line text-indigo-600 text-xl"></i>
@@ -496,7 +603,7 @@ export default function Dashboard() {
 
                 <button
                   onClick={() => navigate('/casetilla')}
-                  className="flex items-center gap-4 bg-white rounded-xl p-5 border border-gray-100 shadow-sm hover:border-amber-200 hover:shadow-md transition-all cursor-pointer group"
+                  className="flex items-center gap-4 bg-white rounded-xl p-5 border border-gray-100 hover:border-amber-200 transition-all cursor-pointer group"
                 >
                   <div className="w-12 h-12 bg-amber-50 rounded-xl flex items-center justify-center group-hover:bg-amber-100 transition-colors">
                     <i className="ri-door-open-line text-amber-600 text-xl"></i>
