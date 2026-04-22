@@ -1,6 +1,7 @@
 import { ReactNode, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
+import SessionExpiredModal from '@/components/feature/SessionExpiredModal';
 
 interface ProtectedRouteProps {
   children: ReactNode;
@@ -18,23 +19,21 @@ interface ProtectedRouteProps {
  * 3. Si hay user → renderiza children (puede tener RequirePermission adicional)
  */
 export default function ProtectedRoute({ children }: ProtectedRouteProps) {
-  const { user, loading } = useAuth();
+  const { user, loading, sessionExpired } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
 
   useEffect(() => {
-    // Solo redirigir cuando terminó de cargar Y no hay usuario
-    if (!loading && !user) {
-      // Guardar la ruta actual para redirigir después del login
+    // Solo redirigir cuando terminó de cargar, no hay usuario Y la sesión no expiró
+    // Si sessionExpired=true, mostramos el modal en lugar de redirigir silenciosamente
+    if (!loading && !user && !sessionExpired) {
       const returnUrl = location.pathname + location.search;
-      
-      // Redirigir a login con returnUrl en state
       navigate('/login', { 
         replace: true,
         state: { returnUrl }
       });
     }
-  }, [loading, user, navigate, location]);
+  }, [loading, user, sessionExpired, navigate, location]);
 
   // Mostrar loader mientras valida sesión
   if (loading) {
@@ -45,6 +44,18 @@ export default function ProtectedRoute({ children }: ProtectedRouteProps) {
           <span className="text-sm text-gray-600">Verificando sesión...</span>
         </div>
       </div>
+    );
+  }
+
+  // Sesión expirada mientras navegaba: mostrar modal encima del contenido actual
+  // (o encima de un fondo vacío si ya no hay nada renderizado)
+  if (sessionExpired) {
+    return (
+      <>
+        {/* Renderizamos children en background para que el usuario vea dónde estaba */}
+        {user ? <>{children}</> : <div className="min-h-screen bg-gray-50" />}
+        <SessionExpiredModal />
+      </>
     );
   }
 

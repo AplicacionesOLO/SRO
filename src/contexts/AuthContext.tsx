@@ -23,6 +23,8 @@ interface AuthContextType {
   permissionsSet: Set<string> | null;
   permissionsLoading: boolean;
   canLocal: (permission: string) => boolean;
+  sessionExpired: boolean;
+  clearSessionExpired: () => void;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -35,6 +37,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   
   const [permissionsSet, setPermissionsSet] = useState<Set<string> | null>(null);
   const [permissionsLoading, setPermissionsLoading] = useState(true);
+  const [sessionExpired, setSessionExpired] = useState(false);
+  // Tracks whether the user was authenticated at some point in this session
+  const [wasAuthenticated, setWasAuthenticated] = useState(false);
 
   // useEffect(() => {
   //   console.log('[AuthContext] state', {
@@ -50,20 +55,32 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   //   });
   // }, [user, loading, pendingAccess, permissionsLoading, permissionsSet]);
 
-  const clearCorruptedSession = async () => {
+  const clearCorruptedSession = async (expired = false) => {
+    // Clear all Supabase keys from localStorage
     Object.keys(localStorage).forEach((key) => {
       if (key.startsWith('sb-') || key.includes('supabase')) {
         localStorage.removeItem(key);
       }
     });
-    await supabase.auth.signOut();
+    // Use scope: 'local' so it doesn't try to hit the server with the bad token
+    try {
+      await supabase.auth.signOut({ scope: 'local' });
+    } catch {
+      // ignore — token is already invalid
+    }
     setUser(null);
     setSupabaseUser(null);
     setPermissionsSet(null);
     setPendingAccess(false);
     setLoading(false);
     setPermissionsLoading(false);
+    // Only show the "session expired" modal if the user was already authenticated
+    if (expired) {
+      setSessionExpired(true);
+    }
   };
+
+  const clearSessionExpired = () => setSessionExpired(false);
 
   useEffect(() => {
     // console.log('[AuthContext] init', { authLoading: loading });
@@ -74,7 +91,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (
           msg.includes('Refresh Token Not Found') ||
           msg.includes('Invalid Refresh Token') ||
-          msg.includes('refresh_token_not_found')
+          msg.includes('refresh_token_not_found') ||
+          (error as any).code === 'refresh_token_not_found'
         ) {
           clearCorruptedSession();
           return;
@@ -97,20 +115,31 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
     });
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      // console.log('[AuthContext] onAuthStateChange', { 
-      //   event: _event,
-      //   hasSession: !!session,
-      //   userId: session?.user?.id || null 
-      // });
-
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session, error?: unknown) => {
+      // Handle token refresh errors emitted as auth state changes
       if (_event === 'TOKEN_REFRESHED' && !session) {
-        clearCorruptedSession();
+        // If user was authenticated, show expired modal instead of silent redirect
+        setWasAuthenticated((prev) => {
+          clearCorruptedSession(prev);
+          return false;
+        });
+        return;
+      }
+
+      if (_event === 'SIGNED_OUT' && !session) {
+        // Could be triggered by a failed refresh — clear everything
+        setUser(null);
+        setSupabaseUser(null);
+        setPermissionsSet(null);
+        setPendingAccess(false);
+        setLoading(false);
+        setPermissionsLoading(false);
         return;
       }
       
       if (session?.user) {
         setSupabaseUser(session.user);
+        setWasAuthenticated(true);
         loadUserProfile(session.user.id, session.user.email || '');
       } else {
         setSupabaseUser(null);
@@ -124,13 +153,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     const handleUnhandledRejection = (event: PromiseRejectionEvent) => {
       const msg = event?.reason?.message || '';
+      const code = event?.reason?.code || '';
       if (
         msg.includes('Refresh Token Not Found') ||
         msg.includes('Invalid Refresh Token') ||
-        msg.includes('refresh_token_not_found')
+        msg.includes('refresh_token_not_found') ||
+        code === 'refresh_token_not_found'
       ) {
         event.preventDefault();
-        clearCorruptedSession();
+        setWasAuthenticated((prev) => {
+          clearCorruptedSession(prev);
+          return false;
+        });
       }
     };
 
@@ -351,6 +385,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       if (data.user) {
         setSupabaseUser(data.user);
+        setWasAuthenticated(true);
+        setSessionExpired(false);
         await loadUserProfile(data.user.id, data.user.email || '');
         return true;
       }
@@ -383,7 +419,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       pendingAccess,
       permissionsSet,
       permissionsLoading,
-      canLocal
+      canLocal,
+      sessionExpired,
+      clearSessionExpired
     }}>
       {children}
     </AuthContext.Provider>
