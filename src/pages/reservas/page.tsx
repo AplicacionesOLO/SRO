@@ -5,6 +5,7 @@ import { useUserScope } from '../../hooks/useUserScope';
 import { useActiveWarehouse } from '../../contexts/ActiveWarehouseContext';
 import { calendarService, type Reservation } from '../../services/calendarService';
 import { providersService } from '../../services/providersService';
+import { cargoTypesService } from '../../services/cargoTypesService';
 import ReservationModal from '../calendario/components/ReservationModal';
 import WarehouseSelector from '../../components/feature/WarehouseSelector';
 
@@ -22,6 +23,7 @@ export default function ReservasPage() {
   const [docks, setDocks] = useState<any[]>([]);
   const [statuses, setStatuses] = useState<any[]>([]);
   const [providers, setProviders] = useState<any[]>([]);
+  const [cargoTypes, setCargoTypes] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
   const [searchTerm, setSearchTerm] = useState('');
@@ -65,12 +67,13 @@ export default function ReservasPage() {
       endDate.setMonth(endDate.getMonth() + 3);
 
       // Cargar en paralelo — docks con restricción completa (warehouse + cliente)
-      const [reservationsData, docksData, statusesData, providersData] = await Promise.all([
+      const [reservationsData, docksData, statusesData, providersData, cargoTypesData] = await Promise.all([
         calendarService.getAllReservations(orgId, startDate.toISOString(), endDate.toISOString(), effectiveWarehouseIds),
         // ← allowedClientIds filtra los andenes al subconjunto del cliente asignado
         calendarService.getDocks(orgId, null, effectiveWarehouseIds, allowedClientIds),
         calendarService.getReservationStatuses(orgId),
         providersService.getActive(orgId),
+        cargoTypesService.getAll(orgId),
       ]);
 
       // Filtrar reservas contra los andenes permitidos (mismo mecanismo implícito del calendario)
@@ -85,6 +88,7 @@ export default function ReservasPage() {
       setDocks(docksData);
       setStatuses(statusesData);
       setProviders(providersData);
+      setCargoTypes(cargoTypesData);
 
     } catch (error: any) {
       // silenced
@@ -107,6 +111,15 @@ export default function ReservasPage() {
       return p?.name || value;
     },
     [providers]
+  );
+
+  const getCargoTypeName = useCallback(
+    (value: string | null | undefined) => {
+      if (!value) return '';
+      const ct = cargoTypes.find((x: any) => x.id === value);
+      return ct?.name || value;
+    },
+    [cargoTypes]
   );
 
   const filteredReservations = useMemo(() => {
@@ -265,7 +278,7 @@ export default function ReservasPage() {
         'Factura': r.invoice || '',
         'Placa': r.truck_plate || '',
         'Tipo Transporte': r.transport_type || '',
-        'Tipo Carga': r.cargo_type || '',
+        'Tipo Carga': getCargoTypeName(r.cargo_type),
         'N° Solicitud Pedido': r.order_request_number || '',
         'Notas': r.notes || '',
       };
@@ -275,7 +288,7 @@ export default function ReservasPage() {
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, 'Reservas');
     XLSX.writeFile(workbook, 'Reservas.xlsx');
-  }, [filteredReservations, getStatusInfo, getDockName, getProviderName, formatDateTime]);
+  }, [filteredReservations, getStatusInfo, getDockName, getProviderName, getCargoTypeName, formatDateTime]);
 
   if (permLoading || loading) {
     return (

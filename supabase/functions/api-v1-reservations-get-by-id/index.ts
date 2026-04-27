@@ -8,6 +8,37 @@ const corsHeaders = {
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+/**
+ * Extracts a reservation UUID from the request.
+ *
+ * Lookup order (first match wins):
+ *  1. Path segment: .../api-v1-reservations-get-by-id/{uuid}
+ *  2. Query param:  ?reservation_id={uuid}
+ *  3. Query param:  ?id={uuid}
+ *
+ * Returns the UUID string if found and valid, null otherwise.
+ */
+function extractReservationId(req: Request): string | null {
+  const url = new URL(req.url);
+
+  // 1. Try path segment — last non-empty segment that looks like a UUID
+  const pathParts = url.pathname.split('/').filter(Boolean);
+  for (let i = pathParts.length - 1; i >= 0; i--) {
+    const seg = pathParts[i];
+    if (UUID_REGEX.test(seg)) return seg;
+  }
+
+  // 2. Try ?reservation_id=
+  const qpResId = url.searchParams.get('reservation_id');
+  if (qpResId && UUID_REGEX.test(qpResId)) return qpResId;
+
+  // 3. Try ?id=
+  const qpId = url.searchParams.get('id');
+  if (qpId && UUID_REGEX.test(qpId)) return qpId;
+
+  return null;
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: corsHeaders, status: 204 });
   if (req.method !== 'GET') {
@@ -27,9 +58,11 @@ Deno.serve(async (req) => {
     }
 
     const token = authHeader.replace('Bearer ', '');
-    const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-    const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-    const supabase = createClient(supabaseUrl, supabaseKey, { auth: { persistSession: false } });
+    const supabase = createClient(
+      Deno.env.get('SUPABASE_URL')!,
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
+      { auth: { persistSession: false } }
+    );
 
     const { data: { user }, error: authError } = await supabase.auth.getUser(token);
     if (authError || !user) {
@@ -41,16 +74,17 @@ Deno.serve(async (req) => {
 
     const userId = user.id;
 
-    // Extract reservation_id from path: /functions/v1/api-v1-reservations-get-by-id/{reservation_id}
-    const url = new URL(req.url);
-    const pathParts = url.pathname.split('/').filter(Boolean);
-    const reservationId = pathParts[pathParts.length - 1];
-
-    if (!reservationId || !UUID_REGEX.test(reservationId)) {
-      return new Response(JSON.stringify({ error: 'Invalid or missing reservation_id in path' }), {
-        status: 400,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
+    // Extract reservation ID (path or query param)
+    const reservationId = extractReservationId(req);
+    if (!reservationId) {
+      return new Response(
+        JSON.stringify({
+          error: 'Invalid or missing reservation_id',
+          hint: 'Provide UUID in path: .../api-v1-reservations-get-by-id/{uuid} OR as query param: ?reservation_id={uuid}',
+          received_path: new URL(req.url).pathname,
+        }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
     }
 
     // Resolve org_id
@@ -100,8 +134,7 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Verify user has access to this reservation's dock
-    // Check warehouse access
+    // Verify warehouse access scope
     const dockWarehouseId = r.docks?.warehouse_id;
     if (dockWarehouseId) {
       const { data: warehouseAccess } = await supabase
@@ -122,7 +155,7 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Fetch activity log for this reservation
+    // Fetch activity log
     const { data: activityLog } = await supabase
       .from('reservation_activity_log')
       .select('id, event_type, field_name, old_value, new_value, changed_by, changed_at')
@@ -131,7 +164,6 @@ Deno.serve(async (req) => {
       .order('changed_at', { ascending: false })
       .limit(20);
 
-    // Shape enriched response
     const shaped = {
       id: r.id,
       org_id: r.org_id,
@@ -183,7 +215,7 @@ Deno.serve(async (req) => {
       JSON.stringify({ data: shaped }),
       { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
-  } catch (error) {
+  } catch (error: any) {
     return new Response(JSON.stringify({ error: 'Internal server error', details: error.message }), {
       status: 500,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },

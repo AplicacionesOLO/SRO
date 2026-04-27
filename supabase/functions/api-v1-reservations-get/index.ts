@@ -16,14 +16,13 @@ const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12
  *     If no restricted entries exist, user sees all warehouses in the org.
  *  3. Get docks belonging to those warehouses.
  *  4. If user has user_clients entries, further filter docks via client_docks.
- *  5. If user has user_providers entries, further filter docks via provider_warehouses → docks.
+ *  5. If user has user_providers entries, further filter docks via provider_warehouses -> docks.
  */
 async function resolveVisibleDockIds(
   supabase: ReturnType<typeof createClient>,
   userId: string,
   orgId: string
 ): Promise<string[] | null> {
-  // Step 1: Get user warehouse access
   const { data: warehouseAccess } = await supabase
     .from('user_warehouse_access')
     .select('warehouse_id, restricted')
@@ -31,26 +30,19 @@ async function resolveVisibleDockIds(
     .eq('org_id', orgId);
 
   let allowedWarehouseIds: string[] | null = null;
-
   if (warehouseAccess && warehouseAccess.length > 0) {
     const restrictedEntries = warehouseAccess.filter((w: any) => w.restricted === true);
     if (restrictedEntries.length > 0) {
       allowedWarehouseIds = restrictedEntries.map((w: any) => w.warehouse_id);
     }
-    // If all entries are restricted=false, user sees all warehouses (allowedWarehouseIds stays null)
   }
 
-  // Step 2: Get docks for allowed warehouses
   let docksQuery = supabase.from('docks').select('id').eq('org_id', orgId);
-  if (allowedWarehouseIds) {
-    docksQuery = docksQuery.in('warehouse_id', allowedWarehouseIds);
-  }
+  if (allowedWarehouseIds) docksQuery = docksQuery.in('warehouse_id', allowedWarehouseIds);
   const { data: allDocks } = await docksQuery;
   const allDockIds = (allDocks || []).map((d: any) => d.id);
-
   if (allDockIds.length === 0) return [];
 
-  // Step 3: Check client scope
   const { data: userClients } = await supabase
     .from('user_clients')
     .select('client_id')
@@ -68,7 +60,6 @@ async function resolveVisibleDockIds(
     clientDockIds = (clientDocks || []).map((cd: any) => cd.dock_id);
   }
 
-  // Step 4: Check provider scope
   const { data: userProviders } = await supabase
     .from('user_providers')
     .select('provider_id')
@@ -96,19 +87,12 @@ async function resolveVisibleDockIds(
     }
   }
 
-  // Merge scopes: if both client and provider scopes exist, union them
   if (clientDockIds !== null && providerDockIds !== null) {
     const merged = Array.from(new Set([...clientDockIds, ...providerDockIds]));
     return allDockIds.filter((id: string) => merged.includes(id));
   }
-  if (clientDockIds !== null) {
-    return allDockIds.filter((id: string) => clientDockIds!.includes(id));
-  }
-  if (providerDockIds !== null) {
-    return allDockIds.filter((id: string) => providerDockIds!.includes(id));
-  }
-
-  // No client/provider restriction: return all warehouse-scoped docks
+  if (clientDockIds !== null) return allDockIds.filter((id: string) => clientDockIds!.includes(id));
+  if (providerDockIds !== null) return allDockIds.filter((id: string) => providerDockIds!.includes(id));
   return allDockIds;
 }
 
@@ -131,9 +115,11 @@ Deno.serve(async (req) => {
     }
 
     const token = authHeader.replace('Bearer ', '');
-    const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-    const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-    const supabase = createClient(supabaseUrl, supabaseKey, { auth: { persistSession: false } });
+    const supabase = createClient(
+      Deno.env.get('SUPABASE_URL')!,
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
+      { auth: { persistSession: false } }
+    );
 
     const { data: { user }, error: authError } = await supabase.auth.getUser(token);
     if (authError || !user) {
@@ -171,7 +157,6 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Verify user belongs to org
     const { data: orgCheck } = await supabase
       .from('user_org_roles')
       .select('org_id')
@@ -199,29 +184,6 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Build query with enriched joins
-    let query = supabase
-      .from('reservations')
-      .select(
-        `id, org_id, dock_id, start_datetime, end_datetime, status_id,
-         is_cancelled, cancel_reason, cancelled_by, cancelled_at,
-         dua, invoice, driver, truck_plate, purchase_order, order_request_number,
-         shipper_provider, client_id, operation_type, is_imported, bl_number,
-         quantity_value, notes, transport_type, cargo_type,
-         created_by, created_at, updated_by, updated_at,
-         docks!inner(id, name, reference, warehouse_id, warehouses(id, name)),
-         reservation_statuses(id, name, code, color),
-         clients(id, name)`,
-        { count: 'exact' }
-      )
-      .eq('org_id', orgId);
-
-    // Apply dock scope filter
-    if (visibleDockIds !== null) {
-      query = query.in('dock_id', visibleDockIds);
-    }
-
-    // Apply optional filters
     const from = url.searchParams.get('from');
     const to = url.searchParams.get('to');
     const warehouseId = url.searchParams.get('warehouse_id');
@@ -230,14 +192,20 @@ Deno.serve(async (req) => {
     const isCancelled = url.searchParams.get('is_cancelled');
     const clientId = url.searchParams.get('client_id');
 
-    if (from) query = query.gte('start_datetime', from);
-    if (to) query = query.lte('end_datetime', to);
-    if (dockId && UUID_REGEX.test(dockId)) query = query.eq('dock_id', dockId);
-    if (statusId && UUID_REGEX.test(statusId)) query = query.eq('status_id', statusId);
-    if (isCancelled === 'true' || isCancelled === 'false') query = query.eq('is_cancelled', isCancelled === 'true');
-    if (clientId && UUID_REGEX.test(clientId)) query = query.eq('client_id', clientId);
+    // --- COUNT query (separate to avoid select+count+in conflict) ---
+    let countQuery = supabase
+      .from('reservations')
+      .select('id', { count: 'exact', head: true })
+      .eq('org_id', orgId!);
 
-    // warehouse_id filter: filter by docks belonging to that warehouse
+    if (visibleDockIds !== null) countQuery = countQuery.in('dock_id', visibleDockIds);
+    if (from) countQuery = countQuery.gte('start_datetime', from);
+    if (to) countQuery = countQuery.lte('end_datetime', to);
+    if (dockId && UUID_REGEX.test(dockId)) countQuery = countQuery.eq('dock_id', dockId);
+    if (statusId && UUID_REGEX.test(statusId)) countQuery = countQuery.eq('status_id', statusId);
+    if (isCancelled === 'true' || isCancelled === 'false') countQuery = countQuery.eq('is_cancelled', isCancelled === 'true');
+    if (clientId && UUID_REGEX.test(clientId)) countQuery = countQuery.eq('client_id', clientId);
+
     if (warehouseId && UUID_REGEX.test(warehouseId)) {
       const { data: warehouseDocks } = await supabase
         .from('docks')
@@ -251,20 +219,61 @@ Deno.serve(async (req) => {
           { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
       }
-      query = query.in('dock_id', wDockIds);
+      countQuery = countQuery.in('dock_id', wDockIds);
     }
 
-    query = query.order('start_datetime', { ascending: false }).range(offset, offset + pageSize - 1);
-
-    const { data: reservations, error: queryError, count } = await query;
-    if (queryError) {
-      return new Response(JSON.stringify({ error: 'Error fetching reservations', details: queryError.message }), {
+    const { count, error: countError } = await countQuery;
+    if (countError) {
+      return new Response(JSON.stringify({ error: 'Error counting reservations', details: countError.message, hint: countError.hint || null }), {
         status: 500,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
 
-    // Shape the enriched response
+    // --- DATA query ---
+    let dataQuery = supabase
+      .from('reservations')
+      .select(
+        `id, org_id, dock_id, start_datetime, end_datetime, status_id,
+         is_cancelled, cancel_reason, cancelled_by, cancelled_at,
+         dua, invoice, driver, truck_plate, purchase_order, order_request_number,
+         shipper_provider, client_id, operation_type, is_imported, bl_number,
+         quantity_value, notes, transport_type, cargo_type,
+         created_by, created_at, updated_by, updated_at,
+         docks!inner(id, name, reference, warehouse_id, warehouses(id, name)),
+         reservation_statuses(id, name, code, color),
+         clients(id, name)`
+      )
+      .eq('org_id', orgId!);
+
+    if (visibleDockIds !== null) dataQuery = dataQuery.in('dock_id', visibleDockIds);
+    if (from) dataQuery = dataQuery.gte('start_datetime', from);
+    if (to) dataQuery = dataQuery.lte('end_datetime', to);
+    if (dockId && UUID_REGEX.test(dockId)) dataQuery = dataQuery.eq('dock_id', dockId);
+    if (statusId && UUID_REGEX.test(statusId)) dataQuery = dataQuery.eq('status_id', statusId);
+    if (isCancelled === 'true' || isCancelled === 'false') dataQuery = dataQuery.eq('is_cancelled', isCancelled === 'true');
+    if (clientId && UUID_REGEX.test(clientId)) dataQuery = dataQuery.eq('client_id', clientId);
+
+    if (warehouseId && UUID_REGEX.test(warehouseId)) {
+      const { data: warehouseDocks } = await supabase
+        .from('docks')
+        .select('id')
+        .eq('warehouse_id', warehouseId)
+        .eq('org_id', orgId);
+      const wDockIds = (warehouseDocks || []).map((d: any) => d.id);
+      dataQuery = dataQuery.in('dock_id', wDockIds);
+    }
+
+    dataQuery = dataQuery.order('start_datetime', { ascending: false }).range(offset, offset + pageSize - 1);
+
+    const { data: reservations, error: queryError } = await dataQuery;
+    if (queryError) {
+      return new Response(JSON.stringify({ error: 'Error fetching reservations', details: queryError.message, hint: queryError.hint || null }), {
+        status: 500,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
     const shaped = (reservations || []).map((r: any) => ({
       id: r.id,
       org_id: r.org_id,
@@ -306,16 +315,14 @@ Deno.serve(async (req) => {
     }));
 
     const total = count || 0;
-    const totalPages = Math.ceil(total / pageSize);
-
     return new Response(
       JSON.stringify({
         data: shaped,
-        meta: { page, page_size: pageSize, total, total_pages: totalPages, org_id: orgId },
+        meta: { page, page_size: pageSize, total, total_pages: Math.ceil(total / pageSize), org_id: orgId },
       }),
       { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
-  } catch (error) {
+  } catch (error: any) {
     return new Response(JSON.stringify({ error: 'Internal server error', details: error.message }), {
       status: 500,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
