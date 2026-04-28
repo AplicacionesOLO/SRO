@@ -229,7 +229,9 @@ export const dashboardService = {
     prevQuery = applyDockFilter(prevQuery, dockIds);
     const { data: prevReservations } = await prevQuery;
 
-    // ── Query 3: Todas las reservas activas (para distribución por estado) ──
+    // ── Query 3: Reservas del período para distribución por estado ──────────
+    // Nota: usamos periodData para que la distribución respete el filtro de período.
+    // allReservations se mantiene solo para totalReservations (conteo global sin filtro de fecha).
     let allQuery = supabase
       .from('reservations')
       .select('id, status_id, dock_id')
@@ -331,9 +333,9 @@ export const dashboardService = {
     const allData = allReservations || [];
     const providerMap = new Map(providers?.map(p => [p.id, p.name]) || []);
 
-    // Distribución por estado (sobre todas las reservas activas)
+    // Distribución por estado (sobre las reservas del período seleccionado)
     const statusCounts: Record<string, number> = {};
-    allData.forEach(r => {
+    periodData.forEach(r => {
       if (r.status_id) {
         statusCounts[r.status_id] = (statusCounts[r.status_id] || 0) + 1;
       }
@@ -441,7 +443,7 @@ export const dashboardService = {
     };
 
     return {
-      totalReservations: allData.length,
+      totalReservations: periodData.length,
       pendingReservations: pendingCount,
       confirmedReservations: confirmedCount,
       inProgressReservations: inProgressCount,
