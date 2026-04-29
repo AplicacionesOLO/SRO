@@ -1,5 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import React from 'react';
+import ReservationQRModal from '../../../components/feature/ReservationQRModal';
+import type { ReservationQRData } from '../../../components/feature/ReservationQRModal';
 import SearchSelect from '../../../components/base/SearchSelect';
 import { Dock } from '../../../types/dock';
 import { useAuth } from '../../../contexts/AuthContext';
@@ -101,6 +103,7 @@ export default function ReservationModal({
 
   const [removedExistingFileIds, setRemovedExistingFileIds] = useState<string[]>([]);
   const [savedReservationId, setSavedReservationId] = useState<string | null>(null);
+  const [showQRModal, setShowQRModal] = useState(false);
 
   const [activeTab, setActiveTab] = useState<'info' | 'documents' | 'activity'>('info');
   
@@ -2014,6 +2017,19 @@ export default function ReservationModal({
             </div>
 
             <div className="flex items-center gap-3">
+              {/* Botón Ver QR — solo visible cuando hay reserva existente con ID válido */}
+              {(reservation?.id || savedReservationId) && (
+                <button
+                  type="button"
+                  onClick={() => setShowQRModal(true)}
+                  disabled={saving}
+                  className="px-4 py-2.5 text-sm font-medium text-teal-700 hover:bg-teal-50 rounded-lg transition-colors whitespace-nowrap disabled:opacity-50 border border-teal-200 flex items-center gap-2 cursor-pointer"
+                  title="Ver código QR de esta reserva"
+                >
+                  <i className="ri-qr-code-line w-4 h-4 flex items-center justify-center"></i>
+                  Ver QR
+                </button>
+              )}
               {/* Botón Copiar reserva — solo visible cuando hay reserva existente y el usuario puede verla */}
               {reservation && canViewSensitive && onCopy && (
                 <button
@@ -2069,6 +2085,32 @@ export default function ReservationModal({
           onConfirm={handleDiscardAndClose}
           onCancel={handleKeepAndClose}
         />
+
+        {/* ── Modal QR ─────────────────────────────────────────────────── */}
+        {showQRModal && (reservation?.id || savedReservationId) && (() => {
+          const resId = reservation?.id || savedReservationId!;
+          const qrData: ReservationQRData = {
+            id: resId,
+            providerName: providerName || '—',
+            startDatetime: reservation?.start_datetime ||
+              (formData.startDate && formData.startTime
+                ? `${formData.startDate}T${formData.startTime}:00`
+                : new Date().toISOString()),
+            endDatetime: reservation?.end_datetime ||
+              (formData.endDate && formData.endTime
+                ? `${formData.endDate}T${formData.endTime}:00`
+                : new Date().toISOString()),
+            operationType: formData.operationType || reservation?.operation_type || null,
+            warehouseTimezone: tz,
+          };
+          return (
+            <ReservationQRModal
+              isOpen={showQRModal}
+              onClose={() => setShowQRModal(false)}
+              reservation={qrData}
+            />
+          );
+        })()}
 
         {/* ── Panel de resultado de recurrencia ───────────────────────── */}
         {recurringResult !== null && (

@@ -11,7 +11,9 @@ import ExitReservationsGrid from './components/ExitReservationsGrid';
 import ExitForm from './components/ExitForm';
 import DurationReportGrid from './components/DurationReportGrid';
 import { ConfirmModal } from '../../components/base/ConfirmModal';
+import QRScannerModal from '../../components/feature/QRScannerModal';
 import { casetillaService } from '../../services/casetillaService';
+import { supabase } from '../../lib/supabase';
 import type { PendingReservation, ExitEligibleReservation } from '../../types/casetilla';
 
 const SESSION_KEY = 'casetilla_ui_state';
@@ -86,6 +88,11 @@ export default function CasetillaPage() {
   const [isLoadingExitReservations, setIsLoadingExitReservations] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [selectedClientId, setSelectedClientId] = useState<string | null>(null);
+
+  // ── QR Scanner state ────────────────────────────────────────────────────
+  const [qrScannerMode, setQrScannerMode] = useState<'ingreso' | 'salida' | null>(null);
+  const [qrSearching, setQrSearching] = useState(false);
+  const [qrError, setQrError] = useState<string>('');
 
   const [modal, setModal] = useState<{
     isOpen: boolean; type: 'success' | 'warning' | 'error' | 'info';
@@ -180,6 +187,75 @@ export default function CasetillaPage() {
     } catch (error: any) { showModal('error', 'Error', error.message || 'No se pudo registrar la salida'); }
     finally { setIsSubmitting(false); }
   };
+
+  // ── QR: buscar reserva por ID y cargar el formulario correspondiente ────────────────────────────────────────────────────
+  const handleQRScanned = useCallback(async (reservationId: string) => {
+    if (!orgId || qrSearching) return;
+    setQrSearching(true);
+    setQrError('');
+
+    try {
+      if (qrScannerMode === 'ingreso') {
+        // Buscar en reservas pendientes (sin ingreso previo)
+        const pending = await casetillaService.getPendingReservations(
+          orgId,
+          effectiveWarehouseIds,
+          selectedClientId
+        );
+        const found = pending.find((r) => r.id === reservationId);
+
+        if (found) {
+          setQrScannerMode(null);
+          handleOpenIngresoFromPending(found);
+        } else {
+          // Verificar si la reserva existe en la org (puede que ya tenga ingreso)
+          const { data: resRow, error: resErr } = await supabase
+            .from('reservations')
+            .select('id')
+            .eq('id', reservationId)
+            .eq('org_id', orgId)
+            .maybeSingle();
+
+          if (resErr || !resRow) {
+            setQrError('No se encontró ninguna reserva con ese QR en tu organización.');
+          } else {
+            setQrError('Esta reserva ya tiene un ingreso registrado o no está disponible para ingreso.');
+          }
+        }
+      } else if (qrScannerMode === 'salida') {
+        // Buscar en reservas elegibles para salida
+        const eligible = await casetillaService.getExitEligibleReservations(
+          orgId,
+          effectiveWarehouseIds,
+          selectedClientId
+        );
+        const found = eligible.find((r) => r.id === reservationId);
+
+        if (found) {
+          setQrScannerMode(null);
+          handleOpenExitForm(found);
+        } else {
+          const { data: resRow, error: resErr } = await supabase
+            .from('reservations')
+            .select('id')
+            .eq('id', reservationId)
+            .eq('org_id', orgId)
+            .maybeSingle();
+
+          if (resErr || !resRow) {
+            setQrError('No se encontró ninguna reserva con ese QR en tu organización.');
+          } else {
+            setQrError('Esta reserva no está disponible para registrar salida (puede que no tenga ingreso o ya tenga salida).');
+          }
+        }
+      }
+    } catch {
+      setQrError('Error al buscar la reserva. Verificá tu conexión e intentá de nuevo.');
+    } finally {
+      setQrSearching(false);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orgId, qrScannerMode, effectiveWarehouseIds, selectedClientId, qrSearching]);
 
   const showModal = (type: 'success' | 'warning' | 'error' | 'info', title: string, message: string, onConfirm?: () => void) => {
     const closeModal = () => setModal(prev => ({ ...prev, isOpen: false }));
@@ -329,10 +405,31 @@ export default function CasetillaPage() {
                   <h2 className="text-xl sm:text-2xl font-bold text-gray-900">Reservas Pendientes</h2>
                   <p className="text-sm text-gray-600 mt-1">Seleccione una reserva para crear su ingreso</p>
                 </div>
-                <button onClick={() => { clearSession(); setViewModeRaw('HOME'); }} className="inline-flex items-center justify-center gap-2 px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors whitespace-nowrap cursor-pointer">
-                  <i className="ri-arrow-left-line"></i>Volver
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => { setQrError(''); setQrScannerMode('ingreso'); }}
+                    className="inline-flex items-center justify-center gap-2 px-4 py-2 bg-teal-600 text-white rounded-lg hover:bg-teal-700 transition-colors whitespace-nowrap cursor-pointer text-sm font-medium"
+                  >
+                    <i className="ri-scan-line"></i>Leer QR
+                  </button>
+                  <button onClick={() => { clearSession(); setViewModeRaw('HOME'); }} className="inline-flex items-center justify-center gap-2 px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors whitespace-nowrap cursor-pointer">
+                    <i className="ri-arrow-left-line"></i>Volver
+                  </button>
+                </div>
               </div>
+              {qrError && (
+                <div className="flex items-center gap-2 px-4 py-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
+                  <i className="ri-error-warning-line flex-shrink-0"></i>
+                  {qrError}
+                  <button onClick={() => setQrError('')} className="ml-auto text-red-400 hover:text-red-600 cursor-pointer"><i className="ri-close-line"></i></button>
+                </div>
+              )}
+              {qrSearching && (
+                <div className="flex items-center gap-2 px-4 py-3 bg-teal-50 border border-teal-200 rounded-lg text-sm text-teal-700">
+                  <i className="ri-loader-4-line animate-spin flex-shrink-0"></i>
+                  Buscando reserva...
+                </div>
+              )}
             </div>
             <PendingReservationsGrid reservations={pendingReservations} onOpenIngreso={handleOpenIngresoFromPending} isLoading={isLoadingReservations} />
           </div>
@@ -346,10 +443,31 @@ export default function CasetillaPage() {
                   <h2 className="text-xl sm:text-2xl font-bold text-gray-900">Registrar Salida</h2>
                   <p className="text-sm text-gray-600 mt-1">Seleccione una reserva para registrar su salida</p>
                 </div>
-                <button onClick={() => { clearSession(); setViewModeRaw('HOME'); }} className="inline-flex items-center justify-center gap-2 px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors whitespace-nowrap cursor-pointer">
-                  <i className="ri-arrow-left-line"></i>Volver
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => { setQrError(''); setQrScannerMode('salida'); }}
+                    className="inline-flex items-center justify-center gap-2 px-4 py-2 bg-teal-600 text-white rounded-lg hover:bg-teal-700 transition-colors whitespace-nowrap cursor-pointer text-sm font-medium"
+                  >
+                    <i className="ri-scan-line"></i>Leer QR
+                  </button>
+                  <button onClick={() => { clearSession(); setViewModeRaw('HOME'); }} className="inline-flex items-center justify-center gap-2 px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors whitespace-nowrap cursor-pointer">
+                    <i className="ri-arrow-left-line"></i>Volver
+                  </button>
+                </div>
               </div>
+              {qrError && (
+                <div className="flex items-center gap-2 px-4 py-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
+                  <i className="ri-error-warning-line flex-shrink-0"></i>
+                  {qrError}
+                  <button onClick={() => setQrError('')} className="ml-auto text-red-400 hover:text-red-600 cursor-pointer"><i className="ri-close-line"></i></button>
+                </div>
+              )}
+              {qrSearching && (
+                <div className="flex items-center gap-2 px-4 py-3 bg-teal-50 border border-teal-200 rounded-lg text-sm text-teal-700">
+                  <i className="ri-loader-4-line animate-spin flex-shrink-0"></i>
+                  Buscando reserva...
+                </div>
+              )}
             </div>
             <ExitReservationsGrid reservations={exitEligibleReservations} onOpenExit={handleOpenExitForm} isLoading={isLoadingExitReservations} />
           </div>
@@ -386,6 +504,14 @@ export default function CasetillaPage() {
       </div>
 
       <ConfirmModal isOpen={modal.isOpen} type={modal.type} title={modal.title} message={modal.message} showCancel={modal.showCancel} onConfirm={modal.onConfirm} onCancel={modal.onCancel} />
+
+      {/* QR Scanner Modal */}
+      <QRScannerModal
+        isOpen={qrScannerMode !== null}
+        onClose={() => { setQrScannerMode(null); }}
+        onReservationIdScanned={handleQRScanned}
+        title={qrScannerMode === 'ingreso' ? 'Escanear QR — Ingreso' : 'Escanear QR — Salida'}
+      />
     </div>
   );
 }

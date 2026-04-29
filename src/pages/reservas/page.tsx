@@ -7,6 +7,7 @@ import { calendarService, type Reservation } from '../../services/calendarServic
 import { providersService } from '../../services/providersService';
 import { cargoTypesService } from '../../services/cargoTypesService';
 import ReservationModal from '../calendario/components/ReservationModal';
+import ReservationQRModal, { type ReservationQRData } from '../../components/feature/ReservationQRModal';
 import WarehouseSelector from '../../components/feature/WarehouseSelector';
 
 export default function ReservasPage() {
@@ -36,6 +37,10 @@ export default function ReservasPage() {
 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedReservation, setSelectedReservation] = useState<Reservation | null>(null);
+  const [qrModal, setQrModal] = useState<{ isOpen: boolean; data: ReservationQRData | null }>({
+    isOpen: false,
+    data: null,
+  });
 
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 20;
@@ -199,6 +204,19 @@ export default function ReservasPage() {
     setSelectedReservation(reservation);
     setIsModalOpen(true);
   };
+
+  const handleOpenQR = useCallback((reservation: Reservation) => {
+    setQrModal({
+      isOpen: true,
+      data: {
+        id: reservation.id,
+        providerName: getProviderName(reservation.shipper_provider),
+        startDatetime: reservation.start_datetime,
+        endDatetime: reservation.end_datetime,
+        operationType: reservation.operation_type ?? null,
+      },
+    });
+  }, [getProviderName]);
 
   const handleDelete = async (reservation: Reservation) => {
     if (!canDelete) {
@@ -532,6 +550,13 @@ export default function ReservasPage() {
                         </td>
                         <td className="px-4 py-3 text-right">
                           <div className="flex items-center justify-end gap-2">
+                            <button
+                              onClick={() => handleOpenQR(reservation)}
+                              className="p-1.5 text-gray-600 hover:text-teal-600 hover:bg-teal-50 rounded transition-colors"
+                              title="Ver QR"
+                            >
+                              <i className="ri-qr-code-line text-lg w-5 h-5 flex items-center justify-center"></i>
+                            </button>
                             {canUpdate && (
                               <button
                                 onClick={() => handleEdit(reservation)}
@@ -613,6 +638,15 @@ export default function ReservasPage() {
           orgId={orgId!}
           onClose={() => { setIsModalOpen(false); setSelectedReservation(null); }}
           onSave={async () => { setIsModalOpen(false); setSelectedReservation(null); await loadData(); }}
+        />
+      )}
+
+      {/* Modal QR */}
+      {qrModal.isOpen && qrModal.data && (
+        <ReservationQRModal
+          isOpen={qrModal.isOpen}
+          onClose={() => setQrModal({ isOpen: false, data: null })}
+          reservation={qrModal.data}
         />
       )}
 
