@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { usePermissions } from '../../hooks/usePermissions';
 import { useUserScope } from '../../hooks/useUserScope';
@@ -10,18 +10,19 @@ import PendingReservationsGrid from './components/PendingReservationsGrid';
 import ExitReservationsGrid from './components/ExitReservationsGrid';
 import ExitForm from './components/ExitForm';
 import DurationReportGrid from './components/DurationReportGrid';
+import NoShowReservationsGrid from './components/NoShowReservationsGrid';
 import { ConfirmModal } from '../../components/base/ConfirmModal';
 import QRScannerModal from '../../components/feature/QRScannerModal';
 import { casetillaService } from '../../services/casetillaService';
 import { supabase } from '../../lib/supabase';
-import type { PendingReservation, ExitEligibleReservation } from '../../types/casetilla';
+import type { PendingReservation, ExitEligibleReservation, NoShowReservation } from '../../types/casetilla';
 
 const SESSION_KEY = 'casetilla_ui_state';
 const FOTOS_INGRESO_KEY = 'casetilla_fotos_ingreso';
 const FOTOS_SALIDA_KEY  = 'casetilla_fotos_salida';
 const FORM_DATA_INGRESO_KEY = 'casetilla_form_ingreso';
 
-type ViewMode = 'HOME' | 'INGRESO' | 'PENDIENTES' | 'SALIDA' | 'DURACION';
+type ViewMode = 'HOME' | 'INGRESO' | 'PENDIENTES' | 'SALIDA' | 'DURACION' | 'NO_SHOW';
 
 interface PersistedUIState {
   viewMode: ViewMode;
@@ -50,7 +51,7 @@ export default function CasetillaPage() {
   const { user } = useAuth();
   const { can, orgId: currentOrgId } = usePermissions();
 
-  // ── SCOPE CENTRALIZADO — usa user_warehouse_access (tabla real) ──────────
+  // ── SCOPE CENTRALIZADO ─ usa user_warehouse_access (tabla real) ──────────
   const {
     allowedWarehouseIds: scopeWarehouseIds,
     availableClients: scopeClients,
@@ -84,8 +85,10 @@ export default function CasetillaPage() {
 
   const [pendingReservations, setPendingReservations] = useState<PendingReservation[]>([]);
   const [exitEligibleReservations, setExitEligibleReservations] = useState<ExitEligibleReservation[]>([]);
+  const [noShowReservations, setNoShowReservations] = useState<NoShowReservation[]>([]);
   const [isLoadingReservations, setIsLoadingReservations] = useState(false);
   const [isLoadingExitReservations, setIsLoadingExitReservations] = useState(false);
+  const [isLoadingNoShow, setIsLoadingNoShow] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [selectedClientId, setSelectedClientId] = useState<string | null>(null);
 
@@ -103,6 +106,7 @@ export default function CasetillaPage() {
   const orgId = currentOrgId || user?.orgId || null;
   const canView = can('casetilla.view');
   const canCreate = can('casetilla.create') || can('casetilla.manage');
+  const canViewNoShow = can('casetilla.no_show.view');
   void canCreate;
 
   useEffect(() => {
@@ -136,6 +140,13 @@ export default function CasetillaPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [viewMode, orgId, canView, scopeLoading, activeWhLoading, selectedClientId, effectiveWarehouseIds]);
 
+  useEffect(() => {
+    if (viewMode === 'NO_SHOW' && orgId && canView && !scopeLoading && !activeWhLoading) {
+      loadNoShowReservations();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [viewMode, orgId, canView, scopeLoading, activeWhLoading, selectedClientId, effectiveWarehouseIds]);
+
   const loadPendingReservations = async () => {
     if (!orgId) return;
     setIsLoadingReservations(true);
@@ -156,7 +167,69 @@ export default function CasetillaPage() {
     finally { setIsLoadingExitReservations(false); }
   };
 
-  const handleOpenIngresoFromPending = (reservation: PendingReservation) => {
+  const loadNoShowReservations = async () => {
+    if (!orgId) return;
+    setIsLoadingNoShow(true);
+    try {
+      const data = await casetillaService.getNoShowReservations(orgId, effectiveWarehouseIds, selectedClientId);
+      setNoShowReservations(data);
+    } catch { showModal('error', 'Error', 'No se pudieron cargar las reservas No arribó'); }
+    finally { setIsLoadingNoShow(false); }
+  };
+
+  // ── Realtime: recargar listas cuando el cron cambia status_id ───────────
+  const loadPendingRef = useRef(loadPendingReservations);
+  const loadExitRef = useRef(loadExitEligibleReservations);
+  const loadNoShowRef = useRef(loadNoShowReservations);
+  const viewModeRef = useRef(viewMode);
+
+  useEffect(() => { loadPendingRef.current = loadPendingReservations; }, [loadPendingReservations]);
+  useEffect(() => { loadExitRef.current = loadExitEligibleReservations; }, [loadExitEligibleReservations]);
+  useEffect(() => { loadNoShowRef.current = loadNoShowReservations; }, [loadNoShowReservations]);
+  useEffect(() => { viewModeRef.current = viewMode; }, [viewMode]);
+
+  useEffect(() => {
+    if (!orgId) return;
+
+    const channel = supabase
+      .channel(`casetilla_reservations_rt_${orgId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'reservations',
+        },
+        (payload) => {
+          const recordOrgId = (payload.new as any)?.org_id;
+          if (recordOrgId && recordOrgId !== orgId) return;
+
+          // Recargar solo la vista activa para no disparar requests innecesarios
+          const vm = viewModeRef.current;
+          if (vm === 'PENDIENTES') {
+            loadPendingRef.current();
+          } else if (vm === 'SALIDA' && !selectedExitReservation) {
+            loadExitRef.current();
+          } else if (vm === 'NO_SHOW') {
+            loadNoShowRef.current();
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [orgId]);
+
+  const handleOpenIngresoFromPending = async (reservation: PendingReservation) => {
+    if (!orgId) return;
+    // Validar no-show antes de abrir ingreso
+    const { expired, message } = await casetillaService.checkNoShowExpired(reservation.id, orgId);
+    if (expired) {
+      showModal('warning', 'No se puede registrar ingreso', message);
+      return;
+    }
     setFotosIngresoRaw([]); setSelectedReservation(reservation); setViewMode('INGRESO');
   };
   const handleOpenExitForm = (reservation: ExitEligibleReservation) => {
@@ -196,6 +269,14 @@ export default function CasetillaPage() {
 
     try {
       if (qrScannerMode === 'ingreso') {
+        // Validar no-show primero
+        const noShowCheck = await casetillaService.checkNoShowExpired(reservationId, orgId);
+        if (noShowCheck.expired) {
+          setQrError(noShowCheck.message);
+          setQrSearching(false);
+          return;
+        }
+
         // Buscar en reservas pendientes (sin ingreso previo)
         const pending = await casetillaService.getPendingReservations(
           orgId,
@@ -355,6 +436,22 @@ export default function CasetillaPage() {
                 </div>
               </div>
             </div>
+            {canViewNoShow && (
+              <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 hover:shadow-md transition-shadow">
+                <div className="flex items-start gap-4">
+                  <div className="flex-shrink-0 w-12 h-12 sm:w-14 sm:h-14 bg-gray-100 rounded-lg flex items-center justify-center">
+                    <i className="ri-user-unfollow-line text-2xl sm:text-3xl text-gray-600"></i>
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <h2 className="text-lg sm:text-xl font-bold text-gray-900 mb-2">No arribó</h2>
+                    <p className="text-sm text-gray-600 mb-4">Reservas que superaron el tiempo de tolerancia sin ingreso</p>
+                    <button onClick={() => setViewMode('NO_SHOW')} className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-5 py-2.5 bg-gray-700 text-white rounded-lg hover:bg-gray-800 transition-colors whitespace-nowrap cursor-pointer">
+                      <i className="ri-user-unfollow-line"></i>Ver No arribó
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
             <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 hover:shadow-md transition-shadow">
               <div className="flex items-start gap-4">
                 <div className="flex-shrink-0 w-12 h-12 sm:w-14 sm:h-14 bg-blue-100 rounded-lg flex items-center justify-center">
@@ -499,6 +596,23 @@ export default function CasetillaPage() {
               </div>
             </div>
             <DurationReportGrid orgId={orgId!} allowedWarehouseIds={effectiveWarehouseIds} clientId={selectedClientId} />
+          </div>
+        )}
+
+        {viewMode === 'NO_SHOW' && (
+          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-4 sm:p-6 lg:p-8">
+            <div className="mb-6">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-4">
+                <div>
+                  <h2 className="text-xl sm:text-2xl font-bold text-gray-900">No arribó</h2>
+                  <p className="text-sm text-gray-600 mt-1">Reservas que superaron el tiempo de tolerancia sin ingreso</p>
+                </div>
+                <button onClick={() => { clearSession(); setViewModeRaw('HOME'); }} className="inline-flex items-center justify-center gap-2 px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors whitespace-nowrap cursor-pointer">
+                  <i className="ri-arrow-left-line"></i>Volver
+                </button>
+              </div>
+            </div>
+            <NoShowReservationsGrid reservations={noShowReservations} isLoading={isLoadingNoShow} />
           </div>
         )}
       </div>

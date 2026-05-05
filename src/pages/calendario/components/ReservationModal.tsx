@@ -813,7 +813,35 @@ export default function ReservationModal({
       let saved: Reservation;
 
       if (reservation) {
-        saved = await calendarService.updateReservation(reservation.id, payload);
+        // ✅ PROBLEMA 3 FIX: Detectar si el usuario cambió SOLO el estado.
+        // Si ningún otro campo cambió, usar updateReservationStatus() que NO toca fechas.
+        const isStatusOnlyChange =
+          formData.statusId !== reservation.status_id &&
+          formData.dockId === reservation.dock_id &&
+          formData.startDate === toWarehouseDateString(new Date(reservation.start_datetime), tz) &&
+          formData.startTime === toWarehouseTimeString(new Date(reservation.start_datetime), tz) &&
+          formData.endDate === toWarehouseDateString(new Date(reservation.end_datetime), tz) &&
+          formData.endTime === toWarehouseTimeString(new Date(reservation.end_datetime), tz) &&
+          formData.purchaseOrder === (reservation.purchase_order || '') &&
+          formData.truckPlate === (reservation.truck_plate || '') &&
+          formData.orderRequestNumber === (reservation.order_request_number || '') &&
+          formData.shipperProvider === (reservation.shipper_provider || '') &&
+          formData.driver === (reservation.driver || '') &&
+          formData.dua === (reservation.dua || '') &&
+          formData.invoice === (reservation.invoice || '') &&
+          formData.notes === (reservation.notes || '') &&
+          formData.transportType === (reservation.transport_type || 'inbound') &&
+          formData.cargoType === (reservation.cargo_type || '') &&
+          formData.operationType === (reservation.operation_type || '') &&
+          formData.blNumber === ((reservation as any).bl_number || '') &&
+          isImported === !!((reservation as any).is_imported ?? !!(reservation.dua)) &&
+          cancelReason === (reservation.cancel_reason || '');
+
+        if (isStatusOnlyChange) {
+          saved = await calendarService.updateReservationStatus(reservation.id, formData.statusId);
+        } else {
+          saved = await calendarService.updateReservation(reservation.id, payload);
+        }
       } else {
         saved = await calendarService.createReservation(payload);
       }
@@ -1515,7 +1543,7 @@ export default function ReservationModal({
                             disabled={isReadOnly}
                           >
                             <option value="">Seleccionar estado</option>
-                            {statuses.map(status => (
+                            {statuses.filter(s => s.is_active === true).map(status => (
                               <option key={status.id} value={status.id}>
                                 {status.name}
                               </option>

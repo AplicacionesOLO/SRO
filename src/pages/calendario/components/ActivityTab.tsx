@@ -240,7 +240,8 @@ function ActivityRow({
 
   const description = getActivityDescription(log, dockNameById, statusById);
 
-  const actorLabel = log.actor?.name || log.actor?.email || 'Usuario';
+  const isSystemAction = log.metadata?.reason === 'AUTO_NO_SHOW' || log.metadata?.source === 'edge_function' || log.metadata?.source === 'pg_cron';
+  const actorLabel = isSystemAction ? 'Sistema automático' : (log.actor?.name || log.actor?.email || 'Usuario');
 
   return (
     <div className="flex gap-3 p-3 rounded-xl border border-gray-200 bg-white hover:bg-gray-50/40 transition-colors">
@@ -384,6 +385,7 @@ function formatValue(
 }
 
 function getActionIcon(log: ActivityLog): string {
+  if (log.metadata?.reason === 'AUTO_NO_SHOW') return 'ri-robot-2-line';
   if (log.action === 'created') return 'ri-add-circle-line';
   if (log.action === 'cancelled') return 'ri-close-circle-line';
   if (log.action === 'uncancelled') return 'ri-restart-line';
@@ -397,6 +399,7 @@ function getActionIcon(log: ActivityLog): string {
 }
 
 function getActionColor(log: ActivityLog): string {
+  if (log.metadata?.reason === 'AUTO_NO_SHOW') return 'text-purple-600';
   if (log.action === 'created') return 'text-green-600';
   if (log.action === 'cancelled') return 'text-red-600';
   if (log.action === 'uncancelled') return 'text-blue-600';
@@ -404,6 +407,7 @@ function getActionColor(log: ActivityLog): string {
 }
 
 function getActionLabel(log: ActivityLog): string {
+  if (log.metadata?.reason === 'AUTO_NO_SHOW') return 'Auto — No arribó';
   if (log.action === 'created') return 'Creado';
   if (log.action === 'cancelled') return 'Cancelado';
   if (log.action === 'uncancelled') return 'Reactivado';

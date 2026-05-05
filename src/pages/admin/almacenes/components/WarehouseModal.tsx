@@ -34,6 +34,7 @@ export default function WarehouseModal({
     business_end_time: '17:00',
     slot_interval_minutes: 60,
     timezone: 'America/Costa_Rica',
+    no_show_tolerance_minutes: null,
   });
 
   const [selectedClientIds, setSelectedClientIds] = useState<string[]>([]);
@@ -61,6 +62,7 @@ export default function WarehouseModal({
         business_end_time: (warehouse as any).business_end_time || '17:00',
         slot_interval_minutes: (warehouse as any).slot_interval_minutes || 60,
         timezone: warehouse.timezone || 'America/Costa_Rica',
+        no_show_tolerance_minutes: (warehouse as any).no_show_tolerance_minutes ?? null,
       });
       setSelectedClientIds(assignedClientIds || []);
       setShowDraftBanner(false);
@@ -72,7 +74,7 @@ export default function WarehouseModal({
         setDraftAgeLabel(getDraftAge(draft.savedAt));
         setShowDraftBanner(true);
       } else {
-        setFormData({ name: '', location: '', country_id: '', business_start_time: '06:00', business_end_time: '17:00', slot_interval_minutes: 60, timezone: 'America/Costa_Rica' });
+        setFormData({ name: '', location: '', country_id: '', business_start_time: '06:00', business_end_time: '17:00', slot_interval_minutes: 60, timezone: 'America/Costa_Rica', no_show_tolerance_minutes: null });
         setSelectedClientIds([]);
         setShowDraftBanner(false);
       }
@@ -341,6 +343,27 @@ export default function WarehouseModal({
                 )}
                 <p className="mt-1 text-xs text-gray-500">
                   Define el tamaño de los segmentos en el calendario
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Tolerancia para no arribo
+                </label>
+                <input
+                  type="number"
+                  min={0}
+                  step={1}
+                  value={formData.no_show_tolerance_minutes ?? ''}
+                  onChange={(e) =>
+                    setFormData({ ...formData, no_show_tolerance_minutes: e.target.value === '' ? null : parseInt(e.target.value, 10) })
+                  }
+                  className="w-full px-4 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent"
+                  placeholder="Ej: 30"
+                  disabled={saving}
+                />
+                <p className="mt-1 text-xs text-gray-500">
+                  Tiempo máximo permitido después de la hora de la cita antes de marcarla como No arribó. Dejar vacío para desactivar.
                 </p>
               </div>
             </div>

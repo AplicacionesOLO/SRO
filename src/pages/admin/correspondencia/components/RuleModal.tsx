@@ -200,12 +200,13 @@ export default function RuleModal({ isOpen, onClose, onSave, rule, orgId, active
       }
 
       // ============================
-      // Estados de reserva (filtrados por org)
+      // Estados de reserva (filtrados por org) — solo activos
       // ============================
       const { data: statusesData } = await supabase
         .from("reservation_statuses")
         .select("id, name, color")
         .eq("org_id", orgId)
+        .eq("is_active", true)
         .order("order_index");
 
       if (!isCancelled() && statusesData) {

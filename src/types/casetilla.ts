@@ -84,6 +84,20 @@ export interface ExitEligibleReservation {
   warehouse_name?: string | null;
 }
 
+// Reserva marcada como No arribó
+export interface NoShowReservation {
+  id: string;
+  dua: string;
+  placa: string;
+  chofer: string;
+  provider_name: string;
+  warehouse_name: string;
+  start_datetime: string;
+  end_datetime: string;
+  created_at: string;
+  motivo: string;
+}
+
 // Fila del reporte de duración
 export interface DurationReportRow {
   reservation_id: string;

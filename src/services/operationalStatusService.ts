@@ -137,21 +137,20 @@ export const operationalStatusService = {
    */
   async deactivateStatus(id: string): Promise<void> {
     try {
-      //console.log('[operationalStatusService] deactivateStatus start', { id });
-
-      const { error } = await supabase
+      const { data, error } = await supabase
         .from('reservation_statuses')
         .update({ is_active: false })
-        .eq('id', id);
+        .eq('id', id)
+        .select();
 
       if (error) {
-        // console.error('[operationalStatusService] deactivateStatus error', error);
         throw error;
       }
 
-      //console.log('[operationalStatusService] deactivateStatus success', { id });
+      if (!data || data.length === 0) {
+        throw new Error('No se pudo desactivar el estado. Verificá permisos (RLS) o que el registro exista.');
+      }
     } catch (error) {
-      // console.error('[operationalStatusService] deactivateStatus exception', error);
       throw error;
     }
   },
@@ -161,46 +160,28 @@ export const operationalStatusService = {
    */
   async activateStatus(id: string): Promise<void> {
     try {
-      //console.log('[operationalStatusService] activateStatus start', { id });
-
-      const { error } = await supabase
+      const { data, error } = await supabase
         .from('reservation_statuses')
         .update({ is_active: true })
-        .eq('id', id);
+        .eq('id', id)
+        .select();
 
       if (error) {
-        // console.error('[operationalStatusService] activateStatus error', error);
         throw error;
       }
 
-      //console.log('[operationalStatusService] activateStatus success', { id });
+      if (!data || data.length === 0) {
+        throw new Error('No se pudo activar el estado. Verificá permisos (RLS) o que el registro exista.');
+      }
     } catch (error) {
-      // console.error('[operationalStatusService] activateStatus exception', error);
       throw error;
     }
   },
 
   /**
-   * Delete a status (physical delete - use with caution)
+   * Soft-delete a status (deactivate, physical delete is blocked by DB)
    */
   async deleteStatus(id: string): Promise<void> {
-    try {
-      //console.log('[operationalStatusService] deleteStatus start', { id });
-
-      const { error } = await supabase
-        .from('reservation_statuses')
-        .delete()
-        .eq('id', id);
-
-      if (error) {
-        // console.error('[operationalStatusService] deleteStatus error', error);
-        throw error;
-      }
-
-      //console.log('[operationalStatusService] deleteStatus success', { id });
-    } catch (error) {
-      // console.error('[operationalStatusService] deleteStatus exception', error);
-      throw error;
-    }
+    return this.deactivateStatus(id);
   },
 };

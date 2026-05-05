@@ -64,8 +64,14 @@ export function ActiveWarehouseProvider({ children }: { children: React.ReactNod
 
     let resolved: string | null = null;
 
-    // 1. Intentar restaurar desde localStorage
-    if (storageKey) {
+    // 1. Si el usuario tiene exactamente 1 warehouse → SIEMPRE preseleccionarlo
+    //    Esto tiene prioridad sobre localStorage para evitar estados huérfanos
+    if (availableWarehouses.length === 1 && !isGlobalAccess) {
+      resolved = availableWarehouses[0].id;
+    }
+
+    // 2. Si no se resolvió por único warehouse, intentar restaurar desde localStorage
+    if (resolved === null && storageKey) {
       const saved = localStorage.getItem(storageKey);
       if (saved === 'null' || saved === '') {
         resolved = null;
@@ -74,14 +80,17 @@ export function ActiveWarehouseProvider({ children }: { children: React.ReactNod
       }
     }
 
-    // 2. Si el usuario tiene exactamente 1 warehouse → preseleccionarlo automáticamente
-    if (resolved === null && availableWarehouses.length === 1 && !isGlobalAccess) {
+    // 3. Si aún es null y no es global, pero hay warehouses disponibles
+    //    (múltiples warehouses), forzar el primero para que nunca quede huérfano
+    if (resolved === null && !isGlobalAccess && availableWarehouses.length > 0) {
       resolved = availableWarehouses[0].id;
     }
 
-    // Persistir en localStorage (incluyendo el caso de auto-selección de 1 warehouse)
+    // Persistir en localStorage
     if (resolved !== null && storageKey) {
       localStorage.setItem(storageKey, resolved);
+    } else if (resolved === null && storageKey) {
+      localStorage.setItem(storageKey, 'null');
     }
 
     setActiveWarehouseIdRaw(resolved);
@@ -114,16 +123,27 @@ export function ActiveWarehouseProvider({ children }: { children: React.ReactNod
     const isStillValid = availableWarehouses.some((w) => w.id === activeWarehouseId);
 
     if (!isStillValid) {
-
-      // Resetear selección
-      setActiveWarehouseIdRaw(null);
-      if (storageKey) {
-        localStorage.removeItem(storageKey);
+      // FIX: Si solo queda 1 warehouse disponible, saltar directo a ese
+      // en vez de dejar null y mostrar "Sin almacén seleccionado"
+      if (availableWarehouses.length === 1 && !isGlobalAccess) {
+        const singleId = availableWarehouses[0].id;
+        setActiveWarehouseIdRaw(singleId);
+        if (storageKey) {
+          localStorage.setItem(storageKey, singleId);
+        }
+        // No marcar como invalidada — el usuario nunca se entera
+        setSelectionInvalidated(false);
+      } else {
+        // Resetear selección (múltiples warehouses o global)
+        setActiveWarehouseIdRaw(null);
+        if (storageKey) {
+          localStorage.removeItem(storageKey);
+        }
+        // Marcar como invalidada para que el UI reaccione (abrir modal)
+        setSelectionInvalidated(true);
       }
-      // Marcar como invalidada para que el UI reaccione (abrir modal)
-      setSelectionInvalidated(true);
     }
-  }, [initialized, scopeLoading, activeWarehouseId, availableWarehouses, storageKey]);
+  }, [initialized, scopeLoading, activeWarehouseId, availableWarehouses, storageKey, isGlobalAccess]);
 
   const allowedWarehouses: ActiveWarehouseInfo[] = useMemo(
     () =>

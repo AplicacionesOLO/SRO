@@ -74,6 +74,7 @@ const getPermissionLabel = (technicalName: string): string => {
     'casetilla.view':                        'Ver registro de entradas y salidas (IN/OUT)',
     'casetilla.create':                      'Registrar entrada o salida (IN/OUT)',
     'casetilla.manage':                      'Gestionar registros de IN/OUT',
+    'casetilla.no_show.view':                'Ver reservas No arribó',
 
     // ─── Correspondencia ─────────────────────────────────────────────
     'correspondence.view':                   'Ver reglas de correspondencia',

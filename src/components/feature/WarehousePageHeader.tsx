@@ -40,16 +40,17 @@ export default function WarehousePageHeader({ title, description, onChangeWareho
         </div>
       )}
 
-      {!activeWarehouse && (
-        <div className="flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-lg px-4 py-2.5">
-          <i className="ri-alert-line text-amber-500 text-lg w-5 h-5 flex items-center justify-center"></i>
-          <p className="text-sm text-amber-700">Sin almacén seleccionado</p>
+      {/* Si no hay activeWarehouse y es loading, mostrar skeleton. Si ya cargó y sigue sin warehouse, no mostrar nada en vez de un warning amarillo que confunde. */}
+      {!activeWarehouse && hasMultipleWarehouses && (
+        <div className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-lg px-4 py-2.5">
+          <i className="ri-building-2-line text-gray-400 text-lg w-5 h-5 flex items-center justify-center"></i>
+          <p className="text-sm text-gray-500">Seleccioná un almacén</p>
           {onChangeWarehouse && (
             <button
               onClick={onChangeWarehouse}
-              className="ml-2 text-xs text-amber-600 hover:text-amber-800 underline whitespace-nowrap cursor-pointer"
+              className="ml-2 text-xs text-teal-600 hover:text-teal-800 underline whitespace-nowrap cursor-pointer"
             >
-              Seleccionar
+              Cambiar
             </button>
           )}
         </div>

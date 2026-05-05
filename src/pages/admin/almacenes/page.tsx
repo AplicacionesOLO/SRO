@@ -493,6 +493,12 @@ export default function AlmacenesPage() {
                     {warehouse.slot_interval_minutes || 60} min
                   </p>
                 )}
+                {warehouse.no_show_tolerance_minutes != null && warehouse.no_show_tolerance_minutes > 0 && (
+                  <p className="text-xs text-gray-500 mt-0.5">
+                    <i className="ri-user-unfollow-line mr-1 w-3 h-3 inline-flex items-center justify-center"></i>
+                    Tolerancia no arribo: {warehouse.no_show_tolerance_minutes} min
+                  </p>
+                )}
                 {warehouse.timezone && (
                   <p className="text-xs text-gray-500 mt-0.5">
                     <i className="ri-global-line mr-1 w-3 h-3 inline-flex items-center justify-center"></i>

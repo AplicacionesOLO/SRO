@@ -1017,6 +1017,7 @@ export const calendarService = {
       .from('reservation_statuses')
       .select('*')
       .eq('org_id', orgId)
+      .eq('is_active', true)
       .order('order_index', { ascending: true });
 
     if (error) {
@@ -1030,6 +1031,123 @@ export const calendarService = {
     }
 
     return data || [];
+  },
+
+  /**
+   * Actualiza SOLO el estado de una reserva. NO toca fechas, duración ni ningún otro campo.
+   * Usar exclusivamente cuando la acción es cambio de estado puro.
+   */
+  async updateReservationStatus(id: string, statusId: string): Promise<Reservation> {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) throw new Error('Usuario no autenticado');
+
+    const now = new Date().toISOString();
+
+    // Obtener estado anterior para el trigger de email
+    const { data: oldReservation } = await supabase
+      .from('reservations')
+      .select('status_id, org_id')
+      .eq('id', id)
+      .maybeSingle();
+
+    const oldStatusId = oldReservation?.status_id || null;
+    const orgIdForTrigger = oldReservation?.org_id || '';
+
+    // 1. Solo actualizar status_id, updated_by y updated_at
+    const { error } = await supabase
+      .from('reservations')
+      .update({ status_id: statusId, updated_by: user.id, updated_at: now })
+      .eq('id', id);
+
+    if (error) throw error;
+
+    // 2. Leer resultado
+    const { data: full, error: fetchErr } = await supabase
+      .from('reservations')
+      .select(`
+        *,
+        status:reservation_statuses(name, code, color)
+      `)
+      .eq('id', id)
+      .maybeSingle();
+
+    // 3. Disparar email trigger si el status cambió
+    if (orgIdForTrigger && oldStatusId !== statusId) {
+      const reservationForTrigger = full ?? ({
+        id,
+        org_id: orgIdForTrigger,
+        dock_id: '',
+        start_datetime: '',
+        end_datetime: '',
+        dua: null,
+        invoice: null,
+        driver: null,
+        status_id: statusId,
+        notes: null,
+        transport_type: null,
+        cargo_type: null,
+        operation_type: null,
+        is_cancelled: false,
+        cancel_reason: null,
+        cancelled_by: null,
+        cancelled_at: null,
+        created_by: user.id,
+        created_at: '',
+        updated_by: user.id,
+        updated_at: now,
+        purchase_order: null,
+        truck_plate: null,
+        order_request_number: null,
+        shipper_provider: null,
+        recurrence: null,
+        bl_number: null,
+      } as Reservation);
+
+      emailTriggerService.onReservationStatusChanged(
+        orgIdForTrigger,
+        reservationForTrigger,
+        oldStatusId,
+        statusId
+      ).catch(() => {
+        // non-blocking
+      });
+    }
+
+    if (fetchErr || !full) {
+      // Fallback mínimo si RLS bloquea lectura
+      const fallback: Reservation = {
+        id,
+        org_id: orgIdForTrigger,
+        dock_id: '',
+        start_datetime: '',
+        end_datetime: '',
+        dua: null,
+        invoice: null,
+        driver: null,
+        status_id: statusId,
+        notes: null,
+        transport_type: null,
+        cargo_type: null,
+        operation_type: null,
+        is_cancelled: false,
+        cancel_reason: null,
+        cancelled_by: null,
+        cancelled_at: null,
+        created_by: user.id,
+        created_at: '',
+        updated_by: user.id,
+        updated_at: now,
+        purchase_order: null,
+        truck_plate: null,
+        order_request_number: null,
+        shipper_provider: null,
+        recurrence: null,
+        bl_number: null,
+      };
+      return fallback;
+    }
+
+    return full;
   },
 
   async getDockCategories(orgId: string) {

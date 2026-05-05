@@ -2598,8 +2598,8 @@ export default function CalendarioPage() {
             docks={docks}
             statuses={
               hasLimitedStatusView
-                ? statuses.filter(s => s.code === 'PENDING' || s.code === 'CANCELLED')
-                : statuses
+                ? statuses.filter(s => s.is_active !== false && (s.code === 'PENDING' || s.code === 'CANCELLED'))
+                : statuses.filter(s => s.is_active !== false)
             }
             orgId={orgId!}
             warehouseId={warehouseId}

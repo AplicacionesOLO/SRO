@@ -230,14 +230,16 @@ export default function OperationalStatusesTab() {
       setConfirmModal({
         isOpen: true,
         title: 'Estado en uso',
-        message: `Este estado está en uso por reglas de correspondencia. ¿Estás seguro de que deseas ${status.is_active ? 'inactivarlo' : 'activarlo'}?`,
+        message: `Este estado está en uso por reglas de correspondencia. No se eliminarán reservas históricas. ¿Estás seguro de que deseas ${status.is_active ? 'desactivarlo' : 'reactivarlo'}?`,
         type: 'warning',
         onConfirm: () => {
           setConfirmModal((c) => ({ ...c, isOpen: false }));
           setDoubleConfirmModal({
             isOpen: true,
-            title: 'Última advertencia',
-            message: 'Esto puede afectar las configuraciones existentes. ¿Confirmar cambio?',
+            title: status.is_active ? 'Confirmar desactivación' : 'Confirmar reactivación',
+            message: status.is_active
+              ? 'Este estado está en uso por reglas de correspondencia. No se eliminarán reservas históricas. ¿Confirmar desactivación?'
+              : 'Este estado está en uso por reglas de correspondencia. ¿Confirmar reactivación?',
             onConfirm: async () => {
               setDoubleConfirmModal((c) => ({ ...c, isOpen: false }));
               await operationalStatusService.updateStatus(status.id, {
@@ -253,8 +255,8 @@ export default function OperationalStatusesTab() {
 
     setConfirmModal({
       isOpen: true,
-      title: status.is_active ? 'Inactivar estado' : 'Activar estado',
-      message: `¿Estás seguro de que deseas ${status.is_active ? 'inactivar' : 'activar'} este estado?`,
+      title: status.is_active ? 'Desactivar estado' : 'Reactivar estado',
+      message: `¿Estás seguro de que deseas ${status.is_active ? 'desactivar' : 'reactivar'} este estado?`,
       type: 'warning',
       onConfirm: async () => {
         setConfirmModal((c) => ({ ...c, isOpen: false }));
@@ -266,49 +268,7 @@ export default function OperationalStatusesTab() {
     });
   };
 
-  const handleDelete = (status: OperationalStatus) => {
-    const isInUse = statusInUseMap[status.id];
 
-    if (isInUse && !hasFullAccess) {
-      alert('Este estado está en uso por reglas de correspondencia y no puede ser eliminado.');
-      return;
-    }
-
-    if (isInUse && hasFullAccess) {
-      setConfirmModal({
-        isOpen: true,
-        title: 'Estado en uso',
-        message: 'Este estado está en uso por reglas de correspondencia. ¿Estás seguro de que deseas eliminarlo?',
-        type: 'error',
-        onConfirm: () => {
-          setConfirmModal((c) => ({ ...c, isOpen: false }));
-          setDoubleConfirmModal({
-            isOpen: true,
-            title: 'Última advertencia',
-            message: 'Esto puede romper configuraciones existentes. ¿Confirmar eliminación?',
-            onConfirm: async () => {
-              setDoubleConfirmModal((c) => ({ ...c, isOpen: false }));
-              await operationalStatusService.deleteStatus(status.id);
-              loadStatuses();
-            },
-          });
-        },
-      });
-      return;
-    }
-
-    setConfirmModal({
-      isOpen: true,
-      title: 'Eliminar estado',
-      message: '¿Estás seguro de que deseas eliminar este estado?',
-      type: 'error',
-      onConfirm: async () => {
-        setConfirmModal((c) => ({ ...c, isOpen: false }));
-        await operationalStatusService.deleteStatus(status.id);
-        loadStatuses();
-      },
-    });
-  };
 
   const handleEdit = (status: OperationalStatus) => {
     const isInUse = statusInUseMap[status.id];
@@ -486,8 +446,8 @@ export default function OperationalStatusesTab() {
                           !canModify
                             ? 'En uso por reglas'
                             : status.is_active
-                            ? 'Inactivar'
-                            : 'Activar'
+                            ? 'Desactivar estado'
+                            : 'Reactivar estado'
                         }
                         className={`p-2 rounded hover:bg-gray-100 ${
                           !canModify ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'
@@ -495,19 +455,9 @@ export default function OperationalStatusesTab() {
                       >
                         <i
                           className={`${
-                            status.is_active ? 'ri-toggle-line' : 'ri-toggle-fill'
+                            status.is_active ? 'ri-eye-off-line' : 'ri-eye-line'
                           } text-teal-600`}
                         ></i>
-                      </button>
-                      <button
-                        onClick={() => handleDelete(status)}
-                        disabled={!canModify}
-                        title={!canModify ? 'En uso por reglas' : 'Eliminar'}
-                        className={`p-2 rounded hover:bg-gray-100 ${
-                          !canModify ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'
-                        }`}
-                      >
-                        <i className="ri-delete-bin-line text-red-600"></i>
                       </button>
                     </div>
                   </td>

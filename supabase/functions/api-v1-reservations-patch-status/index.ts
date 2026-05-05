@@ -112,7 +112,7 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Validate that the new status_id belongs to this org
+    // Validate that the new status_id belongs to this org and is active
     const { data: statusCheck } = await supabase
       .from('reservation_statuses')
       .select('id, is_active')
@@ -137,7 +137,7 @@ Deno.serve(async (req) => {
     const oldStatusId = reservation.status_id;
     const now = new Date().toISOString();
 
-    // Update reservation status
+    // Update reservation status — ONLY status_id, never dates
     const { data: updated, error: updateError } = await supabase
       .from('reservations')
       .update({ status_id: body.status_id, updated_by: userId, updated_at: now })
@@ -153,16 +153,18 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Log activity
-    await supabase.from('reservation_activity_log').insert({
+    // Log activity in activity_log with real user actor
+    await supabase.from('activity_log').insert({
       org_id: orgId,
-      reservation_id: reservationId,
-      event_type: 'reservation_status_changed',
-      field_name: 'status_id',
+      entity_type: 'reservation',
+      entity_id: reservationId,
+      action: 'updated',
+      field: 'status_id',
       old_value: oldStatusId,
       new_value: body.status_id,
-      changed_by: userId,
-      changed_at: now,
+      actor_user_id: userId,
+      created_at: now,
+      metadata: { source: 'api_v1_patch_status' },
     });
 
     return new Response(

@@ -11,21 +11,13 @@ const normalizeTime = (t?: string | null, fallback = '06:00:00') => {
 
 export const warehousesService = {
   async getWarehouses(orgId: string): Promise<Warehouse[]> {
-    //console.log('[WarehousesService] getWarehouses', { orgId });
-
     const { data, error } = await supabase
       .from('warehouses')
-      .select('id, org_id, name, location, country_id, business_start_time, business_end_time, slot_interval_minutes, timezone, created_at')
+      .select('id, org_id, name, location, country_id, business_start_time, business_end_time, slot_interval_minutes, timezone, no_show_tolerance_minutes, created_at')
       .eq('org_id', orgId)
       .order('created_at', { ascending: false });
 
     if (error) {
-      // console.error('[WarehousesService] getWarehouses error', {
-      //   error,
-      //   message: error.message,
-      //   details: (error as any).details,
-      //   hint: (error as any).hint
-      // });
       throw error;
     }
 
@@ -38,8 +30,6 @@ export const warehousesService = {
   },
 
   async createWarehouse(orgId: string, formData: WarehouseFormData): Promise<Warehouse> {
-    //console.log('[WarehousesService] createWarehouse', { orgId, name: formData.name });
-
     if (!formData.country_id) throw new Error('El país es requerido');
 
     const { data, error } = await supabase
@@ -53,17 +43,15 @@ export const warehousesService = {
         business_end_time: normalizeTime(formData.business_end_time, '17:00:00'),
         slot_interval_minutes: formData.slot_interval_minutes || 60,
         timezone: formData.timezone || 'America/Costa_Rica',
+        no_show_tolerance_minutes: formData.no_show_tolerance_minutes ?? null,
       })
-      .select('id, org_id, name, location, country_id, business_start_time, business_end_time, slot_interval_minutes, timezone, created_at')
+      .select('id, org_id, name, location, country_id, business_start_time, business_end_time, slot_interval_minutes, timezone, no_show_tolerance_minutes, created_at')
       .single();
 
     if (error) {
-      // console.error('[WarehousesService] createWarehouse error', error);
-
       if (error.code === '23505' && error.message?.includes('warehouses_org_name_unique')) {
         throw new Error('Ya existe un almacén con ese nombre en tu organización');
       }
-
       throw error;
     }
 
@@ -72,8 +60,6 @@ export const warehousesService = {
   },
 
   async updateWarehouse(id: string, orgId: string, formData: WarehouseFormData): Promise<Warehouse> {
-    //console.log('[WarehousesService] updateWarehouse', { id, orgId, name: formData.name });
-
     if (!formData.country_id) throw new Error('El país es requerido');
 
     const { data, error } = await supabase
@@ -86,23 +72,20 @@ export const warehousesService = {
         business_end_time: normalizeTime(formData.business_end_time, '17:00:00'),
         slot_interval_minutes: formData.slot_interval_minutes || 60,
         timezone: formData.timezone || 'America/Costa_Rica',
+        no_show_tolerance_minutes: formData.no_show_tolerance_minutes ?? null,
       })
       .eq('id', id)
       .eq('org_id', orgId)
-      .select('id, org_id, name, location, country_id, business_start_time, business_end_time, slot_interval_minutes, timezone, created_at')
+      .select('id, org_id, name, location, country_id, business_start_time, business_end_time, slot_interval_minutes, timezone, no_show_tolerance_minutes, created_at')
       .single();
 
     if (error) {
-      // console.error('[WarehousesService] updateWarehouse error', error);
-
       if (error.code === '23505' && error.message?.includes('warehouses_org_name_unique')) {
         throw new Error('Ya existe otro almacén con ese nombre en tu organización');
       }
-
       if (error.code === 'PGRST116') {
         throw new Error('No tienes permisos para actualizar este almacén o no existe');
       }
-
       throw error;
     }
 
@@ -111,8 +94,6 @@ export const warehousesService = {
   },
 
   async deleteWarehouse(id: string, orgId: string): Promise<void> {
-    //console.log('[WarehousesService] deleteWarehouse', { id, orgId });
-
     const { error } = await supabase
       .from('warehouses')
       .delete()
@@ -120,22 +101,14 @@ export const warehousesService = {
       .eq('org_id', orgId);
 
     if (error) {
-      // console.error('[WarehousesService] deleteWarehouse error', error);
-
       if (error.code === 'PGRST116') {
         throw new Error('No tienes permisos para eliminar este almacén o no existe');
       }
-
       throw error;
     }
   },
 
-  /**
-   * Obtiene los IDs de clientes asignados a un almacén
-   */
   async getWarehouseClients(orgId: string, warehouseId: string): Promise<string[]> {
-    //console.log('[WarehousesService] getWarehouseClients', { orgId, warehouseId });
-
     const { data, error } = await supabase
       .from('warehouse_clients')
       .select('client_id')
@@ -143,37 +116,21 @@ export const warehousesService = {
       .eq('warehouse_id', warehouseId);
 
     if (error) {
-      // console.error('[WarehousesService] getWarehouseClients error', error);
       throw error;
     }
 
     return (data || []).map((row) => row.client_id);
   },
 
-  /**
-   * Asigna clientes a un almacén (diff: inserta nuevos, elimina desmarcados)
-   */
   async setWarehouseClients(orgId: string, warehouseId: string, clientIds: string[]): Promise<void> {
-    //console.log('[WarehousesService] setWarehouseClients', { orgId, warehouseId, clientIds });
-
     try {
-      // 1. Obtener asignaciones actuales
       const current = await this.getWarehouseClients(orgId, warehouseId);
       const currentSet = new Set(current);
       const newSet = new Set(clientIds);
 
-      // 2. Calcular diff
       const toInsert = clientIds.filter((id) => !currentSet.has(id));
       const toDelete = current.filter((id) => !newSet.has(id));
 
-      /**console.log('[WarehousesService] setWarehouseClients diff', {
-        current: current.length,
-        new: clientIds.length,
-        toInsert: toInsert.length,
-        toDelete: toDelete.length,
-      });*/
-
-      // 3. Eliminar desmarcados
       if (toDelete.length > 0) {
         const { error: deleteError } = await supabase
           .from('warehouse_clients')
@@ -183,12 +140,10 @@ export const warehousesService = {
           .in('client_id', toDelete);
 
         if (deleteError) {
-          // console.error('[WarehousesService] delete error', deleteError);
           throw deleteError;
         }
       }
 
-      // 4. Insertar nuevos
       if (toInsert.length > 0) {
         const rows = toInsert.map((clientId) => ({
           org_id: orgId,
@@ -201,20 +156,13 @@ export const warehousesService = {
           .insert(rows);
 
         if (insertError) {
-          // console.error('[WarehousesService] insert error', insertError);
-
-          // Manejar duplicados (por si acaso)
           if (insertError.code === '23505') {
             throw new Error('Algunos clientes ya están asignados a este almacén');
           }
-
           throw insertError;
         }
       }
-
-      //console.log('[WarehousesService] setWarehouseClients success');
     } catch (error) {
-      // console.error('[WarehousesService] setWarehouseClients error', error);
       throw error;
     }
   }

@@ -22,6 +22,8 @@ type PendingReservationRow = {
   is_cancelled: boolean | null;
   notes: string | null;
   cargo_type: string | null;
+  start_datetime: string | null;
+  end_datetime: string | null;
   // ✅ Fuente de verdad real para Nacional/Importado
   is_imported: boolean | null;
 };
@@ -110,6 +112,108 @@ class CasetillaService {
     return data.map((r: any) => r.dock_id as string);
   }
 
+  // ─── NO-SHOW: filtrar reservas que ya vencieron por tolerancia ───────────
+  private async filterNoShowExpired(rows: PendingReservationRow[], orgId: string): Promise<PendingReservationRow[]> {
+    if (rows.length === 0) return rows;
+
+    // Traer warehouses con tolerancia configurada
+    const warehouseIds = [...new Set(rows.map((r) => r.dock_id).filter(Boolean))];
+    if (warehouseIds.length === 0) return rows;
+
+    // Necesitamos dock_id -> warehouse_id
+    const { data: docksData } = await supabase
+      .from('docks')
+      .select('id, warehouse_id')
+      .in('id', warehouseIds)
+      .eq('org_id', orgId);
+
+    const dockToWh = new Map<string, string>();
+    (docksData ?? []).forEach((d: any) => {
+      dockToWh.set(d.id as string, d.warehouse_id as string);
+    });
+
+    const whIds = [...new Set([...dockToWh.values()])];
+    if (whIds.length === 0) return rows;
+
+    const { data: whData } = await supabase
+      .from('warehouses')
+      .select('id, timezone, no_show_tolerance_minutes')
+      .in('id', whIds)
+      .eq('org_id', orgId);
+
+    const whMap = new Map<string, { timezone: string; tolerance: number | null }>();
+    (whData ?? []).forEach((w: any) => {
+      whMap.set(w.id as string, {
+        timezone: (w.timezone as string) || 'America/Costa_Rica',
+        tolerance: w.no_show_tolerance_minutes != null ? Number(w.no_show_tolerance_minutes) : null,
+      });
+    });
+
+    const now = new Date();
+
+    return rows.filter((r) => {
+      const whId = dockToWh.get(r.dock_id);
+      if (!whId) return true; // sin warehouse info → dejar pasar
+
+      const wh = whMap.get(whId);
+      if (!wh || wh.tolerance == null || wh.tolerance <= 0) return true; // sin tolerancia → dejar pasar
+
+      if (!r.start_datetime) return true; // sin hora de cita → no evaluar
+
+      // Convertir start_datetime a zona horaria del almacén y agregar tolerancia
+      const start = new Date(r.start_datetime);
+      // start_datetime ya es UTC en DB, usamos la fecha directa
+      const cutoff = new Date(start.getTime() + wh.tolerance * 60_000);
+
+      return now <= cutoff; // solo dejar si ahora <= cutoff
+    });
+  }
+
+  // ─── NO-SHOW: verificar si una reserva está vencida por tolerancia ──────
+  async checkNoShowExpired(reservationId: string, orgId: string): Promise<{ expired: boolean; message: string }> {
+    const { data: res, error } = await supabase
+      .from('reservations')
+      .select('id, dock_id, start_datetime, status_id')
+      .eq('id', reservationId)
+      .eq('org_id', orgId)
+      .maybeSingle();
+
+    if (error || !res) return { expired: false, message: '' };
+    if (!res.start_datetime || !res.dock_id) return { expired: false, message: '' };
+
+    const { data: dock } = await supabase
+      .from('docks')
+      .select('warehouse_id')
+      .eq('id', res.dock_id)
+      .eq('org_id', orgId)
+      .maybeSingle();
+
+    if (!dock?.warehouse_id) return { expired: false, message: '' };
+
+    const { data: wh } = await supabase
+      .from('warehouses')
+      .select('timezone, no_show_tolerance_minutes')
+      .eq('id', dock.warehouse_id)
+      .eq('org_id', orgId)
+      .maybeSingle();
+
+    if (!wh || wh.no_show_tolerance_minutes == null || wh.no_show_tolerance_minutes <= 0) {
+      return { expired: false, message: '' };
+    }
+
+    const start = new Date(res.start_datetime);
+    const cutoff = new Date(start.getTime() + Number(wh.no_show_tolerance_minutes) * 60_000);
+
+    if (new Date() > cutoff) {
+      return {
+        expired: true,
+        message: 'Esta cita superó el tiempo permitido de ingreso y ya no puede procesarse desde Punto de Control.',
+      };
+    }
+
+    return { expired: false, message: '' };
+  }
+
   // helper: obtener status_id por code o name, intentando con org_id si existe
   private async getStatusIdFlexible(params: {
     orgId: string;
@@ -133,9 +237,9 @@ class CasetillaService {
         if (!error && data && data.length > 0) return data[0].id;
       }
 
-      // try without org_id (tu caso actual)
+      // try without org_id (fallback) — solo estados activos
       {
-        const q = supabase.from('reservation_statuses').select('id').eq('code', code).limit(1);
+        const q = supabase.from('reservation_statuses').select('id').eq('code', code).eq('is_active', true).limit(1);
         const { data, error } = await q;
         if (!error && data && data.length > 0) return data[0].id;
       }
@@ -156,7 +260,7 @@ class CasetillaService {
       }
 
       {
-        const q = supabase.from('reservation_statuses').select('id').eq('name', name).limit(1);
+        const q = supabase.from('reservation_statuses').select('id').eq('name', name).eq('is_active', true).limit(1);
         const { data, error } = await q;
         if (!error && data && data.length > 0) return data[0].id;
       }
@@ -406,12 +510,15 @@ class CasetillaService {
     try {
       // ✅ Usar RPC que filtra PENDING + NOT EXISTS casetilla_ingresos en una sola query SQL
       const { data: reservations, error: rpcError } = await supabase
-        .rpc('get_pending_reservations_v2', { p_org_id: orgId });
+        .rpc('get_pending_reservations_v4', { p_org_id: orgId });
 
       if (rpcError) throw rpcError;
       if (!reservations || reservations.length === 0) return [];
 
       let rows = reservations as PendingReservationRow[];
+
+      // ─── NO-SHOW: excluir reservas vencidas por tolerancia ──────────────
+      rows = await this.filterNoShowExpired(rows, orgId);
 
       // ─── SEGREGACIÓN: filtrar por docks permitidos ────────────────────────
       // Construir set de dock_ids permitidos según warehouse y/o cliente
@@ -612,12 +719,13 @@ async getExitEligibleReservations(
   clientId?: string | null
 ) {
   try {
-    // 1) Obtener status DISPATCHED desde tabla (NO quemado)
+    // 1) Obtener status DISPATCHED desde tabla (NO quemado) — solo activo
     const { data: dispatchedRow, error: dispatchedErr } = await supabase
       .from("reservation_statuses")
       .select("id")
       .eq("org_id", orgId)
       .eq("code", "DISPATCHED")
+      .eq('is_active', true)
       .maybeSingle();
 
     if (dispatchedErr) throw dispatchedErr;
@@ -860,12 +968,13 @@ async getExitEligibleReservations(
         throw new Error('Ya existe una salida registrada para esta reserva');
       }
 
-      // 3) Buscar status DISPATCHED 
+      // 3) Buscar status DISPATCHED — solo activo
       const { data: dispatchedRow, error: dispatchedErr } = await supabase
         .from("reservation_statuses")
         .select("id")
         .eq("org_id", orgId)
         .eq("code", "DISPATCHED")
+        .eq('is_active', true)
         .maybeSingle();
 
       if (dispatchedErr || !dispatchedRow?.id) {
@@ -1097,6 +1206,164 @@ async getExitEligibleReservations(
       return reportRows;
     } catch (error) {
       // console.error('Error fetching duration report:', error);
+      throw error;
+    }
+  }
+
+  // ─── NO-SHOW: listar reservas marcadas como No arribó ──────────────────
+  async getNoShowReservations(
+    orgId: string,
+    allowedWarehouseIds?: string[] | null,
+    clientId?: string | null
+  ) {
+    try {
+      // Obtener status NO_SHOW — solo activo
+      const { data: noShowRow, error: noShowErr } = await supabase
+        .from('reservation_statuses')
+        .select('id')
+        .eq('org_id', orgId)
+        .eq('code', 'NO_SHOW')
+        .eq('is_active', true)
+        .maybeSingle();
+
+      if (noShowErr) throw noShowErr;
+      if (!noShowRow?.id) return [];
+
+      const noShowStatusId = noShowRow.id;
+
+      let q = supabase
+        .from('reservations')
+        .select(`
+          id,
+          org_id,
+          dua,
+          driver,
+          truck_plate,
+          purchase_order,
+          order_request_number,
+          shipper_provider,
+          dock_id,
+          created_at,
+          start_datetime,
+          end_datetime,
+          status_id,
+          is_cancelled
+        `)
+        .eq('org_id', orgId)
+        .eq('status_id', noShowStatusId)
+        .eq('is_cancelled', false)
+        .order('start_datetime', { ascending: false });
+
+      const { data: reservations, error } = await q;
+      if (error) throw error;
+      if (!reservations || reservations.length === 0) return [];
+
+      let rows = reservations as any[];
+
+      // ─── SEGREGACIÓN: filtrar por docks permitidos ────────────────────────
+      let allowedDockIds: Set<string> | null = null;
+
+      if (allowedWarehouseIds && allowedWarehouseIds.length > 0) {
+        const { data: allowedDocks } = await supabase
+          .from('docks')
+          .select('id')
+          .eq('org_id', orgId)
+          .in('warehouse_id', allowedWarehouseIds);
+
+        allowedDockIds = new Set((allowedDocks ?? []).map((d: any) => d.id as string));
+      }
+
+      if (clientId) {
+        const clientDockIds = await this.getDockIdsForClient(orgId, clientId);
+        const clientDockSet = new Set(clientDockIds);
+
+        if (allowedDockIds !== null) {
+          allowedDockIds = new Set([...allowedDockIds].filter((id) => clientDockSet.has(id)));
+        } else {
+          allowedDockIds = clientDockSet;
+        }
+      }
+
+      if (allowedDockIds !== null) {
+        rows = rows.filter((r: any) => allowedDockIds!.has(r.dock_id));
+      }
+      if (rows.length === 0) return [];
+      // ─────────────────────────────────────────────────────────────────────
+
+      // Docks → Warehouses
+      const dockIds = [...new Set(rows.map((r) => r.dock_id).filter(Boolean))];
+      const docksMap = new Map<string, { name?: string; warehouse_id?: string | null }>();
+
+      if (dockIds.length > 0) {
+        const { data: docksData } = await supabase
+          .from('docks')
+          .select('id,name,warehouse_id')
+          .in('id', dockIds);
+
+        (docksData ?? []).forEach((d: any) => {
+          docksMap.set(d.id, { name: d.name, warehouse_id: d.warehouse_id ?? null });
+        });
+      }
+
+      const warehouseIds = [
+        ...new Set(
+          [...docksMap.values()].map((d) => d.warehouse_id).filter(Boolean) as string[]
+        ),
+      ];
+
+      const warehousesMap = new Map<string, string>();
+      if (warehouseIds.length > 0) {
+        const { data: whData } = await supabase
+          .from('warehouses')
+          .select('id,name')
+          .in('id', warehouseIds);
+
+        (whData ?? []).forEach((w: any) => warehousesMap.set(w.id, w.name));
+      }
+
+      // Providers
+      const providerIds = [
+        ...new Set(
+          rows
+            .map((r) => r.shipper_provider)
+            .filter((id: any) =>
+              id && String(id).match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i)
+            )
+        ),
+      ] as string[];
+
+      const providersMap = new Map<string, string>();
+      if (providerIds.length > 0) {
+        const { data: provData } = await supabase
+          .from('providers')
+          .select('id,name')
+          .in('id', providerIds);
+
+        (provData ?? []).forEach((p: any) => providersMap.set(p.id, p.name));
+      }
+
+      return rows.map((r: any) => {
+        const dock = docksMap.get(r.dock_id);
+        const whName = dock?.warehouse_id ? warehousesMap.get(dock.warehouse_id) : null;
+
+        const shipper = r.shipper_provider ?? null;
+        const isUUID = shipper && String(shipper).match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+        const providerName = isUUID ? providersMap.get(shipper) ?? 'N/A' : shipper ?? 'N/A';
+
+        return {
+          id: r.id,
+          dua: r.dua ?? '',
+          placa: r.truck_plate ?? '',
+          chofer: r.driver ?? '',
+          provider_name: providerName,
+          warehouse_name: whName ?? 'N/A',
+          start_datetime: r.start_datetime,
+          end_datetime: r.end_datetime,
+          created_at: r.created_at,
+          motivo: 'No asistió dentro del tiempo permitido',
+        };
+      });
+    } catch (error) {
       throw error;
     }
   }

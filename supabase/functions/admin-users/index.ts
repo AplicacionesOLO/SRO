@@ -2,7 +2,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const VERSION = "admin-users@v2026-02-12.5-ORG-SCOPED-FIX";
+const VERSION = "admin-users@v2026-05-04.1-PAGINATED-LIST";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -14,6 +14,37 @@ function reqId() { return crypto.randomUUID(); }
 function safePrefix(v: string | null, n = 14) { if (!v) return null; return v.slice(0, n); }
 function json(resBody: any, status = 200) {
   return new Response(JSON.stringify(resBody), { status, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+}
+
+// ✅ PAGINACIÓN COMPLETA: Supabase pagina auth.admin.listUsers() a 50 por defecto.
+// Esta función itera todas las páginas hasta obtener TODOS los usuarios.
+async function listAllAuthUsers(supabaseAdmin: any) {
+  const allUsers: any[] = [];
+  let page = 1;
+  const perPage = 50;
+  let hasMore = true;
+
+  while (hasMore) {
+    const { data, error } = await supabaseAdmin.auth.admin.listUsers({
+      page,
+      perPage,
+    });
+
+    if (error) throw error;
+
+    const users = data?.users ?? [];
+    allUsers.push(...users);
+
+    hasMore = users.length === perPage;
+    page++;
+
+    // Safety brake — max 20 pages (1000 users)
+    if (page > 20) {
+      hasMore = false;
+    }
+  }
+
+  return allUsers;
 }
 
 serve(async (req) => {
@@ -42,15 +73,15 @@ serve(async (req) => {
       const orgUserIds = (userOrgRoles ?? []).map((uor: any) => uor.user_id);
       if (orgUserIds.length === 0) return json({ users: [], reqId: id, version: VERSION }, 200);
 
-      const { data: authData, error: authError } = await supabaseAdmin.auth.admin.listUsers();
-      if (authError) return json({ error: "Admin listUsers failed", details: authError.message, reqId: id, version: VERSION }, 500);
+      // ✅ PAGINACIÓN: obtener TODOS los usuarios de auth, no solo los primeros 50
+      const authUsers = await listAllAuthUsers(supabaseAdmin);
+      const filteredAuthUsers = authUsers.filter((u: any) => orgUserIds.includes(u.id));
 
-      const authUsers = (authData?.users ?? []).filter((u: any) => orgUserIds.includes(u.id));
       const { data: profiles } = await supabaseAdmin.from("profiles").select("id, name, email, phone_e164").in("id", orgUserIds);
       const profilesMap = new Map((profiles ?? []).map((p: any) => [p.id, { name: p.name, email: p.email, phone_e164: p.phone_e164 }]));
       const rolesMap = new Map((userOrgRoles ?? []).map((uor: any) => [uor.user_id, { role_id: uor.role_id, role_name: uor.roles?.name ?? null }]));
 
-      const users = authUsers.map((authUser: any) => {
+      const users = filteredAuthUsers.map((authUser: any) => {
         const profile = profilesMap.get(authUser.id) ?? { name: null, email: null, phone_e164: null };
         const roleData = rolesMap.get(authUser.id) ?? { role_id: null, role_name: null };
         return { id: authUser.id, email: authUser.email ?? profile.email ?? null, full_name: profile.name ?? authUser.email?.split('@')[0] ?? 'Usuario', phone_e164: profile.phone_e164 ?? null, role_id: roleData.role_id, role_name: roleData.role_name, created_at: authUser.created_at ?? null, last_sign_in_at: authUser.last_sign_in_at ?? null };
@@ -63,8 +94,9 @@ serve(async (req) => {
       if (!orgId) return json({ error: "Bad Request", details: "Missing orgId", reqId: id, version: VERSION }, 400);
       if (!email) return json({ error: "Bad Request", details: "Missing email", reqId: id, version: VERSION }, 400);
 
-      const { data: existingAuthUsers } = await supabaseAdmin.auth.admin.listUsers();
-      const existingUser = (existingAuthUsers?.users ?? []).find((u: any) => u.email?.toLowerCase() === email.toLowerCase());
+      // ✅ PAGINACIÓN: buscar en TODOS los usuarios de auth para detectar duplicados
+      const allAuthUsers = await listAllAuthUsers(supabaseAdmin);
+      const existingUser = allAuthUsers.find((u: any) => u.email?.toLowerCase() === email.toLowerCase());
 
       let createdUserId: string;
       let alreadyExisted = false;
