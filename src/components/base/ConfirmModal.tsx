@@ -94,7 +94,7 @@ export function ConfirmModal({
           <h3 className="text-xl font-bold text-gray-900 text-center mb-2">{title}</h3>
 
           {/* Mensaje */}
-          <p className="text-sm text-gray-600 text-center leading-relaxed">{message}</p>
+          <p className="text-sm text-gray-600 text-center leading-relaxed whitespace-pre-line">{message}</p>
         </div>
 
         {/* Botones */}

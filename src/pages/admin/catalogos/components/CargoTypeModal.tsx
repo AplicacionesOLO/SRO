@@ -333,12 +333,26 @@ export default function CargoTypeModal({ orgId, warehouseId, cargoType, onClose,
 
           {/* Activo (solo al editar) */}
           {cargoType && (
-            <div>
+            <div className="space-y-2">
               <label className="flex items-center gap-2 cursor-pointer">
                 <input type="checkbox" checked={isActive} onChange={(e) => setIsActive(e.target.checked)}
                   className="rounded border-gray-300" />
                 <span className="text-sm font-medium text-gray-700">Activo</span>
               </label>
+              {/* ⚠️ Advertencia al desactivar */}
+              {!isActive && (
+                <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 flex items-start gap-2">
+                  <i className="ri-alert-line text-amber-600 w-4 h-4 flex items-center justify-center flex-shrink-0 mt-0.5"></i>
+                  <div>
+                    <p className="text-xs font-semibold text-amber-800">
+                      Atención: inactivar un tipo de carga puede afectar reservas ya creadas.
+                    </p>
+                    <p className="text-xs text-amber-700 mt-0.5">
+                      Las reservas existentes que usen este tipo de carga seguirán funcionando, pero ya no será visible en nuevas reservas ni en reportes que filtren activos.
+                    </p>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 

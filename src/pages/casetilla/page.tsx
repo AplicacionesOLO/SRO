@@ -182,6 +182,8 @@ export default function CasetillaPage() {
   const loadExitRef = useRef(loadExitEligibleReservations);
   const loadNoShowRef = useRef(loadNoShowReservations);
   const viewModeRef = useRef(viewMode);
+  // ── Debounce timer para agrupar múltiples eventos Realtime ───────────────
+  const casetillaRealtimeDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => { loadPendingRef.current = loadPendingReservations; }, [loadPendingReservations]);
   useEffect(() => { loadExitRef.current = loadExitEligibleReservations; }, [loadExitEligibleReservations]);
@@ -204,20 +206,31 @@ export default function CasetillaPage() {
           const recordOrgId = (payload.new as any)?.org_id;
           if (recordOrgId && recordOrgId !== orgId) return;
 
-          // Recargar solo la vista activa para no disparar requests innecesarios
-          const vm = viewModeRef.current;
-          if (vm === 'PENDIENTES') {
-            loadPendingRef.current();
-          } else if (vm === 'SALIDA' && !selectedExitReservation) {
-            loadExitRef.current();
-          } else if (vm === 'NO_SHOW') {
-            loadNoShowRef.current();
+          // Debounce: agrupar múltiples eventos en una sola recarga
+          if (casetillaRealtimeDebounceRef.current) {
+            clearTimeout(casetillaRealtimeDebounceRef.current);
           }
+          casetillaRealtimeDebounceRef.current = setTimeout(() => {
+            casetillaRealtimeDebounceRef.current = null;
+            // Recargar solo la vista activa para no disparar requests innecesarios
+            const vm = viewModeRef.current;
+            if (vm === 'PENDIENTES') {
+              loadPendingRef.current();
+            } else if (vm === 'SALIDA' && !selectedExitReservation) {
+              loadExitRef.current();
+            } else if (vm === 'NO_SHOW') {
+              loadNoShowRef.current();
+            }
+          }, 800);
         }
       )
       .subscribe();
 
     return () => {
+      if (casetillaRealtimeDebounceRef.current) {
+        clearTimeout(casetillaRealtimeDebounceRef.current);
+        casetillaRealtimeDebounceRef.current = null;
+      }
       supabase.removeChannel(channel);
     };
   }, [orgId]);

@@ -201,7 +201,22 @@ export const calendarService = {
     endDate: string,
     allowedWarehouseIds?: string[] | null
   ): Promise<Reservation[]> {
-    const { data, error } = await supabase
+    // ── Pre-calcular dock_ids permitidos ANTES del query ────────────────────
+    // Esto evita traer TODAS las reservas del rango y luego filtrar en memoria.
+    // El filtro se aplica directamente en SQL con .in('dock_id', [...]).
+    let allowedDockIds: string[] | undefined;
+    if (allowedWarehouseIds && allowedWarehouseIds.length > 0) {
+      const { data: docksData } = await supabase
+        .from('docks')
+        .select('id')
+        .eq('org_id', orgId)
+        .in('warehouse_id', allowedWarehouseIds);
+      allowedDockIds = (docksData ?? []).map((d: any) => d.id as string);
+      // Si no hay docks para esos warehouses → resultado vacío, evitar query innecesaria
+      if (allowedDockIds.length === 0) return [];
+    }
+
+    let query = supabase
       .from('reservations')
       .select(`
         *,
@@ -210,31 +225,19 @@ export const calendarService = {
       .eq('org_id', orgId)
       .eq('is_cancelled', false)
       .gte('start_datetime', startDate)
-      .lte('start_datetime', endDate)
-      .order('start_datetime', { ascending: true });
+      .lte('start_datetime', endDate);
+
+    if (allowedDockIds && allowedDockIds.length > 0) {
+      query = query.in('dock_id', allowedDockIds);
+    }
+
+    const { data, error } = await query.order('start_datetime', { ascending: true });
 
     if (error) {
       return [];
     }
 
-    let result = data || [];
-
-    // ── SEGREGACIÓN: filtrar por warehouses permitidos ──────────────────────
-    if (allowedWarehouseIds && allowedWarehouseIds.length > 0 && result.length > 0) {
-      const dockIds = [...new Set(result.map((r) => r.dock_id).filter(Boolean))];
-      const { data: docksData } = await supabase
-        .from('docks')
-        .select('id, warehouse_id')
-        .in('id', dockIds);
-
-      const allowedDockIds = new Set(
-        (docksData ?? [])
-          .filter((d: any) => allowedWarehouseIds.includes(d.warehouse_id))
-          .map((d: any) => d.id)
-      );
-
-      result = result.filter((r) => allowedDockIds.has(r.dock_id));
-    }
+    const result = data || [];
 
     // ── Enriquecer con perfil del creador ───────────────────────────────────
     if (result.length > 0) {
@@ -262,7 +265,19 @@ export const calendarService = {
     endDate: string,
     allowedWarehouseIds?: string[] | null
   ): Promise<Reservation[]> {
-    const { data, error } = await supabase
+    // ── Pre-calcular dock_ids permitidos ANTES del query ────────────────────
+    let allowedDockIds: string[] | undefined;
+    if (allowedWarehouseIds && allowedWarehouseIds.length > 0) {
+      const { data: docksData } = await supabase
+        .from('docks')
+        .select('id')
+        .eq('org_id', orgId)
+        .in('warehouse_id', allowedWarehouseIds);
+      allowedDockIds = (docksData ?? []).map((d: any) => d.id as string);
+      if (allowedDockIds.length === 0) return [];
+    }
+
+    let query = supabase
       .from('reservations')
       .select(`
         *,
@@ -270,33 +285,19 @@ export const calendarService = {
       `)
       .eq('org_id', orgId)
       .gte('start_datetime', startDate)
-      .lte('start_datetime', endDate)
-      .order('start_datetime', { ascending: false });
+      .lte('start_datetime', endDate);
+
+    if (allowedDockIds && allowedDockIds.length > 0) {
+      query = query.in('dock_id', allowedDockIds);
+    }
+
+    const { data, error } = await query.order('start_datetime', { ascending: false });
 
     if (error) {
       return [];
     }
 
-    let result = data || [];
-
-    // ── SEGREGACIÓN: filtrar por warehouses permitidos ──────────────────────
-    if (allowedWarehouseIds && allowedWarehouseIds.length > 0 && result.length > 0) {
-      const dockIds = [...new Set(result.map((r) => r.dock_id).filter(Boolean))];
-      const { data: docksData } = await supabase
-        .from('docks')
-        .select('id, warehouse_id')
-        .in('id', dockIds);
-
-      const allowedDockIds = new Set(
-        (docksData ?? [])
-          .filter((d: any) => allowedWarehouseIds.includes(d.warehouse_id))
-          .map((d: any) => d.id)
-      );
-
-      result = result.filter((r) => allowedDockIds.has(r.dock_id));
-    }
-
-    return result;
+    return data || [];
   },
 
   async getDockTimeBlocks(orgId: string, startDate: string, endDate: string): Promise<DockTimeBlock[]> {

@@ -717,8 +717,15 @@ export default function CalendarioPage() {
 
     if (!reserveModalOpen && pendingRealtimeRefreshRef.current) {
       pendingRealtimeRefreshRef.current = false;
-      cacheRef.current.clear();
-      loadData(true);
+      // Debounce también al cerrar modal: evitar recargas inmediatas si vienen más eventos
+      if (realtimeDebounceRef.current) {
+        clearTimeout(realtimeDebounceRef.current);
+      }
+      realtimeDebounceRef.current = setTimeout(() => {
+        realtimeDebounceRef.current = null;
+        cacheRef.current.clear();
+        loadData(true);
+      }, 500);
     }
   }, [reserveModalOpen, loadData]);
 
@@ -732,6 +739,8 @@ export default function CalendarioPage() {
   // ── Refs para acceder a valores actuales dentro del handler realtime (evita stale closure) ──
   const reserveModalOpenRef = useRef(false);
   const loadDataRef = useRef<(forceRefresh?: boolean) => Promise<void>>(async () => {});
+  // ── Debounce timer para agrupar múltiples eventos Realtime en una sola recarga ───
+  const realtimeDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // ✅ FIX BUG 2 (v2): Realtime subscription a la tabla reservations.
   //
@@ -740,8 +749,9 @@ export default function CalendarioPage() {
   // Solución: suscribir SIN filtro de columna y filtrar manualmente en el handler.
   //
   // Cuando llega un cambio:
-  // - Si el modal está cerrado → invalidar caché y recargar inmediatamente
+  // - Si el modal está cerrado → invalidar caché y recargar con debounce (500ms)
   // - Si el modal está abierto → marcar pendingRealtimeRefreshRef para recargar al cerrar
+  // - Debounce agrupa múltiples eventos en una sola recarga
   useEffect(() => {
     if (!orgId || !ready) return;
 
@@ -766,13 +776,24 @@ export default function CalendarioPage() {
             return;
           }
 
-          cacheRef.current.clear();
-          loadDataRef.current(true);
+          // Debounce: agrupar múltiples eventos en una sola recarga
+          if (realtimeDebounceRef.current) {
+            clearTimeout(realtimeDebounceRef.current);
+          }
+          realtimeDebounceRef.current = setTimeout(() => {
+            realtimeDebounceRef.current = null;
+            cacheRef.current.clear();
+            loadDataRef.current(true);
+          }, 800);
         }
       )
       .subscribe();
 
     return () => {
+      if (realtimeDebounceRef.current) {
+        clearTimeout(realtimeDebounceRef.current);
+        realtimeDebounceRef.current = null;
+      }
       supabase.removeChannel(channel);
     };
   // Solo re-montar cuando cambia orgId o ready — NO incluir reserveModalOpen ni loadData

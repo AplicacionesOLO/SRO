@@ -58,7 +58,7 @@ export default function CargoTypesTab({ orgId, warehouseId }: CargoTypesTabProps
   const handleDelete = async (ct: CargoType) => {
     setConfirmModal({
       isOpen: true, type: 'warning', title: 'Confirmar desactivación',
-      message: `¿Desactivar el tipo de carga "${ct.name}"?`, showCancel: true,
+      message: `¿Desactivar el tipo de carga "${ct.name}"?\n\nInactivar un tipo de carga puede afectar reservas ya creadas que lo estén usando. Las reservas existentes seguirán funcionando, pero este tipo ya no será visible en nuevas reservas.`, showCancel: true,
       onConfirm: () => confirmDelete(ct),
       onCancel: () => setConfirmModal(prev => ({ ...prev, isOpen: false }))
     });
