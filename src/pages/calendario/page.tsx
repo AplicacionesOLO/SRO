@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useMemo, useCallback, useRef } from 'react';
 import { supabase } from '../../lib/supabase';
 import { usePermissions } from '../../hooks/usePermissions';
 import { useUserScope } from '../../hooks/useUserScope';
@@ -215,11 +215,31 @@ export default function CalendarioPage() {
   const headerInnerRef = useRef<HTMLDivElement | null>(null);
   const rafRef = useRef<number | null>(null);
 
+  // ✅ Ref para rastrear si el warehouse ya se resolvió al menos una vez
+  // La primera vez que warehouseId pasa de null a un valor real, se marca como true.
+  // Esto permite distinguir entre "aún inicializando" y "el usuario eligió Ver todos".
+  const warehouseResolvedRef = useRef(false);
+
   // ✅ Caché para evitar refetch innecesario
   const cacheRef = useRef<Map<string, { reservations: Reservation[]; blocks: DockTimeBlock[] }>>(new Map());
 
+  // ✅ Refs para proteger contra cargas simultáneas y doble ejecución
+  const inFlightRef = useRef<Map<string, Promise<void>>>(new Map());
+  const lastLoadKeyRef = useRef<string | null>(null);
+
+  // ✅ Refs para acceder a warehouses actuales sin recrear loadData
+  const warehousesRef = useRef<Warehouse[]>(warehouses);
+  useEffect(() => { warehousesRef.current = warehouses; }, [warehouses]);
+
+  // ✅ Ref para acceder a scopeWarehouses (ya tiene timezone desde useUserScope con cache)
+  const scopeWarehousesRef = useRef<Warehouse[]>(scopeWarehouses);
+  useEffect(() => { scopeWarehousesRef.current = scopeWarehouses; }, [scopeWarehouses]);
+
   // ✅ Flag para distinguir "primer mount con lastRuleChange ya seteado" vs "lastRuleChange cambió mientras estaba montado"
   const ruleChangeInitialMountRef = useRef(false);
+
+  // ✅ Evitar doble disparo del useEffect de loadData con mismo effectKey
+  const lastEffectKeyRef = useRef<string | null>(null);
 
   // ✅ Constante de ancho de columna — reducida para mayor densidad visual
   const COL_W = 170;
@@ -532,8 +552,16 @@ export default function CalendarioPage() {
     return slots;
   }, [businessStartMinutes, businessEndMinutes, slotInterval]);
 
-  // ✅ Ejecutar carga solo cuando esté listo (incluyendo scope de permisos)
-  const ready = useMemo(() => !!orgId && !permLoading && !scopeLoading, [orgId, permLoading, scopeLoading]);
+  // ✅ Ejecutar carga solo cuando esté listo (incluyendo scope de permisos Y almacén activo resuelto)
+  // readyStableRef evita que ready oscile: una vez true, nunca vuelve a false
+  const ready = useMemo(() => !!orgId && !permLoading && !scopeLoading && !activeWhLoading, [orgId, permLoading, scopeLoading, activeWhLoading]);
+  const readyStableRef = useRef(false);
+
+  useEffect(() => {
+    if (ready) {
+      readyStableRef.current = true;
+    }
+  }, [ready]);
 
   // ✅ Label para almacén (para PreReservationMiniModal)
   const warehouseLabel = useMemo(() => {
@@ -627,89 +655,100 @@ export default function CalendarioPage() {
   const loadData = useCallback(async (forceRefresh = false) => {
     if (!orgId) return;
 
-    try {
-      setLoading(true);
+    const { bufferStart, bufferEnd } = dateRange;
+    const cacheKey = `${orgId}:${bufferStart.toISOString()}:${bufferEnd.toISOString()}:${
+      warehouseId || 'all'
+    }:${filterCategory}`;
 
-      const { bufferStart, bufferEnd } = dateRange;
-
-      // ✅ CORREGIDO: Generar cache key SIN searchTerm
-      const cacheKey = `${orgId}:${bufferStart.toISOString()}:${bufferEnd.toISOString()}:${
-        warehouseId || 'all'
-      }:${filterCategory}`;
-
-      // Verificar caché (solo si no es forceRefresh)
-      if (!forceRefresh) {
-        const cached = cacheRef.current.get(cacheKey);
-        if (cached) {
-          setReservations(cached.reservations);
-          setBlocks(cached.blocks);
-          setLoading(false);
-          return;
-        }
+    // ── Protección 1: ya hay in-flight para este cacheKey ──────────────
+    const inFlight = inFlightRef.current.get(cacheKey);
+    if (inFlight) {
+      try {
+        await inFlight;
+      } catch {
+        // ignorar error del in-flight anterior; si falló, seguimos normalmente
       }
-
-      // Cargar datos en paralelo — pasar allowedWarehouseIds y allowedClientIds para segregación
-      const [docksData, reservationsData, blocksData, statusesData, categoriesData] = await Promise.all([
-        calendarService.getDocks(orgId, warehouseId, allowedWarehouseIds, allowedClientIds),
-        calendarService.getReservations(orgId, bufferStart.toISOString(), bufferEnd.toISOString(), allowedWarehouseIds),
-        calendarService.getDockTimeBlocks(orgId, bufferStart.toISOString(), bufferEnd.toISOString()),
-        calendarService.getReservationStatuses(orgId),
-        calendarService.getDockCategories(orgId),
-      ]);
-
-      // // console.log('[Calendar] docksCountBeforeFilter', { count: docksData.length, warehouseId });
-
-      // Filtrar reservas y bloques para mostrar solo los del warehouse seleccionado
-      const dockIds = new Set(docksData.map((d) => d.id));
-      const filteredReservations = reservationsData.filter((r) => dockIds.has(r.dock_id));
-      const filteredBlocks = blocksData.filter((b) => dockIds.has(b.dock_id));
-
-      // // console.log('[Calendar] docksCountAfterFilter', {
-      //   count: docksData.length,
-      //   reservations: filteredReservations.length,
-      //   blocks: filteredBlocks.length,
-      //   warehouseId,
-      // });
-
-      // // console.log('[Calendar] Data loaded', {
-      //   docks: docksData.length,
-      //   reservations: filteredReservations.length,
-      //   blocks: filteredBlocks.length,
-      //   statuses: statusesData.length,
-      //   categories: categoriesData.length,
-      //   warehouseId,
-      // });
-
-      setDocks(docksData);
-      setReservations(filteredReservations);
-      setBlocks(filteredBlocks);
-      setStatuses(statusesData);
-      setCategories(categoriesData);
-
-      // Guardar en caché
-      cacheRef.current.set(cacheKey, {
-        reservations: filteredReservations,
-        blocks: filteredBlocks,
-      });
-
-      // Limpiar caché viejo (mantener solo últimas 10 entradas)
-      if (cacheRef.current.size > 10) {
-        const firstKey = cacheRef.current.keys().next().value;
-        if (firstKey) cacheRef.current.delete(firstKey);
-      }
-    } catch (error: any) {
-      // console.error('[Calendar] loadError', {
-      //   message: error.message,
-      //   code: error.code,
-      //   details: error.details,
-      // });
-    } finally {
-      setLoading(false);
+      return;
     }
-  }, [orgId, dateRange, rangeDays, warehouseId, filterCategory, allowedClientIds]); // ✅ REMOVIDO: searchTerm
 
-  // ── Mantener refs sincronizados con valores actuales ─────────────────────
-  useEffect(() => { loadDataRef.current = loadData; }, [loadData]);
+    // ── Protección 2: cache hit y no forceRefresh ──────────────────────
+    if (!forceRefresh) {
+      const cached = cacheRef.current.get(cacheKey);
+      if (cached) {
+        setReservations(cached.reservations);
+        setBlocks(cached.blocks);
+        setLoading(false);
+        return;
+      }
+    }
+
+    // ── Protección 3: mismo cacheKey recién cargado (no in-flight) ────
+    if (!forceRefresh && lastLoadKeyRef.current === cacheKey) {
+      return;
+    }
+
+    // ── Ejecutar fetch real ─────────────────────────────────────────────
+    const fetchPromise = (async () => {
+      try {
+        setLoading(true);
+
+        // Construir mapa de timezones desde scopeWarehouses (ya disponible con cache)
+        // + override con warehouses locales cuando terminan de cargar
+        const warehouseTimezoneMap = new Map<string, string>();
+        for (const w of scopeWarehousesRef.current) {
+          if (w.timezone) warehouseTimezoneMap.set(w.id, w.timezone);
+        }
+        for (const w of warehousesRef.current) {
+          if (w.timezone) warehouseTimezoneMap.set(w.id, w.timezone);
+        }
+
+        // Cargar datos en paralelo
+        const [docksData, reservationsData, blocksData, statusesData, categoriesData] = await Promise.all([
+          calendarService.getDocks(orgId, warehouseId, allowedWarehouseIds, allowedClientIds, warehouseTimezoneMap),
+          calendarService.getReservations(orgId, bufferStart.toISOString(), bufferEnd.toISOString(), allowedWarehouseIds),
+          calendarService.getDockTimeBlocks(orgId, bufferStart.toISOString(), bufferEnd.toISOString()),
+          calendarService.getReservationStatuses(orgId),
+          calendarService.getDockCategories(orgId),
+        ]);
+
+        // Filtrar reservas y bloques para mostrar solo los del warehouse seleccionado
+        const dockIds = new Set(docksData.map((d) => d.id));
+        const filteredReservations = reservationsData.filter((r) => dockIds.has(r.dock_id));
+        const filteredBlocks = blocksData.filter((b) => dockIds.has(b.dock_id));
+
+        setDocks(docksData);
+        setReservations(filteredReservations);
+        setBlocks(filteredBlocks);
+        setStatuses(statusesData);
+        setCategories(categoriesData);
+
+        // Guardar en caché
+        cacheRef.current.set(cacheKey, {
+          reservations: filteredReservations,
+          blocks: filteredBlocks,
+        });
+        lastLoadKeyRef.current = cacheKey;
+
+        // Limpiar caché viejo
+        if (cacheRef.current.size > 10) {
+          const firstKey = cacheRef.current.keys().next().value;
+          if (firstKey) cacheRef.current.delete(firstKey);
+        }
+      } catch (error: any) {
+        // silenciar
+      } finally {
+        setLoading(false);
+        inFlightRef.current.delete(cacheKey);
+      }
+    })();
+
+    inFlightRef.current.set(cacheKey, fetchPromise);
+    await fetchPromise;
+  }, [orgId, dateRange, rangeDays, warehouseId, filterCategory, allowedClientIds]);
+
+  // ── Mantener refs sincronizados con valores actuales (useLayoutEffect para
+  // asegurar que loadDataRef esté actualizado ANTES de que useEffect de carga corra)
+  useLayoutEffect(() => { loadDataRef.current = loadData; }, [loadData]);
 
   // ── Sincronizar openReservationIdRef con la reserva actualmente abierta ──
   useEffect(() => {
@@ -738,15 +777,42 @@ export default function CalendarioPage() {
       realtimeDebounceRef.current = setTimeout(() => {
         realtimeDebounceRef.current = null;
         cacheRef.current.clear();
+        lastLoadKeyRef.current = null; // resetear para permitir recarga real
         loadData(true);
       }, 500);
     }
   }, [reserveModalOpen, isBlockModalOpen, preModalOpen, warehouseModalOpen, loadData]);
 
   useEffect(() => {
-    if (!ready) return;
-    loadData();
-  }, [ready, loadData]);
+    // Guard #0 (PRIMERA LÍNEA): Nunca cargar con warehouseId=null si hay almacenes
+    // disponibles y aún no se resolvió el almacén activo. Usamos allowedWarehouses
+    // del contexto (ya listo cuando scopeLoading termina) Y warehouses locales.
+    // Esto evita la carga fantasma :all:all que ocurría cuando warehouses.length
+    // aún era 0 en el primer render donde ready pasaba a true.
+    if (warehouseId === null && !warehouseResolvedRef.current) {
+      const hasWarehouses = allowedWarehouses.length > 0 || warehouses.length > 0;
+      if (hasWarehouses) {
+        return;
+      }
+    }
+
+    if (!ready || !readyStableRef.current) {
+      return;
+    }
+
+    if (warehouseId !== null) {
+      warehouseResolvedRef.current = true;
+    }
+
+    // ── Guard #1: evitar doble disparo con mismo effectKey ──────────────
+    const effectKey = `${orgId}:${warehouseId || 'all'}:${anchorDate.getTime()}:${rangeDays}:${filterCategory}`;
+    if (effectKey === lastEffectKeyRef.current) {
+      return;
+    }
+    lastEffectKeyRef.current = effectKey;
+
+    loadDataRef.current();
+  }, [ready, warehouseId, warehouses.length, anchorDate.getTime(), rangeDays, filterCategory]);
 
   // ── Flag para posponer refetch cuando el modal está abierto ──────────────
   const pendingRealtimeRefreshRef = useRef(false);
@@ -840,14 +906,13 @@ export default function CalendarioPage() {
   useEffect(() => {
     if (lastRuleChange === 0 || !ready) return;
 
-    // En el primer render (mount), evitar doble carga — el main effect ya lo maneja
     if (!ruleChangeInitialMountRef.current) {
       ruleChangeInitialMountRef.current = true;
       return;
     }
 
-    // lastRuleChange cambió mientras el componente estaba montado → refrescar
     cacheRef.current.clear();
+    lastLoadKeyRef.current = null;
     loadData();
   }, [lastRuleChange, ready, loadData]);
 
@@ -865,8 +930,14 @@ export default function CalendarioPage() {
     setBlocks([]);
     setLoading(true);
 
-    // ── Limpiar caché completo para forzar refetch limpio ──────────────────
+    // ── Limpiar caché completa para forzar refetch limpio ──────────────────
     cacheRef.current.clear();
+    lastLoadKeyRef.current = null;
+    inFlightRef.current.clear();
+
+    // Marcar como resuelto: el usuario tomó una decisión (almacén específico o "Ver todos")
+    // Esto permite que el guard deje pasar la próxima carga sin bloquearla.
+    warehouseResolvedRef.current = true;
 
     // ── Actualizar contexto global (dispara re-render + useEffect de loadData) ──
     ctxSetWarehouseId(selectedId);

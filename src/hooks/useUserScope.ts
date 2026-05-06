@@ -40,6 +40,25 @@ export interface UserScope {
   reload: () => void;
 }
 
+// ── Cache global para useUserScope — compartida entre todas las instancias ──
+interface ScopeCacheEntry {
+  allowedWarehouseIds: string[] | null;
+  allowedClientIds: string[] | null;
+  availableClients: UserScopeClient[];
+  availableWarehouses: { id: string; name: string; timezone: string; location: string | null }[];
+  isGlobalAccess: boolean;
+  timestamp: number;
+  pendingPromise?: Promise<void>;
+}
+
+const scopeCache = new Map<string, ScopeCacheEntry>();
+const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutos
+
+function getScopeCacheKey(userId: string, orgId: string): string {
+  return `${userId}:${orgId}`;
+}
+// ────────────────────────────────────────────────────────────────────────────
+
 /**
  * Hook centralizado de segregación de datos.
  *
@@ -66,7 +85,13 @@ export function useUserScope(): UserScope {
   const [loading, setLoading] = useState(true);
   const [reloadTick, setReloadTick] = useState(0);
 
-  const reload = useCallback(() => setReloadTick((t) => t + 1), []);
+  const reload = useCallback(() => {
+    if (userId && orgId) {
+      const cacheKey = getScopeCacheKey(userId, orgId);
+      scopeCache.delete(cacheKey);
+    }
+    setReloadTick((t) => t + 1);
+  }, [userId, orgId]);
 
   useEffect(() => {
     if (!orgId || !userId) {
@@ -75,55 +100,101 @@ export function useUserScope(): UserScope {
     }
 
     let cancelled = false;
+    const cacheKey = getScopeCacheKey(userId, orgId);
 
     const load = async () => {
+      // ── 1. Verificar caché válida ─────────────────────────────────
+      const cached = scopeCache.get(cacheKey);
+      const now = Date.now();
+      if (cached && !cached.pendingPromise && (now - cached.timestamp) < CACHE_TTL_MS) {
+        if (!cancelled) {
+          setAllowedWarehouseIds(cached.allowedWarehouseIds);
+          setAllowedClientIds(cached.allowedClientIds);
+          setAvailableClients(cached.availableClients);
+          setAvailableWarehouses(cached.availableWarehouses);
+          setIsGlobalAccess(cached.isGlobalAccess);
+          setLoading(false);
+        }
+        return;
+      }
+
+      // ── 2. Si hay pendingPromise, esperarla ───────────────────────
+      if (cached?.pendingPromise) {
+        await cached.pendingPromise;
+        const afterPending = scopeCache.get(cacheKey);
+        if (afterPending && !afterPending.pendingPromise && (Date.now() - afterPending.timestamp) < CACHE_TTL_MS) {
+          if (!cancelled) {
+            setAllowedWarehouseIds(afterPending.allowedWarehouseIds);
+            setAllowedClientIds(afterPending.allowedClientIds);
+            setAvailableClients(afterPending.availableClients);
+            setAvailableWarehouses(afterPending.availableWarehouses);
+            setIsGlobalAccess(afterPending.isGlobalAccess);
+            setLoading(false);
+          }
+          return;
+        }
+      }
+      let resolvePending: (() => void) | undefined;
+      const pendingPromise = new Promise<void>((resolve) => {
+        resolvePending = resolve;
+      });
+      scopeCache.set(cacheKey, {
+        ...(cached || {
+          allowedWarehouseIds: null,
+          allowedClientIds: null,
+          availableClients: [],
+          availableWarehouses: [],
+          isGlobalAccess: false,
+          timestamp: 0,
+        }),
+        pendingPromise,
+      });
+
       setLoading(true);
+
+      // Variables temporales para acumular resultado
+      let resultAllowedWarehouseIds: string[] | null = null;
+      let resultAllowedClientIds: string[] | null = null;
+      let resultAvailableClients: UserScopeClient[] = [];
+      let resultAvailableWarehouses: { id: string; name: string; timezone: string; location: string | null }[] = [];
+      let resultIsGlobalAccess = false;
+
       try {
         const userRole = user?.role || 'OPERADOR';
         const roleAllowsGlobal = (GLOBAL_ACCESS_ROLES as readonly string[]).includes(userRole);
 
-        // ── 1. Consultar user_country_access (restricción por país) ─────────
+        // ── Query 1: user_country_access ─────────
         const { data: ucaRows, error: ucaErr } = await supabase
           .from('user_country_access')
           .select('country_id')
           .eq('org_id', orgId)
           .eq('user_id', userId);
-
-        if (cancelled) return;
         if (ucaErr) throw ucaErr;
 
         const allowedCountryIds: string[] | null =
           (ucaRows ?? []).length > 0
             ? (ucaRows ?? []).map((r: any) => r.country_id as string)
-            : null; // null = sin restricción de país
+            : null;
 
-        // ── 2. Consultar user_warehouse_access (FUENTE REAL DE VERDAD) ──────
+        // ── Query 2: user_warehouse_access ─────────
         const { data: uwaRows, error: uwaErr } = await supabase
           .from('user_warehouse_access')
           .select('warehouse_id, restricted')
           .eq('org_id', orgId)
           .eq('user_id', userId);
-
-        if (cancelled) return;
         if (uwaErr) throw uwaErr;
 
-        // ── 3. Determinar si el usuario tiene restricciones de warehouse ─────
         const hasUnrestrictedRow = (uwaRows ?? []).some((r: any) => r.restricted === false);
         const restrictedRows = (uwaRows ?? []).filter((r: any) => r.restricted === true);
         const hasRestrictedAssignments = restrictedRows.length > 0;
 
-
-
         let rawWarehouseIds: string[] | null;
 
         if (hasUnrestrictedRow) {
-          // Tiene fila con restricted=false → acceso global explícito de warehouse
           rawWarehouseIds = null;
         } else if (hasRestrictedAssignments) {
-          // Tiene filas con restricted=true → restringido a esos warehouses
           rawWarehouseIds = restrictedRows.map((r: any) => r.warehouse_id as string);
         } else {
-          // Sin filas en user_warehouse_access
           if (roleAllowsGlobal) {
             rawWarehouseIds = null;
           } else {
@@ -131,16 +202,9 @@ export function useUserScope(): UserScope {
           }
         }
 
-        // ── 4. INTERSECCIÓN: filtrar warehouses por países permitidos ────────
-        // Si el usuario tiene restricción de país, solo puede ver warehouses
-        // cuyo country_id esté dentro de allowedCountryIds.
-        // Esto evita que un warehouse de Costa Rica aparezca si el usuario
-        // solo tiene Venezuela en user_country_access.
+        // ── 3. INTERSECCIÓN por país ─────────
         let warehouseIds: string[] | null = rawWarehouseIds;
-
         if (allowedCountryIds !== null) {
-          // El usuario tiene restricción de país — necesitamos filtrar
-          // Cargar todos los warehouses candidatos para aplicar la intersección
           let candidateQuery = supabase
             .from('warehouses')
             .select('id, country_id')
@@ -148,44 +212,33 @@ export function useUserScope(): UserScope {
             .in('country_id', allowedCountryIds);
 
           if (rawWarehouseIds !== null && rawWarehouseIds.length > 0) {
-            // También restringido por warehouse: intersección de ambos
             candidateQuery = candidateQuery.in('id', rawWarehouseIds);
           } else if (rawWarehouseIds !== null && rawWarehouseIds.length === 0) {
-            // Sin warehouses asignados → 0 resultados
-            if (!cancelled) {
-              setAllowedWarehouseIds([]);
-              setAllowedClientIds([]);
-              setAvailableClients([]);
-              setAvailableWarehouses([]);
-              setIsGlobalAccess(false);
-              setLoading(false);
-            }
-            return;
+            resultAllowedWarehouseIds = [];
+            resultAllowedClientIds = [];
+            resultAvailableClients = [];
+            resultAvailableWarehouses = [];
+            resultIsGlobalAccess = false;
+            return; // early return: finally block still runs
           }
-          // Si rawWarehouseIds === null (global warehouse), solo filtramos por país
 
           const { data: candidateWh } = await candidateQuery;
           if (cancelled) return;
 
           const intersectedIds = (candidateWh ?? []).map((w: any) => w.id as string);
           warehouseIds = intersectedIds;
-
-
         }
 
         const globalAccess = warehouseIds === null;
 
-        // ── 5. Cargar info de warehouses disponibles ────────────────────────
+        // ── 4. Cargar warehouses ─────────
         if (!globalAccess && warehouseIds !== null && warehouseIds.length === 0) {
-          if (!cancelled) {
-            setAllowedWarehouseIds([]);
-            setAllowedClientIds([]);
-            setAvailableClients([]);
-            setAvailableWarehouses([]);
-            setIsGlobalAccess(false);
-            setLoading(false);
-          }
-          return;
+          resultAllowedWarehouseIds = [];
+          resultAllowedClientIds = [];
+          resultAvailableClients = [];
+          resultAvailableWarehouses = [];
+          resultIsGlobalAccess = false;
+          return; // early return: finally block still runs
         }
 
         let whQuery = supabase
@@ -208,7 +261,7 @@ export function useUserScope(): UserScope {
           location: w.location ?? null,
         }));
 
-        // ── 4. Obtener clientes disponibles (de los warehouses permitidos) ──
+        // ── 5. Clientes por warehouse ─────────
         let clientQuery = supabase
           .from('warehouse_clients')
           .select('client_id, clients!warehouse_clients_client_id_fkey(id, name)')
@@ -221,7 +274,6 @@ export function useUserScope(): UserScope {
         const { data: wcRows } = await clientQuery;
         if (cancelled) return;
 
-        // Clientes disponibles por almacén (universo base)
         const seenClients = new Set<string>();
         const warehouseClientIds: string[] = [];
 
@@ -233,26 +285,22 @@ export function useUserScope(): UserScope {
           }
         }
 
-        // ── Restricción de cliente: si el usuario tiene asignaciones en user_clients
-        //    solo puede ver esos clientes (intersectados con los del almacén).
-        //    Si no tiene ninguna, hereda todos los del almacén (compatibilidad).
+        // ── 6. user_clients restriction ─────────
         const { data: ucRows } = await supabase
           .from('user_clients')
           .select('client_id')
           .eq('org_id', orgId)
           .eq('user_id', userId);
-
         if (cancelled) return;
 
         const explicitClientIds = (ucRows ?? []).map((r: any) => r.client_id as string);
         const hasClientRestriction = explicitClientIds.length > 0;
 
-        // Si hay restricción explícita → intersección; si no → todos los del almacén
         const finalClientIds = hasClientRestriction
           ? warehouseClientIds.filter((id) => explicitClientIds.includes(id))
           : warehouseClientIds;
 
-        // Cargar nombres de los clientes finales
+        // ── 7. Cargar nombres de clientes ─────────
         const clients: UserScopeClient[] = [];
         const clientIds: string[] = [];
 
@@ -274,28 +322,49 @@ export function useUserScope(): UserScope {
 
         clients.sort((a, b) => a.name.localeCompare(b.name));
 
-
-
-        // ── 5. Actualizar estado ────────────────────────────────────────────
-        setAllowedWarehouseIds(warehouseIds);
-        setAllowedClientIds(clientIds.length > 0 ? clientIds : null);
-        setAvailableClients(clients);
-        setAvailableWarehouses(warehouses);
-        setIsGlobalAccess(globalAccess);
+        // ── Asignar resultados temporales ─────────
+        resultAllowedWarehouseIds = warehouseIds;
+        resultAllowedClientIds = clientIds.length > 0 ? clientIds : null;
+        resultAvailableClients = clients;
+        resultAvailableWarehouses = warehouses;
+        resultIsGlobalAccess = globalAccess;
       } catch (err) {
-        // FAIL CLOSED: en caso de error, siempre restringir (0 resultados)
-        setAllowedWarehouseIds([]);
-        setAllowedClientIds([]);
-        setAvailableClients([]);
-        setAvailableWarehouses([]);
-        setIsGlobalAccess(false);
+        // silenciar
+        resultAllowedWarehouseIds = [];
+        resultAllowedClientIds = [];
+        resultAvailableClients = [];
+        resultAvailableWarehouses = [];
+        resultIsGlobalAccess = false;
       } finally {
+        // Guardar en caché (incluso si cancelled, para que otros esperando no queden colgados)
+        const cacheData: ScopeCacheEntry = {
+          allowedWarehouseIds: resultAllowedWarehouseIds,
+          allowedClientIds: resultAllowedClientIds,
+          availableClients: resultAvailableClients,
+          availableWarehouses: resultAvailableWarehouses,
+          isGlobalAccess: resultIsGlobalAccess,
+          timestamp: Date.now(),
+        };
+        scopeCache.set(cacheKey, cacheData);
+
+        // Setear estados solo si no fue cancelado
+        if (!cancelled) {
+          setAllowedWarehouseIds(resultAllowedWarehouseIds);
+          setAllowedClientIds(resultAllowedClientIds);
+          setAvailableClients(resultAvailableClients);
+          setAvailableWarehouses(resultAvailableWarehouses);
+          setIsGlobalAccess(resultIsGlobalAccess);
+        }
+
+        resolvePending?.();
         if (!cancelled) setLoading(false);
       }
     };
 
     load();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [orgId, userId, user?.role, reloadTick]);
 
   return {

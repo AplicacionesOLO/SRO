@@ -142,6 +142,35 @@ export interface ReservationFile {
   uploaded_at: string;
 }
 
+// ── Cache global para segregation de getDocks ───────────────────────────
+interface SegregationCacheEntry {
+  allowedDockIds: Set<string>;
+  timestamp: number;
+}
+const segregationCache = new Map<string, SegregationCacheEntry>();
+const SEGREGATION_CACHE_TTL = 2 * 60 * 1000; // 2 minutos
+
+// ── Cache global para datos estáticos de calendario ─────────────────────
+interface StaticCacheEntry<T> {
+  data: T;
+  timestamp: number;
+}
+const statusesCache = new Map<string, StaticCacheEntry<any[]>>();
+const categoriesCache = new Map<string, StaticCacheEntry<any[]>>();
+const STATIC_CACHE_TTL = 5 * 60 * 1000; // 5 minutos
+
+function getSegregationCacheKey(
+  orgId: string,
+  warehouseId: string | null,
+  allowedClientIds: string[] | null,
+  allDockIds: string[]
+): string {
+  const clientHash = allowedClientIds ? [...allowedClientIds].sort().join(',') : 'null';
+  const dockHash = [...allDockIds].sort().join(',');
+  return `${orgId}:${warehouseId || 'all'}:${clientHash}:${dockHash}`;
+}
+// ─────────────────────────────────────────────────────────────────────────
+
 /**
  * ⚙️ Config Storage
  * Cambiá este bucket name si el tuyo se llama diferente en Supabase Storage.
@@ -205,8 +234,6 @@ export const calendarService = {
     allowedWarehouseIds?: string[] | null
   ): Promise<Reservation[]> {
     // ── Pre-calcular dock_ids permitidos ANTES del query ────────────────────
-    // Esto evita traer TODAS las reservas del rango y luego filtrar en memoria.
-    // El filtro se aplica directamente en SQL con .in('dock_id', [...]).
     let allowedDockIds: string[] | undefined;
     if (allowedWarehouseIds && allowedWarehouseIds.length > 0) {
       const { data: docksData } = await supabase
@@ -215,7 +242,6 @@ export const calendarService = {
         .eq('org_id', orgId)
         .in('warehouse_id', allowedWarehouseIds);
       allowedDockIds = (docksData ?? []).map((d: any) => d.id as string);
-      // Si no hay docks para esos warehouses → resultado vacío, evitar query innecesaria
       if (allowedDockIds.length === 0) return [];
     }
 
@@ -304,8 +330,6 @@ export const calendarService = {
   },
 
   async getDockTimeBlocks(orgId: string, startDate: string, endDate: string): Promise<DockTimeBlock[]> {
-    // ✅ FIX: usa overlap real (no solo start_datetime) y excluye cancelados
-    // Un bloque pertenece al rango si: start < rangoFin AND end > rangoInicio
     const { data, error } = await supabase
       .from('dock_time_blocks')
       .select('*')
@@ -316,12 +340,6 @@ export const calendarService = {
       .order('start_datetime', { ascending: true });
 
     if (error) {
-      // console.error('[Calendar] blocksError', {
-      //   code: error.code,
-      //   message: error.message,
-      //   details: error.details,
-      //   hint: error.hint,
-      // });
       return [];
     }
 
@@ -401,7 +419,8 @@ export const calendarService = {
     orgId: string,
     warehouseId?: string | null,
     allowedWarehouseIds?: string[] | null,
-    allowedClientIds?: string[] | null
+    allowedClientIds?: string[] | null,
+    warehouseTimezoneMap?: Map<string, string>
   ): Promise<Dock[]> {
     let query = supabase
       .from('docks')
@@ -417,7 +436,6 @@ export const calendarService = {
     if (warehouseId) {
       query = query.eq('warehouse_id', warehouseId);
     } else if (allowedWarehouseIds && allowedWarehouseIds.length > 0) {
-      // Si no hay warehouse específico pero hay restricción de permisos, filtrar por warehouses permitidos
       query = query.in('warehouse_id', allowedWarehouseIds);
     }
 
@@ -432,50 +450,71 @@ export const calendarService = {
     let filteredData = data as any[];
 
     // ── SEGREGACIÓN por clientes asignados al usuario ─────────────────────
-    // Si el usuario tiene clientes explícitos (allowedClientIds), solo mostrar
-    // los andenes que estén en client_docks para esos clientes.
-    // Regla de compatibilidad: si allowedClientIds es null → sin restricción.
+    const tSeg0 = performance.now();
     if (allowedClientIds && allowedClientIds.length > 0) {
       const allDockIds = filteredData.map((d: any) => d.id);
 
-      const { data: clientDockRows } = await supabase
-        .from('client_docks')
-        .select('dock_id')
-        .eq('org_id', orgId)
-        .in('client_id', allowedClientIds)
-        .in('dock_id', allDockIds);
+      // Verificar cache de segregation
+      const segCacheKey = getSegregationCacheKey(orgId, warehouseId || null, allowedClientIds, allDockIds);
+      const cachedSeg = segregationCache.get(segCacheKey);
+      const now = Date.now();
 
-      if (clientDockRows && clientDockRows.length > 0) {
-        const allowedDockIds = new Set(clientDockRows.map((r: any) => r.dock_id as string));
-        filteredData = filteredData.filter((d: any) => allowedDockIds.has(d.id));
+      if (cachedSeg && (now - cachedSeg.timestamp) < SEGREGATION_CACHE_TTL) {
+        filteredData = filteredData.filter((d: any) => cachedSeg.allowedDockIds.has(d.id));
       } else {
-        // No hay andenes asignados a esos clientes → retornar vacío
-        filteredData = [];
+        const { data: clientDockRows } = await supabase
+          .from('client_docks')
+          .select('dock_id')
+          .eq('org_id', orgId)
+          .in('client_id', allowedClientIds)
+          .in('dock_id', allDockIds);
+
+        if (clientDockRows && clientDockRows.length > 0) {
+          const allowedDockIds = new Set(clientDockRows.map((r: any) => r.dock_id as string));
+          segregationCache.set(segCacheKey, {
+            allowedDockIds,
+            timestamp: Date.now(),
+          });
+          filteredData = filteredData.filter((d: any) => allowedDockIds.has(d.id));
+        } else {
+          filteredData = [];
+        }
       }
     }
 
     if (filteredData.length === 0) return [];
 
-    // ✅ Enriquecer cada dock con el timezone de su almacén
+    // Enriquecer cada dock con el timezone de su almacén
+    // Si se pasó un mapa de timezones desde el contexto, usarlo directamente
+    if (warehouseTimezoneMap && warehouseTimezoneMap.size > 0) {
+      return filteredData.map((dock: any) => ({
+        ...dock,
+        warehouse_timezone: dock.warehouse_id
+          ? (warehouseTimezoneMap.get(dock.warehouse_id) || null)
+          : null,
+      }));
+    }
+
+    // Fallback: query a warehouses
     const warehouseIds = [...new Set(
       filteredData.map((d: any) => d.warehouse_id).filter(Boolean)
     )] as string[];
 
-    let warehouseTimezoneMap = new Map<string, string>();
+    let resolvedTimezoneMap = new Map<string, string>();
     if (warehouseIds.length > 0) {
       const { data: whData } = await supabase
         .from('warehouses')
         .select('id, timezone')
         .in('id', warehouseIds);
       (whData || []).forEach((w: any) => {
-        warehouseTimezoneMap.set(w.id, w.timezone || 'America/Costa_Rica');
+        resolvedTimezoneMap.set(w.id, w.timezone || 'America/Costa_Rica');
       });
     }
 
     return filteredData.map((dock: any) => ({
       ...dock,
       warehouse_timezone: dock.warehouse_id
-        ? (warehouseTimezoneMap.get(dock.warehouse_id) || null)
+        ? (resolvedTimezoneMap.get(dock.warehouse_id) || null)
         : null,
     }));
   },
@@ -1016,7 +1055,16 @@ export const calendarService = {
     return data;
   },
 
-  async getReservationStatuses(orgId: string) {
+  async getReservationStatuses(orgId: string, forceRefresh = false) {
+    const cacheKey = orgId;
+
+    if (!forceRefresh) {
+      const cached = statusesCache.get(cacheKey);
+      if (cached && (Date.now() - cached.timestamp) < STATIC_CACHE_TTL) {
+        return cached.data;
+      }
+    }
+
     const { data, error } = await supabase
       .from('reservation_statuses')
       .select('*')
@@ -1025,16 +1073,12 @@ export const calendarService = {
       .order('order_index', { ascending: true });
 
     if (error) {
-      // console.error('[Calendar] statusesError', {
-      //   code: error.code,
-      //   message: error.message,
-      //   details: error.details,
-      //   hint: error.hint,
-      // });
       return [];
     }
 
-    return data || [];
+    const result = data || [];
+    statusesCache.set(cacheKey, { data: result, timestamp: Date.now() });
+    return result;
   },
 
   /**
@@ -1154,7 +1198,16 @@ export const calendarService = {
     return full;
   },
 
-  async getDockCategories(orgId: string) {
+  async getDockCategories(orgId: string, forceRefresh = false) {
+    const cacheKey = orgId;
+
+    if (!forceRefresh) {
+      const cached = categoriesCache.get(cacheKey);
+      if (cached && (Date.now() - cached.timestamp) < STATIC_CACHE_TTL) {
+        return cached.data;
+      }
+    }
+
     const { data, error } = await supabase
       .from('dock_categories')
       .select('*')
@@ -1162,16 +1215,20 @@ export const calendarService = {
       .order('name', { ascending: true });
 
     if (error) {
-      // console.error('[Calendar] categoriesError', {
-      //   code: error.code,
-      //   message: error.message,
-      //   details: error.details,
-      //   hint: error.hint,
-      // });
       return [];
     }
 
-    return data || [];
+    const result = data || [];
+    categoriesCache.set(cacheKey, { data: result, timestamp: Date.now() });
+    return result;
+  },
+
+  invalidateReservationStatusesCache(orgId: string) {
+    statusesCache.delete(orgId);
+  },
+
+  invalidateDockCategoriesCache(orgId: string) {
+    categoriesCache.delete(orgId);
   },
 
   // ============================================================

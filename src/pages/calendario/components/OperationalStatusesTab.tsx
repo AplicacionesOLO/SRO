@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useAuth } from '../../../contexts/AuthContext';
 import { usePermissions } from '../../../hooks/usePermissions';
 import { operationalStatusService } from '../../../services/operationalStatusService';
+import { calendarService } from '../../../services/calendarService';
 import type { OperationalStatus } from '../../../types/operationalStatus';
 import { ConfirmModal } from '../../../components/base/ConfirmModal';
 
@@ -209,6 +210,8 @@ export default function OperationalStatusesTab() {
       } else {
         await operationalStatusService.createStatus({ ...statusData, org_id: orgId });
       }
+      // Invalidar cache de statuses del calendario para que recargue datos actualizados
+      calendarService.invalidateReservationStatusesCache(orgId);
       setIsModalOpen(false);
       setEditingStatus(null);
       loadStatuses();
@@ -245,6 +248,7 @@ export default function OperationalStatusesTab() {
               await operationalStatusService.updateStatus(status.id, {
                 is_active: !status.is_active,
               });
+              calendarService.invalidateReservationStatusesCache(orgId);
               loadStatuses();
             },
           });
@@ -263,6 +267,7 @@ export default function OperationalStatusesTab() {
         await operationalStatusService.updateStatus(status.id, {
           is_active: !status.is_active,
         });
+        calendarService.invalidateReservationStatusesCache(orgId);
         loadStatuses();
       },
     });

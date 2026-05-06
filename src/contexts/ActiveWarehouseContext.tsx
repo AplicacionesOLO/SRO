@@ -55,10 +55,21 @@ export function ActiveWarehouseProvider({ children }: { children: React.ReactNod
 
   // Inicializar desde localStorage una vez que el scope esté listo
   useEffect(() => {
-    if (scopeLoading || initialized) return;
+    if (scopeLoading) {
+      return;
+    }
+
+    // FIX: Si no hay warehouses disponibles, NO marcar initialized todavía.
+    // Esto evita que se marque initialized=true en un render intermedio donde
+    // scopeLoading ya es false pero availableWarehouses todavía no se propagó
+    // desde useUserScope. El efecto se re-ejecutará automáticamente cuando
+    // availableWarehouses cambie (está en las dependencias).
     if (availableWarehouses.length === 0 && !isGlobalAccess) {
-      // Sin warehouses → no hay nada que seleccionar
-      setInitialized(true);
+      return;
+    }
+
+    // Si ya está inicializado y tenemos warehouses, no volver a inicializar
+    if (initialized) {
       return;
     }
 
