@@ -23,10 +23,7 @@ export const dockAllocationService = {
     orgId: string,
     clientId: string
   ): Promise<DockAllocationRule | null> {
-    //console.log('[DockAllocation] context', { orgId, clientId });
-
     if (!orgId || !clientId) {
-      // console.warn('[DockAllocation] missing clientId', { orgId, clientId });
       return null;
     }
 
@@ -40,17 +37,11 @@ export const dockAllocationService = {
         .maybeSingle();
 
       if (rulesErr) {
-        // console.error('[DockAllocation] client_rules error', rulesErr);
         return null;
       }
 
       const mode = rules?.dock_allocation_mode || 'NONE';
       const allowAll = rules?.allow_all_docks ?? false;
-
-      /**console.log('[DockAllocation] rule loaded', {
-        dock_allocation_mode: mode,
-        allow_all_docks: allowAll,
-      });*/
 
       // 2. Load client_docks with dock_order
       const { data: cdRows, error: cdErr } = await supabase
@@ -61,7 +52,6 @@ export const dockAllocationService = {
         .order('dock_order', { ascending: true });
 
       if (cdErr) {
-        // console.error('[DockAllocation] client_docks error', cdErr);
         return null;
       }
 
@@ -69,10 +59,6 @@ export const dockAllocationService = {
         dockId: r.dock_id,
         dockOrder: r.dock_order ?? 999,
       }));
-
-      /**console.log('[DockAllocation] docks ordered', {
-        dockOrders: docks.map((d) => ({ id: d.dockId, order: d.dockOrder })),
-      });*/
 
       // 3. Load client name
       const { data: clientRow } = await supabase
@@ -89,18 +75,154 @@ export const dockAllocationService = {
         clientDocks: docks,
       };
 
-      /**console.log('[DockAllocation] rule loaded', {
-        orgId,
-        clientId,
-        clientName: result.clientName,
-        dock_allocation_mode: result.dockAllocationMode,
-        allowAllDocks: result.allowAllDocks,
-        clientDocksCount: docks.length,
-      });*/
+      return result;
+    } catch (err) {
+      return null;
+    }
+  },
+
+  /**
+   * NEW: Given an orgId and a providerId, resolve ALL client_ids linked to that
+   * provider, optionally narrowed by warehouse_id via warehouse_clients.
+   * Returns the array of valid client_ids (or empty array if none).
+   *
+   * Unlike resolveClientIdFromProvider (which returns only the first match),
+   * this returns every client linked to the provider.
+   */
+  async resolveClientIdsFromProvider(
+    orgId: string,
+    providerId: string,
+    warehouseId?: string | null
+  ): Promise<string[]> {
+    if (!orgId || !providerId) return [];
+
+    try {
+      const { data: cpRows, error: cpErr } = await supabase
+        .from('client_providers')
+        .select('client_id')
+        .eq('org_id', orgId)
+        .eq('provider_id', providerId);
+
+      if (cpErr || !cpRows || cpRows.length === 0) {
+        return [];
+      }
+
+      const clientIds = [...new Set(cpRows.map((r) => r.client_id))];
+
+      if (warehouseId && clientIds.length > 0) {
+        const { data: wcRows } = await supabase
+          .from('warehouse_clients')
+          .select('client_id')
+          .eq('org_id', orgId)
+          .eq('warehouse_id', warehouseId)
+          .in('client_id', clientIds);
+
+        if (wcRows && wcRows.length > 0) {
+          return [...new Set(wcRows.map((r) => r.client_id))];
+        }
+        // If warehouse is specified but no warehouse_clients match, fall through
+        // to returning all provider clients (provider is valid in the org)
+      }
+
+      return clientIds;
+    } catch (err) {
+      return [];
+    }
+  },
+
+  /**
+   * NEW: Build a combined DockAllocationRule from multiple clients.
+   *
+   * - Merges client_docks from all clients, deduplicating by dock_id.
+   * - Preserves dock_order from the first occurrence when duplicate.
+   * - If ANY client has allow_all_docks = true, the combined rule allows all docks
+   *   (caller must then pass the complete warehouse dock list to getEnabledDockIds).
+   * - dock_allocation_mode: if all clients agree, use that; otherwise fallback to SEQUENTIAL.
+   */
+  async getDockAllocationRuleForClients(
+    orgId: string,
+    clientIds: string[]
+  ): Promise<DockAllocationRule | null> {
+    if (!orgId || clientIds.length === 0) return null;
+
+    try {
+      // Load all client_rules for these clients
+      const { data: rulesRows, error: rulesErr } = await supabase
+        .from('client_rules')
+        .select('client_id, dock_allocation_mode, allow_all_docks')
+        .eq('org_id', orgId)
+        .in('client_id', clientIds);
+
+      if (rulesErr) return null;
+
+      // Load all client_docks for these clients
+      const { data: cdRows, error: cdErr } = await supabase
+        .from('client_docks')
+        .select('client_id, dock_id, dock_order')
+        .eq('org_id', orgId)
+        .in('client_id', clientIds)
+        .order('dock_order', { ascending: true });
+
+      if (cdErr) return null;
+
+      // Load client names
+      const { data: clientNameRows } = await supabase
+        .from('clients')
+        .select('id, name')
+        .eq('org_id', orgId)
+        .in('id', clientIds);
+
+      const nameMap = new Map((clientNameRows || []).map((c: any) => [c.id, c.name]));
+
+      // Determine combined allowAllDocks: OR of all clients
+      let allowAllDocks = false;
+      const modes = new Set<string>();
+
+      for (const r of (rulesRows || []) as any[]) {
+        if (r.allow_all_docks === true) allowAllDocks = true;
+        modes.add((r.dock_allocation_mode || 'NONE') as string);
+      }
+
+      // Determine combined mode
+      let combinedMode: DockAllocationRule['dockAllocationMode'] = 'SEQUENTIAL';
+      if (modes.size === 1) {
+        const soleMode = [...modes][0] as DockAllocationRule['dockAllocationMode'];
+        combinedMode = soleMode;
+      } else {
+        combinedMode = 'SEQUENTIAL'; // safe fallback when clients disagree
+      }
+
+      // Merge clientDocks: deduplicate by dock_id, keep first dock_order seen
+      const dockMap = new Map<string, number>();
+      for (const cd of (cdRows || []) as any[]) {
+        const did = cd.dock_id as string;
+        const order = (cd.dock_order ?? 999) as number;
+        if (!dockMap.has(did)) {
+          dockMap.set(did, order);
+        }
+      }
+
+      const mergedDocks = Array.from(dockMap.entries())
+        .map(([dockId, dockOrder]) => ({ dockId, dockOrder }))
+        .sort((a, b) => a.dockOrder - b.dockOrder);
+
+      // Use first clientId as the "primary" clientId for the rule
+      const primaryClientId = clientIds[0];
+      const clientNames = clientIds
+        .map((id) => nameMap.get(id))
+        .filter(Boolean)
+        .join(', ');
+
+      const result: DockAllocationRule = {
+        clientId: primaryClientId,
+        clientName: clientNames || 'Cliente',
+        dockAllocationMode: combinedMode,
+        allowAllDocks,
+        clientDocks: mergedDocks,
+      };
 
       return result;
     } catch (err) {
-      // console.error('[DockAllocation] unexpected error', err);
       return null;
     }
   },
@@ -109,18 +231,15 @@ export const dockAllocationService = {
    * Resolve the clientId linked to a provider within an org.
    * Uses client_providers table. Returns the first match or null.
    * Optionally filters by warehouseId via warehouse_clients.
+   *
+   * DEPRECATED in favor of resolveClientIdsFromProvider for multi-client scenarios.
+   * Kept for backward compatibility with other flows.
    */
   async resolveClientIdFromProvider(
     orgId: string,
     providerId: string,
     warehouseId?: string | null
   ): Promise<string | null> {
-    /**console.log('[DockAllocation] resolveClientIdFromProvider', {
-      orgId,
-      providerId,
-      warehouseId,
-    });*/
-
     if (!orgId || !providerId) return null;
 
     try {
@@ -131,9 +250,6 @@ export const dockAllocationService = {
         .eq('provider_id', providerId);
 
       if (cpErr || !cpRows || cpRows.length === 0) {
-        // console.warn('[DockAllocation] no client linked to provider', {
-        //   providerId,
-        // });
         return null;
       }
 
@@ -149,20 +265,13 @@ export const dockAllocationService = {
           .in('client_id', clientIds);
 
         if (wcRows && wcRows.length > 0) {
-          /**console.log('[DockAllocation] resolved clientId via warehouse', {
-            clientId: wcRows[0].client_id,
-          });*/
           return wcRows[0].client_id;
         }
       }
 
       // Fallback: first client from provider
-      /**console.log('[DockAllocation] resolved clientId (first match)', {
-        clientId: clientIds[0],
-      });*/
       return clientIds[0];
     } catch (err) {
-      // console.error('[DockAllocation] resolveClientIdFromProvider error', err);
       return null;
     }
   },
@@ -181,16 +290,11 @@ export const dockAllocationService = {
   ): { enabled: Set<string>; ordered: string[]; mode: string } {
     // If there is no rule, do not assume anything
     if (!rule) {
-      // console.warn('[DockAllocation] missing - no rule loaded');
       return { enabled: new Set<string>(), ordered: [], mode: 'MISSING' };
     }
 
     // If allow_all_docks, enable everything
     if (rule.allowAllDocks) {
-      /**console.log('[DockAllocation] enabled docks', {
-        mode: 'ALLOW_ALL',
-        enabledDockIds: allDockIds,
-      });*/
       return {
         enabled: new Set(allDockIds),
         ordered: allDockIds,
@@ -200,7 +304,6 @@ export const dockAllocationService = {
 
     // If the client has no assigned docks, enable none
     if (rule.clientDocks.length === 0) {
-      // console.warn('[DockAllocation] no client_docks assigned');
       return { enabled: new Set<string>(), ordered: [], mode: rule.dockAllocationMode };
     }
 
@@ -225,14 +328,6 @@ export const dockAllocationService = {
         .map((d) => d.dockId);
     }
 
-    /**console.log('[DockAllocation] enabled docks', {
-      mode: rule.dockAllocationMode,
-      totalClientDocks: rule.clientDocks.length,
-      validInView: validDocks.length,
-      enabledDockIds: ordered,
-      enabledCount: ordered.length,
-    });*/
-
     return {
       enabled: new Set(ordered),
       ordered,
@@ -251,8 +346,8 @@ export const dockAllocationService = {
    *  1. Compute busyDockIds = docks with a non-cancelled reservation overlapping the slot.
    *  2. freeDocks = clientDocks minus busy.
    *  3. If mode === 'ODD_FIRST':
-   *       - If there are free docks with odd dock_order → enabled = those.
-   *       - Else → enabled = free docks with even dock_order.
+   *       - If there are free docks with odd dock_order -> enabled = those.
+   *       - Else -> enabled = free docks with even dock_order.
    *  4. If mode === 'SEQUENTIAL' (or anything else): enabled = all free.
    *
    * @returns Set<dock_id>
@@ -264,10 +359,7 @@ export const dockAllocationService = {
     slotStart: Date,
     slotEnd: Date
   ): Set<string> {
-    // ✅ FIX: Normalizar timestamps al minuto exacto para evitar off-by-one.
-    // Si una reserva tiene end_datetime con segundos residuales (ej: 09:00:30),
-    // sin normalización rEnd(09:00:30) > slotStart(09:00) = true → falso conflicto.
-    // Con normalización: rEnd(09:00) > slotStart(09:00) = false → correcto.
+    // Normalizar timestamps al minuto exacto para evitar off-by-one.
     const truncMin = (d: Date) => new Date(Math.floor(d.getTime() / 60_000) * 60_000);
 
     // 1. Busy docks: non-cancelled reservations overlapping [slotStart, slotEnd)
@@ -291,22 +383,14 @@ export const dockAllocationService = {
       if (freeOdds.length > 0) {
         enabled = new Set(freeOdds.map((d) => d.dockId));
       } else {
-        // No free odds → fall back to free evens
+        // No free odds -> fall back to free evens
         const freeEvens = freeDocks.filter((cd) => cd.dockOrder % 2 === 0);
         enabled = new Set(freeEvens.map((d) => d.dockId));
       }
     } else {
-      // SEQUENTIAL / NONE / null → all free client docks
+      // SEQUENTIAL / NONE / null -> all free client docks
       enabled = new Set(freeDocks.map((d) => d.dockId));
     }
-
-    /**console.log('[DockAllocation][Slot]', {
-      slotStart: slotStart.toISOString(),
-      slotEnd: slotEnd.toISOString(),
-      busyDockIds: [...busyDockIds],
-      enabledDockIds: [...enabled],
-      mode: mode || 'SEQUENTIAL',
-    });*/
 
     return enabled;
   },

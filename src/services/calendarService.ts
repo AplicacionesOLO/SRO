@@ -37,6 +37,9 @@ export interface Reservation {
   /** BL / Conocimiento del contenedor — solo aplica cuando operation_type=zona_franca + is_imported=true */
   bl_number?: string | null;
 
+  /** Cantidad capturada para tipos de carga dinámicos (contenedores, bultos, líneas, etc.) */
+  quantity_value?: number | null;
+
   status?: {
     name: string;
     code: string;

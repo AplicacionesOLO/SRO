@@ -184,11 +184,39 @@ export default function CasetillaPage() {
   const viewModeRef = useRef(viewMode);
   // ── Debounce timer para agrupar múltiples eventos Realtime ───────────────
   const casetillaRealtimeDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // ── Flag: el usuario está llenando un formulario de IN/OUT ───────────────
+  const isFormOpenRef = useRef(false);
+  const selectedExitRef = useRef<ExitEligibleReservation | null>(null);
+  const wasFormOpenRef = useRef(false);
+  // ── Aviso de actualizaciones pendientes (discreto) ──────────────────────
+  const [pendingUpdateBanner, setPendingUpdateBanner] = useState(false);
 
   useEffect(() => { loadPendingRef.current = loadPendingReservations; }, [loadPendingReservations]);
   useEffect(() => { loadExitRef.current = loadExitEligibleReservations; }, [loadExitEligibleReservations]);
   useEffect(() => { loadNoShowRef.current = loadNoShowReservations; }, [loadNoShowReservations]);
   useEffect(() => { viewModeRef.current = viewMode; }, [viewMode]);
+
+  // Sincronizar refs con estado actual (para usar en el handler Realtime)
+  useEffect(() => {
+    isFormOpenRef.current = viewMode === 'INGRESO' || !!selectedExitReservation;
+    selectedExitRef.current = selectedExitReservation;
+  }, [viewMode, selectedExitReservation]);
+
+  // Cuando el usuario cierra un formulario (INGRESO o ExitForm), aplicar refresh pendiente
+  useEffect(() => {
+    const isFormOpen = viewMode === 'INGRESO' || !!selectedExitReservation;
+    const wasFormOpen = wasFormOpenRef.current;
+
+    if (wasFormOpen && !isFormOpen) {
+      // Formulario cerrado → aplicar refresh si hay actualizaciones pendientes
+      setPendingUpdateBanner(false);
+      if (viewMode === 'PENDIENTES') loadPendingRef.current();
+      else if (viewMode === 'SALIDA') loadExitRef.current();
+      else if (viewMode === 'NO_SHOW') loadNoShowRef.current();
+    }
+
+    wasFormOpenRef.current = isFormOpen;
+  }, [viewMode, selectedExitReservation]);
 
   useEffect(() => {
     if (!orgId) return;
@@ -206,6 +234,14 @@ export default function CasetillaPage() {
           const recordOrgId = (payload.new as any)?.org_id;
           if (recordOrgId && recordOrgId !== orgId) return;
 
+          const isFormOpen = isFormOpenRef.current;
+
+          if (isFormOpen) {
+            // Usuario está llenando IN/OUT → NO recargar, marcar como pendiente
+            setPendingUpdateBanner(true);
+            return;
+          }
+
           // Debounce: agrupar múltiples eventos en una sola recarga
           if (casetillaRealtimeDebounceRef.current) {
             clearTimeout(casetillaRealtimeDebounceRef.current);
@@ -216,7 +252,7 @@ export default function CasetillaPage() {
             const vm = viewModeRef.current;
             if (vm === 'PENDIENTES') {
               loadPendingRef.current();
-            } else if (vm === 'SALIDA' && !selectedExitReservation) {
+            } else if (vm === 'SALIDA' && !selectedExitRef.current) {
               loadExitRef.current();
             } else if (vm === 'NO_SHOW') {
               loadNoShowRef.current();
@@ -380,6 +416,26 @@ export default function CasetillaPage() {
           onWarehouseChange={setActiveWarehouseId}
           loading={activeWhLoading}
         />
+
+        {/* Banner: actualizaciones disponibles (discreto) */}
+        {pendingUpdateBanner && (
+          <div className="bg-blue-50 border border-blue-200 rounded-xl px-4 py-2 flex items-center justify-between gap-3 mb-4">
+            <div className="flex items-center gap-2">
+              <i className="ri-refresh-line text-blue-600 text-base w-4 h-4 flex items-center justify-center"></i>
+              <p className="text-xs text-blue-900">
+                <span className="font-semibold">Hay actualizaciones disponibles.</span>
+                <span className="text-blue-700 ml-1">Se refrescarán al volver al inicio o cerrar el formulario.</span>
+              </p>
+            </div>
+            <button
+              onClick={() => setPendingUpdateBanner(false)}
+              className="text-blue-400 hover:text-blue-600 flex-shrink-0"
+              title="Descartar aviso"
+            >
+              <i className="ri-close-line w-4 h-4 flex items-center justify-center"></i>
+            </button>
+          </div>
+        )}
 
         <div className="mb-6 sm:mb-8">
           <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4">

@@ -719,17 +719,18 @@ async getExitEligibleReservations(
   clientId?: string | null
 ) {
   try {
-    // 1) Obtener status DISPATCHED desde tabla (NO quemado) — solo activo
-    const { data: dispatchedRow, error: dispatchedErr } = await supabase
+    // 1) Obtener status IDs a excluir: DISPATCHED, NO_SHOW, DONE
+    const excludedStatusCodes = ['DISPATCHED', 'NO_SHOW', 'DONE'];
+    const { data: excludedStatuses, error: excludedErr } = await supabase
       .from("reservation_statuses")
-      .select("id")
+      .select("id, code")
       .eq("org_id", orgId)
-      .eq("code", "DISPATCHED")
-      .eq('is_active', true)
-      .maybeSingle();
+      .in("code", excludedStatusCodes)
+      .eq('is_active', true);
 
-    if (dispatchedErr) throw dispatchedErr;
-    const dispatchedStatusId = dispatchedRow?.id ?? null;
+    if (excludedErr) throw excludedErr;
+
+    const excludedStatusIds = (excludedStatuses ?? []).map((s: any) => s.id as string);
 
     // 2) Traer ingresos ordenados (último ingreso primero)
     const { data: ingresos, error: ingresosError } = await supabase
@@ -792,6 +793,8 @@ async getExitEligibleReservations(
     // ─────────────────────────────────────────────────────────────────────
 
     // 4) Traer reservas (no canceladas, no despachadas)
+    // Reservas elegibles: con ingreso, sin salida, no canceladas,
+    // y con status operativo (no DISPATCHED, NO_SHOW, DONE)
     let q = supabase
       .from("reservations")
       .select(`
@@ -813,8 +816,8 @@ async getExitEligibleReservations(
       .in("id", eligibleReservationIds)
       .order("created_at", { ascending: false });
 
-    if (dispatchedStatusId) {
-      q = q.neq("status_id", dispatchedStatusId);
+    for (const excludedId of excludedStatusIds) {
+      q = q.neq("status_id", excludedId);
     }
 
     const { data: reservations, error: reservationsError } = await q;

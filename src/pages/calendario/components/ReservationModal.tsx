@@ -270,27 +270,46 @@ export default function ReservationModal({
       setCargoTypes(cargoTypesData);
 
       // ── Cargar proveedores permitidos para el usuario ──────────────────────
-      // Para usuarios con proveedores asignados: intersectar con los del almacén activo
-      let userProviders: UserProvider[] = [];
+      // Usuarios privilegiados: todos los del almacén (igual que PreReservationMiniModal)
+      // Usuarios normales: solo los asignados, intersectados con el almacén activo
+      let visibleProviders: Provider[] | UserProvider[] = [];
 
-      if (user?.id) {
+      if (isPrivileged) {
+        // Admin / Full Access ven todos los proveedores activos del almacén
+        visibleProviders = allProvidersData;
+      } else if (user?.id) {
         try {
           const rawUserProviders = await userProvidersService.getUserProviders(orgId, user.id);
 
           if (warehouseId) {
             // Filtrar: solo los que también están en el almacén activo
             const warehouseProviderIds = new Set(allProvidersData.map((p) => p.id));
-            userProviders = rawUserProviders.filter((up) => warehouseProviderIds.has(up.id));
+            visibleProviders = rawUserProviders.filter((up) => warehouseProviderIds.has(up.id));
           } else {
             // Sin almacén activo: mostrar todos los del usuario
-            userProviders = rawUserProviders;
+            visibleProviders = rawUserProviders;
           }
         } catch (error: any) {
           // non-blocking
         }
       }
 
-      setAllowedProviders(userProviders);
+      // ── Asegurar que el proveedor preseleccionado o de la reserva existente
+      // siempre esté disponible en el dropdown, aunque el usuario no lo tenga
+      // asignado. La restricción de "solo mis proveedores" aplica a creación,
+      // no a edición de reservas ya existentes.
+      const preselectedProviderId = defaults?.shipper_provider || reservation?.shipper_provider || '';
+      if (preselectedProviderId) {
+        const alreadyIncluded = (visibleProviders as UserProvider[]).some(p => p.id === preselectedProviderId);
+        if (!alreadyIncluded) {
+          const missingProvider = allProvidersData.find(p => p.id === preselectedProviderId);
+          if (missingProvider) {
+            visibleProviders = [...visibleProviders, missingProvider] as UserProvider[];
+          }
+        }
+      }
+
+      setAllowedProviders(visibleProviders as UserProvider[]);
     } catch (error) {
       // non-blocking
     } finally {

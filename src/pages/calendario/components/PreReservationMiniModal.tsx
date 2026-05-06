@@ -20,6 +20,7 @@ interface PreReservationMiniModalProps {
     cargoTypeId: string;
     providerId: string;
     clientId: string;
+    clientIds: string[];
     requiredMinutes: number;
     quantityValue?: number | null;
   }) => void;
@@ -53,8 +54,10 @@ export default function PreReservationMiniModal({
   // Campo dinámico: cantidad capturada en este primer modal
   const [quantityValue, setQuantityValue] = useState<string>('');
 
-  // clientId resuelto desde el proveedor seleccionado
+  // clientId resuelto desde el proveedor seleccionado (primario para la reserva)
   const [resolvedClientId, setResolvedClientId] = useState<string>('');
+  // TODOS los client_ids válidos para el proveedor en este almacén (para reglas de andenes combinadas)
+  const [resolvedClientIds, setResolvedClientIds] = useState<string[]>([]);
   const [loadingClient, setLoadingClient] = useState(false);
   const [clientError, setClientError] = useState<string>('');
 
@@ -166,6 +169,7 @@ export default function PreReservationMiniModal({
   useEffect(() => {
     if (!isOpen || !orgId || !selectedProviderId) {
       setResolvedClientId('');
+      setResolvedClientIds([]);
       setClientError('');
       setLoadingClient(false);
       return;
@@ -175,21 +179,25 @@ export default function PreReservationMiniModal({
       setLoadingClient(true);
       setClientError('');
       setResolvedClientId('');
+      setResolvedClientIds([]);
 
       try {
-        const clientId = await dockAllocationService.resolveClientIdFromProvider(
+        const clientIds = await dockAllocationService.resolveClientIdsFromProvider(
           orgId,
           selectedProviderId,
           warehouseId,
         );
 
-        if (clientId) {
-          setResolvedClientId(clientId);
-          /**console.log('[PreReservationMiniModal] ✅ Client resolved', {
+        if (clientIds.length > 0) {
+          setResolvedClientIds(clientIds);
+          setResolvedClientId(clientIds[0]);
+          /**console.log('[PreReservationMiniModal] ✅ Clients resolved', {
             providerId: selectedProviderId,
-            clientId,
+            clientCount: clientIds.length,
+            clientIds,
           });*/
         } else {
+          setResolvedClientIds([]);
           setResolvedClientId('');
           setClientError(
             'No se encontró un cliente vinculado a este proveedor. Las reglas de andenes no se aplicarán.',
@@ -199,6 +207,7 @@ export default function PreReservationMiniModal({
       } catch (err: any) {
 
         setResolvedClientId('');
+        setResolvedClientIds([]);
         setClientError('Error al resolver el cliente del proveedor.');
       } finally {
         setLoadingClient(false);
@@ -215,6 +224,7 @@ export default function PreReservationMiniModal({
       setDurationSource('none');
       setLoadingDuration(false);
       setResolvedClientId('');
+      setResolvedClientIds([]);
       setLoadingClient(false);
       setClientError('');
       setQuantityValue('');
@@ -356,6 +366,7 @@ export default function PreReservationMiniModal({
       cargoTypeId: selectedCargoTypeId,
       providerId: selectedProviderId,
       clientId: resolvedClientId,
+      clientIds: resolvedClientIds,
       requiredMinutes,
       quantityValue: qty,
     });

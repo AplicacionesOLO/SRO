@@ -165,7 +165,9 @@ Deno.serve(async (req) => {
       });
     });
 
-    // 4) Buscar reservas PENDING o CONFIRMED sin ingreso, que estén en esos docks
+    // 4) Buscar reservas NO_CANCELLED, NO_SHOW, sin ingreso, vencidas por tolerancia
+    //    Ya NO se limita a PENDING/CONFIRMED — evalúa cualquier estado excepto NO_SHOW.
+    //    Esto detecta reservas que avanzaron manualmente sin pasar por IN.
     const { data: reservations, error: resErr } = await supabase
       .from('reservations')
       .select('id, org_id, dock_id, start_datetime, status_id')

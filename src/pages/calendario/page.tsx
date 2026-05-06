@@ -711,12 +711,26 @@ export default function CalendarioPage() {
   // ── Mantener refs sincronizados con valores actuales ─────────────────────
   useEffect(() => { loadDataRef.current = loadData; }, [loadData]);
 
+  // ── Sincronizar openReservationIdRef con la reserva actualmente abierta ──
+  useEffect(() => {
+    openReservationIdRef.current = selectedReservation?.id ?? null;
+  }, [selectedReservation]);
+
   // ── Cuando el modal se cierra, ejecutar refetch pendiente si lo hay ───────
   useEffect(() => {
-    reserveModalOpenRef.current = reserveModalOpen;
+    // isUserInteracting = cualquier modal/formulario abierto en el calendario
+    const isUserInteracting =
+      reserveModalOpen ||
+      isBlockModalOpen ||
+      preModalOpen ||
+      warehouseModalOpen;
 
-    if (!reserveModalOpen && pendingRealtimeRefreshRef.current) {
+    reserveModalOpenRef.current = isUserInteracting;
+
+    if (!isUserInteracting && pendingRealtimeRefreshRef.current) {
       pendingRealtimeRefreshRef.current = false;
+      setPendingUpdateBanner(false);
+      setConflictBanner(false);
       // Debounce también al cerrar modal: evitar recargas inmediatas si vienen más eventos
       if (realtimeDebounceRef.current) {
         clearTimeout(realtimeDebounceRef.current);
@@ -727,7 +741,7 @@ export default function CalendarioPage() {
         loadData(true);
       }, 500);
     }
-  }, [reserveModalOpen, loadData]);
+  }, [reserveModalOpen, isBlockModalOpen, preModalOpen, warehouseModalOpen, loadData]);
 
   useEffect(() => {
     if (!ready) return;
@@ -741,16 +755,21 @@ export default function CalendarioPage() {
   const loadDataRef = useRef<(forceRefresh?: boolean) => Promise<void>>(async () => {});
   // ── Debounce timer para agrupar múltiples eventos Realtime en una sola recarga ───
   const realtimeDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // ── ID de la reserva actualmente abierta en el modal (para detectar conflicto Realtime) ──
+  const openReservationIdRef = useRef<string | null>(null);
+  // ── Aviso discreto de actualizaciones pendientes ──────────────────────────
+  const [pendingUpdateBanner, setPendingUpdateBanner] = useState(false);
+  // ── Aviso de conflicto: la reserva abierta fue modificada externamente ────
+  const [conflictBanner, setConflictBanner] = useState(false);
 
-  // ✅ FIX BUG 2 (v2): Realtime subscription a la tabla reservations.
+  // ✅ Realtime subscription a la tabla reservations.
   //
-  // IMPORTANTE: Supabase Realtime con filtro por columna (org_id=eq.X) en eventos UPDATE
-  // requiere REPLICA IDENTITY FULL en la tabla. Sin eso, el filtro no funciona para UPDATEs.
-  // Solución: suscribir SIN filtro de columna y filtrar manualmente en el handler.
-  //
-  // Cuando llega un cambio:
-  // - Si el modal está cerrado → invalidar caché y recargar con debounce (500ms)
-  // - Si el modal está abierto → marcar pendingRealtimeRefreshRef para recargar al cerrar
+  // Comportamiento:
+  // - Si NO hay modal/formulario abierto → invalidar caché y recargar con debounce (800ms)
+  // - Si SÍ hay modal/formulario abierto:
+  //   a) Si el cambio afecta la MISMA reserva abierta → mostrar aviso de conflicto
+  //   b) Si el cambio afecta OTRA reserva → marcar pendingRealtimeRefreshRef + aviso discreto
+  //   En ambos casos NO se llama loadData() ni se cierra el modal.
   // - Debounce agrupa múltiples eventos en una sola recarga
   useEffect(() => {
     if (!orgId || !ready) return;
@@ -769,14 +788,27 @@ export default function CalendarioPage() {
             (payload.new as any)?.org_id || (payload.old as any)?.org_id;
           if (recordOrgId && recordOrgId !== orgId) return;
 
-          const isModalOpen = reserveModalOpenRef.current;
+          const isInteracting = reserveModalOpenRef.current;
+          const changedId: string | undefined =
+            (payload.new as any)?.id || (payload.old as any)?.id;
 
-          if (isModalOpen) {
+          if (isInteracting) {
+            // ── El usuario está en un modal/formulario ──────────────────────
+            const openId = openReservationIdRef.current;
+
+            if (openId && changedId && openId === changedId) {
+              // La reserva abierta fue modificada externamente → aviso de conflicto
+              setConflictBanner(true);
+            } else {
+              // Otra reserva cambió → aviso discreto de actualizaciones pendientes
+              setPendingUpdateBanner(true);
+            }
+            // En ambos casos: marcar refresh pendiente, NO recargar ahora
             pendingRealtimeRefreshRef.current = true;
             return;
           }
 
-          // Debounce: agrupar múltiples eventos en una sola recarga
+          // ── Sin modal abierto: recargar con debounce ────────────────────
           if (realtimeDebounceRef.current) {
             clearTimeout(realtimeDebounceRef.current);
           }
@@ -796,8 +828,8 @@ export default function CalendarioPage() {
       }
       supabase.removeChannel(channel);
     };
-  // Solo re-montar cuando cambia orgId o ready — NO incluir reserveModalOpen ni loadData
-  // para evitar re-suscripciones innecesarias. El handler usa closure sobre reserveModalOpen.
+  // Solo re-montar cuando cambia orgId o ready — NO incluir estados de modal ni loadData
+  // para evitar re-suscripciones innecesarias. El handler usa refs para acceder a valores actuales.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orgId, ready]);
 
@@ -1421,7 +1453,7 @@ export default function CalendarioPage() {
   });
 
   // ✅ NUEVO: Handler para confirmar preselección y activar modo selección
-  const handlePreReservationConfirm = useCallback(async (payload: { cargoTypeId: string; providerId: string; clientId: string; requiredMinutes: number; quantityValue?: number | null }) => {
+  const handlePreReservationConfirm = useCallback(async (payload: { cargoTypeId: string; providerId: string; clientId: string; clientIds: string[]; requiredMinutes: number; quantityValue?: number | null }) => {
     setPreCargoTypeId(payload.cargoTypeId);
     setPreProviderId(payload.providerId);
     setRequiredMinutes(payload.requiredMinutes);
@@ -1432,9 +1464,12 @@ export default function CalendarioPage() {
     setAllocationError('');
     setAllocationRule(null);
 
+    // Usar clientId principal (primer cliente) para compatibilidad con reservas
     const clientId = payload.clientId;
+    // Usar TODOS los clientes válidos del proveedor para calcular disponibilidad de andenes
+    const clientIds = payload.clientIds || (clientId ? [clientId] : []);
 
-    if (!clientId) {
+    if (clientIds.length === 0) {
       setAllocationError('No se encontró un cliente vinculado al proveedor. Las reglas de andenes no se aplicarán.');
       setAllocationRule(null);
       setSelectionMode(true);
@@ -1442,10 +1477,18 @@ export default function CalendarioPage() {
     }
 
     try {
-      const rule = await dockAllocationService.getDockAllocationRule(
-        orgId!,
-        clientId
-      );
+      // Si hay un solo cliente, usar getDockAllocationRule (más eficiente)
+      // Si hay múltiples clientes, usar getDockAllocationRuleForClients (combina reglas)
+      const rule =
+        clientIds.length === 1
+          ? await dockAllocationService.getDockAllocationRule(
+              orgId!,
+              clientIds[0]
+            )
+          : await dockAllocationService.getDockAllocationRuleForClients(
+              orgId!,
+              clientIds
+            );
 
       if (!rule) {
         setAllocationError('No se pudieron cargar las reglas del cliente. Contactá a un administrador.');
@@ -1539,10 +1582,30 @@ export default function CalendarioPage() {
     setAllocationRule(null);
 
     const clientId = (sourceReservation as any).client_id || null;
+    const providerId = sourceReservation.shipper_provider || null;
 
-    if (clientId) {
+    let clientIds: string[] = [];
+
+    // Intentar resolver todos los clientes asociados al proveedor de la reserva original
+    if (providerId) {
       try {
-        const rule = await dockAllocationService.getDockAllocationRule(orgId!, clientId);
+        clientIds = await dockAllocationService.resolveClientIdsFromProvider(orgId!, providerId, warehouseId);
+      } catch {
+        clientIds = [];
+      }
+    }
+
+    // Fallback al client_id de la reserva si no se pudo resolver desde el proveedor
+    if (clientIds.length === 0 && clientId) {
+      clientIds = [clientId];
+    }
+
+    if (clientIds.length > 0) {
+      try {
+        const rule =
+          clientIds.length === 1
+            ? await dockAllocationService.getDockAllocationRule(orgId!, clientIds[0])
+            : await dockAllocationService.getDockAllocationRuleForClients(orgId!, clientIds);
         if (rule) {
           setAllocationRule(rule);
           setAllocationError('');
@@ -1668,6 +1731,46 @@ export default function CalendarioPage() {
           )}
         </div>
       </div>
+
+      {/* Banner: conflicto de reserva modificada externamente */}
+      {conflictBanner && (
+        <div className="bg-amber-50 border-b border-amber-200 px-4 py-2 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <i className="ri-alert-line text-amber-600 text-base w-4 h-4 flex items-center justify-center"></i>
+            <p className="text-xs text-amber-900">
+              <span className="font-semibold">Esta reserva fue actualizada mientras la editabas.</span>
+              <span className="text-amber-700 ml-1">Guardar podría sobrescribir cambios hechos por otro usuario.</span>
+            </p>
+          </div>
+          <button
+            onClick={() => setConflictBanner(false)}
+            className="text-amber-400 hover:text-amber-600 flex-shrink-0"
+            title="Descartar aviso"
+          >
+            <i className="ri-close-line w-4 h-4 flex items-center justify-center"></i>
+          </button>
+        </div>
+      )}
+
+      {/* Banner: actualizaciones disponibles (discreto) */}
+      {pendingUpdateBanner && (
+        <div className="bg-blue-50 border-b border-blue-200 px-4 py-2 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <i className="ri-refresh-line text-blue-600 text-base w-4 h-4 flex items-center justify-center"></i>
+            <p className="text-xs text-blue-900">
+              <span className="font-semibold">Hay actualizaciones disponibles.</span>
+              <span className="text-blue-700 ml-1">Se refrescarán al cerrar el formulario.</span>
+            </p>
+          </div>
+          <button
+            onClick={() => setPendingUpdateBanner(false)}
+            className="text-blue-400 hover:text-blue-600 flex-shrink-0"
+            title="Descartar aviso"
+          >
+            <i className="ri-close-line w-4 h-4 flex items-center justify-center"></i>
+          </button>
+        </div>
+      )}
 
       {/* Pestañas de navegación */}
       <div className="bg-white border-b border-gray-200">
@@ -2633,6 +2736,7 @@ export default function CalendarioPage() {
               setReserveModalSlot(null);
               setCopyOfReservationId(null);
               setCopyDraft(null);
+              setConflictBanner(false);
             }}
             onSave={async () => {
               setReserveModalOpen(false);
@@ -2640,6 +2744,8 @@ export default function CalendarioPage() {
               setReserveModalSlot(null);
               setCopyOfReservationId(null);
               setCopyDraft(null);
+              setConflictBanner(false);
+              setPendingUpdateBanner(false);
               pendingRealtimeRefreshRef.current = false;
               cacheRef.current.clear();
               await new Promise(resolve => setTimeout(resolve, 300));
