@@ -255,7 +255,6 @@ export const calendarService = {
   ): Promise<Reservation[]> {
     // ── RUTA RÁPIDA: dock_ids explícitos → consulta indexada por dock_id ──
     if (allowedDockIds && allowedDockIds.length > 0) {
-      console.log(`[RES-FAST] getReservations dock_id IN (${allowedDockIds.length})`);
       const { data, error } = await supabase
         .from('reservations')
         .select(`
@@ -294,7 +293,6 @@ export const calendarService = {
     }
 
     // ── Legacy fallback: pre-calcular dock_ids desde warehouses ───────────
-    console.log(`[RES-LEGACY] getReservations fallback warehouse=${allowedWarehouseIds?.length}`);
     let resolvedDockIds: string[] | undefined;
     if (allowedWarehouseIds && allowedWarehouseIds.length > 0) {
       const { data: docksData } = await supabase
@@ -357,7 +355,6 @@ export const calendarService = {
   ): Promise<Reservation[]> {
     // ── RUTA RÁPIDA: dock_ids explícitos ──────────────────────────────────
     if (allowedDockIds && allowedDockIds.length > 0) {
-      console.log(`[RES-FAST] getAllReservations dock_id IN (${allowedDockIds.length})`);
       const { data, error } = await supabase
         .from('reservations')
         .select(`
@@ -378,7 +375,6 @@ export const calendarService = {
     }
 
     // ── Legacy fallback: pre-calcular desde warehouses ────────────────────
-    console.log(`[RES-LEGACY] getAllReservations fallback warehouse=${allowedWarehouseIds?.length}`);
     let resolvedDockIds: string[] | undefined;
     if (allowedWarehouseIds && allowedWarehouseIds.length > 0) {
       const { data: docksData } = await supabase
@@ -571,7 +567,6 @@ export const calendarService = {
     }
 
     const t1 = performance.now();
-    console.log(`[DOCK-FAST] getVisibleDockIds ${filteredIds.length} ids in ${Math.round(t1 - t0)}ms`);
 
     // Cachear resultado
     dockIdsCache.set(cacheKey, {

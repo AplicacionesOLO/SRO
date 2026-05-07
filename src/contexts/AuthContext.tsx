@@ -2,7 +2,7 @@ import { createContext, useContext, useState, useEffect, ReactNode } from 'react
 import { supabase } from '../lib/supabase';
 import type { User as SupabaseUser } from '@supabase/supabase-js';
 
-export type UserRole = 'ADMIN' | 'SUPERVISOR' | 'OPERADOR';
+export type UserRole = 'ADMIN' | 'SUPERVISOR' | 'OPERADOR' | 'CASETILLA';
 
 export interface User {
   id: string;
@@ -15,7 +15,7 @@ export interface User {
 interface AuthContextType {
   user: User | null;
   supabaseUser: SupabaseUser | null;
-  login: (email: string, password: string) => Promise<boolean>;
+  login: (email: string, password: string) => Promise<User | null>;
   logout: () => void;
   isAuthenticated: boolean;
   loading: boolean;
@@ -176,7 +176,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
-  const loadUserProfile = async (userId: string, userEmail: string) => {
+  const loadUserProfile = async (userId: string, userEmail: string): Promise<User | null> => {
     try {
       // console.log('[AuthContext] loadUserProfile start', { userId, userEmail });
       setPermissionsLoading(true);
@@ -227,7 +227,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setLoading(false);
         setPermissionsLoading(false);
         setPendingAccess(false);
-        return;
+        return null;
       }
 
       if (!userOrgRole) {
@@ -237,19 +237,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           .eq('id', userId)
           .maybeSingle();
 
-        setUser({
+        const fallbackUser: User = {
           id: userId,
           name: profile?.name || userEmail.split('@')[0] || 'Usuario',
           email: profile?.email || userEmail,
           role: 'OPERADOR',
           orgId: null
-        });
+        };
+        setUser(fallbackUser);
         
         setPermissionsSet(new Set());
         setPendingAccess(true);
         setLoading(false);
         setPermissionsLoading(false);
-        return;
+        return fallbackUser;
       }
 
       if (userOrgRole && userOrgRole.roles) {
@@ -261,21 +262,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           .eq('id', userId)
           .maybeSingle();
 
-        setUser({
+        const loadedUser: User = {
           id: userId,
           name: profile?.name || userEmail.split('@')[0] || 'Usuario',
           email: profile?.email || userEmail,
           role: roleName as UserRole,
           orgId: userOrgRole.org_id
-        });
+        };
+        setUser(loadedUser);
 
         setPendingAccess(false);
         
         await loadPermissions(userOrgRole.role_id, userOrgRole.org_id);
+        return loadedUser;
       }
+      return null;
     } catch (err) {
       setPermissionsSet(new Set());
       setPendingAccess(false);
+      return null;
     } finally {
       setLoading(false);
       setPermissionsLoading(false);
@@ -368,7 +373,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return result;
   };
 
-  const login = async (email: string, password: string): Promise<boolean> => {
+  const login = async (email: string, password: string): Promise<User | null> => {
     try {
       setLoading(true);
       setPermissionsLoading(true);
@@ -380,20 +385,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       });
 
       if (error) {
-        return false;
+        return null;
       }
 
       if (data.user) {
         setSupabaseUser(data.user);
         setWasAuthenticated(true);
         setSessionExpired(false);
-        await loadUserProfile(data.user.id, data.user.email || '');
-        return true;
+        const loadedUser = await loadUserProfile(data.user.id, data.user.email || '');
+        return loadedUser;
       }
 
-      return false;
+      return null;
     } catch (err) {
-      return false;
+      return null;
     } finally {
       setLoading(false);
       setPermissionsLoading(false);

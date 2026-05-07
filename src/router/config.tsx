@@ -9,6 +9,7 @@ import Andenes from "../pages/andenes/page";
 import Reservas from "../pages/reservas/page";
 import MatrizPermisos from "../pages/admin/matriz-permisos/page";
 import AccessPending from "../pages/access-pending/page";
+import HomeRedirect from "../pages/home/page";
 import { lazy } from "react";
 import RequirePermission from "./RequirePermission";
 import ProtectedRoute from "./ProtectedRoute";
@@ -34,7 +35,7 @@ const routes: RouteObject[] = [
     path: '/', 
     element: (
       <ProtectedRoute>
-        <Navigate to="/calendario" replace />
+        <HomeRedirect />
       </ProtectedRoute>
     )
   },

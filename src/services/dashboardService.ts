@@ -203,14 +203,8 @@ export const dashboardService = {
     let dockIds: string[] | null = null;
     if (allowedDockIds && allowedDockIds.length > 0) {
       dockIds = allowedDockIds;
-      console.log('[RES-FAST-CALLER]', 'dashboardService.getStats', 'WITH dock_id filter', { warehouseId, period, dockCount: dockIds.length, source: 'caller' });
     } else {
       dockIds = await getDockIds(orgId, warehouseId);
-      if (dockIds === null) {
-        console.log('[RES-LEGACY-CALLER]', 'dashboardService.getStats', 'NO dock_id filter', { warehouseId, period });
-      } else {
-        console.log('[RES-FAST-CALLER]', 'dashboardService.getStats', 'WITH dock_id filter', { warehouseId, period, dockCount: dockIds.length, source: 'warehouse' });
-      }
     }
 
     // ── Query 1: Reservas del período seleccionado ──────────────────────────

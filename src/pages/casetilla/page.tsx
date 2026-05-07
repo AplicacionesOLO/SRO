@@ -15,6 +15,7 @@ import { ConfirmModal } from '../../components/base/ConfirmModal';
 import QRScannerModal from '../../components/feature/QRScannerModal';
 import { casetillaService } from '../../services/casetillaService';
 import { supabase } from '../../lib/supabase';
+import { toWarehouseDateString, DEFAULT_TIMEZONE } from '../../utils/timezoneUtils';
 import type { PendingReservation, ExitEligibleReservation, NoShowReservation } from '../../types/casetilla';
 
 const SESSION_KEY = 'casetilla_ui_state';
@@ -30,6 +31,7 @@ interface PersistedUIState {
   fotosSalida: string[];
   selectedReservation: PendingReservation | null;
   selectedExitReservation: ExitEligibleReservation | null;
+  selectedDate: string | null; // ISO string YYYY-MM-DD
 }
 
 const readSession = (): Partial<PersistedUIState> => {
@@ -67,6 +69,14 @@ export default function CasetillaPage() {
     loading: activeWhLoading,
   } = useActiveWarehouse();
 
+  // ── FECHA: estado con persistencia en sessionStorage ──────────────────────
+  const todayStr = toWarehouseDateString(new Date(), DEFAULT_TIMEZONE);
+  const persistedDate = readSession().selectedDate;
+  const [selectedDate, setSelectedDate] = useState<string>(() => {
+    // Si hay una fecha persistida, usarla; sino hoy
+    return persistedDate || todayStr;
+  });
+
   const [viewMode, setViewModeRaw] = useState<ViewMode>(() => readSession().viewMode || 'HOME');
   const [fotosIngreso, setFotosIngresoRaw] = useState<string[]>(() => {
     const s = readSession();
@@ -92,8 +102,11 @@ export default function CasetillaPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [selectedClientId, setSelectedClientId] = useState<string | null>(null);
 
+  // ── Timezone activo: del almacén seleccionado o fallback ────────────────
+  const activeTimezone = activeWarehouse?.timezone || DEFAULT_TIMEZONE;
+
   // ── QR Scanner state ────────────────────────────────────────────────────
-  const [qrScannerMode, setQrScannerMode] = useState<'ingreso' | 'salida' | null>(null);
+  const [qrScannerMode, setQrScannerMode] = useState<'ingreso' | 'salida' | 'smart' | null>(null);
   const [qrSearching, setQrSearching] = useState(false);
   const [qrError, setQrError] = useState<string>('');
 
@@ -110,8 +123,8 @@ export default function CasetillaPage() {
   void canCreate;
 
   useEffect(() => {
-    writeSession({ viewMode, fotosIngreso, fotosSalida, selectedReservation, selectedExitReservation });
-  }, [viewMode, fotosIngreso, fotosSalida, selectedReservation, selectedExitReservation]);
+    writeSession({ viewMode, fotosIngreso, fotosSalida, selectedReservation, selectedExitReservation, selectedDate });
+  }, [viewMode, fotosIngreso, fotosSalida, selectedReservation, selectedExitReservation, selectedDate]);
 
   const setViewMode = useCallback((vm: ViewMode) => setViewModeRaw(vm), []);
   const setFotosIngreso = useCallback((urls: string[]) => {
@@ -125,33 +138,46 @@ export default function CasetillaPage() {
   const setSelectedReservation = useCallback((r: PendingReservation | null) => setSelectedReservationRaw(r), []);
   const setSelectedExitReservation = useCallback((r: ExitEligibleReservation | null) => setSelectedExitReservationRaw(r), []);
 
+  // ── Helper: convertir selectedDate string a Date para los servicios ──────
+  const getSelectedDateAsDate = useCallback((): Date => {
+    const [y, m, d] = selectedDate.split('-').map(Number);
+    return new Date(Date.UTC(y, m - 1, d, 12, 0, 0)); // medio día UTC para evitar edge cases de TZ
+  }, [selectedDate]);
+
   // ── Cargar datos SOLO cuando scope esté resuelto ─────────────────────────
   useEffect(() => {
     if (viewMode === 'PENDIENTES' && orgId && canView && !scopeLoading && !activeWhLoading) {
       loadPendingReservations();
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [viewMode, orgId, canView, scopeLoading, activeWhLoading, selectedClientId, effectiveWarehouseIds]);
+  }, [viewMode, orgId, canView, scopeLoading, activeWhLoading, selectedClientId, effectiveWarehouseIds, selectedDate]);
 
   useEffect(() => {
     if (viewMode === 'SALIDA' && orgId && canView && !scopeLoading && !activeWhLoading) {
       loadExitEligibleReservations();
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [viewMode, orgId, canView, scopeLoading, activeWhLoading, selectedClientId, effectiveWarehouseIds]);
+  }, [viewMode, orgId, canView, scopeLoading, activeWhLoading, selectedClientId, effectiveWarehouseIds, selectedDate]);
 
   useEffect(() => {
     if (viewMode === 'NO_SHOW' && orgId && canView && !scopeLoading && !activeWhLoading) {
       loadNoShowReservations();
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [viewMode, orgId, canView, scopeLoading, activeWhLoading, selectedClientId, effectiveWarehouseIds]);
+  }, [viewMode, orgId, canView, scopeLoading, activeWhLoading, selectedClientId, effectiveWarehouseIds, selectedDate]);
 
   const loadPendingReservations = async () => {
     if (!orgId) return;
     setIsLoadingReservations(true);
     try {
-      const data = await casetillaService.getPendingReservations(orgId, effectiveWarehouseIds, selectedClientId);
+      const dateObj = getSelectedDateAsDate();
+      const data = await casetillaService.getPendingReservations(
+        orgId,
+        effectiveWarehouseIds,
+        selectedClientId,
+        dateObj,
+        activeTimezone
+      );
       setPendingReservations(data);
     } catch { showModal('error', 'Error', 'No se pudieron cargar las reservas pendientes'); }
     finally { setIsLoadingReservations(false); }
@@ -161,7 +187,14 @@ export default function CasetillaPage() {
     if (!orgId) return;
     setIsLoadingExitReservations(true);
     try {
-      const data = await casetillaService.getExitEligibleReservations(orgId, effectiveWarehouseIds, selectedClientId);
+      const dateObj = getSelectedDateAsDate();
+      const data = await casetillaService.getExitEligibleReservations(
+        orgId,
+        effectiveWarehouseIds,
+        selectedClientId,
+        dateObj,
+        activeTimezone
+      );
       setExitEligibleReservations(data);
     } catch { showModal('error', 'Error', 'No se pudieron cargar las reservas elegibles para salida'); }
     finally { setIsLoadingExitReservations(false); }
@@ -171,7 +204,14 @@ export default function CasetillaPage() {
     if (!orgId) return;
     setIsLoadingNoShow(true);
     try {
-      const data = await casetillaService.getNoShowReservations(orgId, effectiveWarehouseIds, selectedClientId);
+      const dateObj = getSelectedDateAsDate();
+      const data = await casetillaService.getNoShowReservations(
+        orgId,
+        effectiveWarehouseIds,
+        selectedClientId,
+        dateObj,
+        activeTimezone
+      );
       setNoShowReservations(data);
     } catch { showModal('error', 'Error', 'No se pudieron cargar las reservas No arribó'); }
     finally { setIsLoadingNoShow(false); }
@@ -310,73 +350,197 @@ export default function CasetillaPage() {
     finally { setIsSubmitting(false); }
   };
 
-  // ── QR: buscar reserva por ID y cargar el formulario correspondiente ────────────────────────────────────────────────────
+  // ── QR: handler INTELIGENTE — detecta automáticamente IN, OUT, bloqueo ───────────────────────────────────────────────────
   const handleQRScanned = useCallback(async (reservationId: string) => {
     if (!orgId || qrSearching) return;
     setQrSearching(true);
     setQrError('');
 
     try {
-      if (qrScannerMode === 'ingreso') {
-        // Validar no-show primero
-        const noShowCheck = await casetillaService.checkNoShowExpired(reservationId, orgId);
-        if (noShowCheck.expired) {
-          setQrError(noShowCheck.message);
+      const { state, reservation } = await casetillaService.getReservationCasetillaState(reservationId, orgId);
+
+      if (state === 'not_found') {
+        setQrError('No se encontró ninguna reserva con ese QR en tu organización.');
+        setQrSearching(false);
+        return;
+      }
+
+      if (state === 'cancelled') {
+        setQrError('Esta reserva está cancelada y no puede procesarse desde Punto de Control.');
+        setQrSearching(false);
+        return;
+      }
+
+      if (state === 'no_show') {
+        setQrError('Esta reserva está marcada como "No arribó" y no puede procesarse desde Punto de Control.');
+        setQrSearching(false);
+        return;
+      }
+
+      if (state === 'expired_no_show') {
+        setQrError('Esta reserva superó el tiempo permitido de ingreso y ya no puede procesarse desde Punto de Control.');
+        setQrSearching(false);
+        return;
+      }
+
+      if (state === 'has_salida') {
+        setQrError('Esta reserva ya completó su salida.');
+        setQrSearching(false);
+        return;
+      }
+
+      // Validar segregación: la reserva debe estar en un warehouse permitido
+      if (reservation) {
+        let allowed = false;
+
+        if (effectiveWarehouseIds && effectiveWarehouseIds.length > 0) {
+          // Obtener warehouse_id del dock de la reserva
+          const { data: dockData } = await supabase
+            .from('docks')
+            .select('warehouse_id')
+            .eq('id', reservation.dock_id)
+            .eq('org_id', orgId)
+            .maybeSingle();
+
+          if (dockData?.warehouse_id && effectiveWarehouseIds.includes(dockData.warehouse_id)) {
+            allowed = true;
+          }
+        } else {
+          allowed = true; // sin restricción de warehouse
+        }
+
+        // Validar cliente si hay filtro
+        if (selectedClientId) {
+          const clientDockIds = await casetillaService.getDockIdsForClient(orgId, selectedClientId);
+          if (!clientDockIds.includes(reservation.dock_id)) {
+            allowed = false;
+          }
+        }
+
+        if (!allowed) {
+          setQrError('Esta reserva no está en un almacén o cliente permitido para tu usuario.');
           setQrSearching(false);
           return;
         }
+      }
 
-        // Buscar en reservas pendientes (sin ingreso previo)
-        const pending = await casetillaService.getPendingReservations(
-          orgId,
-          effectiveWarehouseIds,
-          selectedClientId
-        );
-        const found = pending.find((r) => r.id === reservationId);
-
-        if (found) {
-          setQrScannerMode(null);
-          handleOpenIngresoFromPending(found);
-        } else {
-          // Verificar si la reserva existe en la org (puede que ya tenga ingreso)
-          const { data: resRow, error: resErr } = await supabase
-            .from('reservations')
-            .select('id')
-            .eq('id', reservationId)
+      if (state === 'pending') {
+        // Cerrar scanner y abrir IN
+        setQrScannerMode(null);
+        if (reservation) {
+          // Convertir PendingReservationRow → PendingReservation (con los campos que necesita IngresoForm)
+          // Necesitamos resolver provider_name y warehouse_name
+          const { data: dockData } = await supabase
+            .from('docks')
+            .select('name, warehouse_id')
+            .eq('id', reservation.dock_id)
             .eq('org_id', orgId)
             .maybeSingle();
 
-          if (resErr || !resRow) {
-            setQrError('No se encontró ninguna reserva con ese QR en tu organización.');
-          } else {
-            setQrError('Esta reserva ya tiene un ingreso registrado o no está disponible para ingreso.');
+          let providerName = 'N/A';
+          if (reservation.shipper_provider) {
+            const isUUID = reservation.shipper_provider.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+            if (isUUID) {
+              const { data: prov } = await supabase.from('providers').select('name').eq('id', reservation.shipper_provider).maybeSingle();
+              providerName = prov?.name ?? 'N/A';
+            } else {
+              providerName = reservation.shipper_provider;
+            }
           }
+
+          let warehouseName = 'N/A';
+          if (dockData?.warehouse_id) {
+            const { data: wh } = await supabase.from('warehouses').select('name').eq('id', dockData.warehouse_id).maybeSingle();
+            warehouseName = wh?.name ?? 'N/A';
+          }
+
+          const cargoTypeName = reservation.cargo_type
+            ? (await supabase.from('cargo_types').select('name').eq('id', reservation.cargo_type).maybeSingle()).data?.name ?? null
+            : null;
+
+          const pendingRes: PendingReservation = {
+            id: reservation.id,
+            dua: reservation.dua ?? '',
+            placa: reservation.truck_plate ?? '',
+            chofer: reservation.driver ?? '',
+            orden_compra: reservation.purchase_order ?? '',
+            numero_pedido: reservation.order_request_number ?? '',
+            notes: reservation.notes ?? null,
+            provider_name: providerName,
+            warehouse_name: warehouseName,
+            created_at: reservation.created_at,
+            is_imported: reservation.is_imported === true || (reservation.is_imported == null && !!(reservation.dua && reservation.dua.trim().length > 0)),
+            cargo_type_name: cargoTypeName,
+          };
+
+          setFotosIngresoRaw([]);
+          setSelectedReservation(pendingRes);
+          setViewMode('INGRESO');
         }
-      } else if (qrScannerMode === 'salida') {
-        // Buscar en reservas elegibles para salida
-        const eligible = await casetillaService.getExitEligibleReservations(
-          orgId,
-          effectiveWarehouseIds,
-          selectedClientId
-        );
-        const found = eligible.find((r) => r.id === reservationId);
-
-        if (found) {
-          setQrScannerMode(null);
-          handleOpenExitForm(found);
-        } else {
-          const { data: resRow, error: resErr } = await supabase
-            .from('reservations')
-            .select('id')
-            .eq('id', reservationId)
+      } else if (state === 'has_ingreso') {
+        // Tiene ingreso, no salida → abrir OUT
+        // Necesitamos construir ExitEligibleReservation desde la reserva
+        setQrScannerMode(null);
+        if (reservation) {
+          const { data: dockData } = await supabase
+            .from('docks')
+            .select('name, warehouse_id')
+            .eq('id', reservation.dock_id)
             .eq('org_id', orgId)
             .maybeSingle();
 
-          if (resErr || !resRow) {
-            setQrError('No se encontró ninguna reserva con ese QR en tu organización.');
-          } else {
-            setQrError('Esta reserva no está disponible para registrar salida (puede que no tenga ingreso o ya tenga salida).');
+          let providerName = 'N/A';
+          if (reservation.shipper_provider) {
+            const isUUID = reservation.shipper_provider.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+            if (isUUID) {
+              const { data: prov } = await supabase.from('providers').select('name').eq('id', reservation.shipper_provider).maybeSingle();
+              providerName = prov?.name ?? 'N/A';
+            } else {
+              providerName = reservation.shipper_provider;
+            }
           }
+
+          let warehouseName = 'N/A';
+          let warehouseId: string | null = null;
+          let warehouseTz = DEFAULT_TIMEZONE;
+          if (dockData?.warehouse_id) {
+            warehouseId = dockData.warehouse_id;
+            const { data: wh } = await supabase.from('warehouses').select('name, timezone').eq('id', dockData.warehouse_id).maybeSingle();
+            warehouseName = wh?.name ?? 'N/A';
+            warehouseTz = wh?.timezone ?? DEFAULT_TIMEZONE;
+          }
+
+          // Obtener fecha de ingreso
+          const { data: ingRow } = await supabase
+            .from('casetilla_ingresos')
+            .select('created_at')
+            .eq('reservation_id', reservation.id)
+            .eq('org_id', orgId)
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+
+          const exitRes: ExitEligibleReservation = {
+            id: reservation.id,
+            dua: reservation.dua ?? null,
+            matricula: reservation.truck_plate ?? '',
+            chofer: reservation.driver ?? '',
+            proveedor: providerName,
+            almacen: warehouseName,
+            provider_name: providerName,
+            warehouse_name: warehouseName,
+            warehouse_id: warehouseId,
+            warehouse_timezone: warehouseTz,
+            provider_id: reservation.shipper_provider ?? null,
+            orden_compra: reservation.purchase_order ?? '',
+            numero_pedido: reservation.order_request_number ?? '',
+            fecha_ingreso: ingRow?.created_at ?? null,
+            created_at: reservation.created_at,
+          };
+
+          setFotosSalidaRaw([]);
+          setSelectedExitReservation(exitRes);
+          setViewMode('SALIDA');
         }
       }
     } catch {
@@ -384,8 +548,8 @@ export default function CasetillaPage() {
     } finally {
       setQrSearching(false);
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [orgId, qrScannerMode, effectiveWarehouseIds, selectedClientId, qrSearching]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orgId, qrSearching, effectiveWarehouseIds, selectedClientId]);
 
   const showModal = (type: 'success' | 'warning' | 'error' | 'info', title: string, message: string, onConfirm?: () => void) => {
     const closeModal = () => setModal(prev => ({ ...prev, isOpen: false }));
@@ -439,33 +603,62 @@ export default function CasetillaPage() {
 
         <div className="mb-6 sm:mb-8">
           <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4">
-            <div>
+            <div className="flex flex-col sm:flex-row gap-3">
               {hasMultipleWarehouses && (
                 <div className="mt-2">
                   <WarehouseSelector variant="chips" />
                 </div>
               )}
             </div>
-            {scopeClients.length > 0 && (
+            <div className="flex flex-col sm:flex-row gap-3 items-end">
+              {/* Selector de fecha */}
               <div className="flex items-center gap-2">
                 <label className="text-sm font-medium text-gray-700 whitespace-nowrap">
-                  <i className="ri-user-line mr-1"></i>Cliente:
+                  <i className="ri-calendar-line mr-1"></i>Fecha:
                 </label>
-                <select
-                  value={selectedClientId ?? ''}
-                  onChange={(e) => { setSelectedClientId(e.target.value || null); setViewModeRaw('HOME'); }}
-                  className="text-sm border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-teal-500 focus:border-transparent bg-white cursor-pointer min-w-[180px]"
-                >
-                  <option value="">Todos los clientes</option>
-                  {scopeClients.map((c) => (<option key={c.id} value={c.id}>{c.name}</option>))}
-                </select>
-                {selectedClientId && (
-                  <button onClick={() => { setSelectedClientId(null); setViewModeRaw('HOME'); }} className="p-2 text-gray-400 hover:text-gray-600 cursor-pointer" title="Quitar filtro">
-                    <i className="ri-close-circle-line text-lg"></i>
+                <input
+                  type="date"
+                  value={selectedDate}
+                  onChange={(e) => {
+                    const newDate = e.target.value;
+                    if (newDate) {
+                      setSelectedDate(newDate);
+                      setViewModeRaw('HOME');
+                    }
+                  }}
+                  className="text-sm border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-teal-500 focus:border-transparent bg-white cursor-pointer"
+                />
+                {selectedDate !== todayStr && (
+                  <button
+                    onClick={() => { setSelectedDate(todayStr); setViewModeRaw('HOME'); }}
+                    className="text-xs px-2 py-1 bg-teal-50 text-teal-700 rounded-md hover:bg-teal-100 transition-colors whitespace-nowrap cursor-pointer"
+                  >
+                    Hoy
                   </button>
                 )}
               </div>
-            )}
+              {/* Selector de cliente */}
+              {scopeClients.length > 0 && (
+                <div className="flex items-center gap-2">
+                  <label className="text-sm font-medium text-gray-700 whitespace-nowrap">
+                    <i className="ri-user-line mr-1"></i>Cliente:
+                  </label>
+                  <select
+                    value={selectedClientId ?? ''}
+                    onChange={(e) => { setSelectedClientId(e.target.value || null); setViewModeRaw('HOME'); }}
+                    className="text-sm border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-teal-500 focus:border-transparent bg-white cursor-pointer min-w-[180px]"
+                  >
+                    <option value="">Todos los clientes</option>
+                    {scopeClients.map((c) => (<option key={c.id} value={c.id}>{c.name}</option>))}
+                  </select>
+                  {selectedClientId && (
+                    <button onClick={() => { setSelectedClientId(null); setViewModeRaw('HOME'); }} className="p-2 text-gray-400 hover:text-gray-600 cursor-pointer" title="Quitar filtro">
+                      <i className="ri-close-circle-line text-lg"></i>
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
           {selectedClientId && scopeClients.length > 0 && (
             <div className="mt-2 inline-flex items-center gap-1.5 px-3 py-1 bg-teal-50 border border-teal-200 rounded-full text-xs text-teal-700 font-medium">
@@ -473,10 +666,35 @@ export default function CasetillaPage() {
               Filtrando por: {scopeClients.find(c => c.id === selectedClientId)?.name}
             </div>
           )}
+          {selectedDate !== todayStr && (
+            <div className="mt-2 inline-flex items-center gap-1.5 px-3 py-1 bg-amber-50 border border-amber-200 rounded-full text-xs text-amber-700 font-medium">
+              <i className="ri-calendar-event-line"></i>
+              Fecha seleccionada: {new Date(selectedDate + 'T12:00:00').toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit', year: 'numeric' })}
+            </div>
+          )}
         </div>
 
         {viewMode === 'HOME' && (
           <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4 sm:gap-6">
+            {/* ─── Tarjeta QR Inteligente — acceso rápido ──────────── */}
+            <div className="bg-teal-50 rounded-xl border-2 border-teal-200 p-6 hover:border-teal-300 transition-colors">
+              <div className="flex items-start gap-4">
+                <div className="flex-shrink-0 w-12 h-12 sm:w-14 sm:h-14 bg-teal-100 rounded-lg flex items-center justify-center">
+                  <i className="ri-qr-scan-line text-2xl sm:text-3xl text-teal-700"></i>
+                </div>
+                <div className="flex-1 min-w-0">
+                  <h2 className="text-lg sm:text-xl font-bold text-teal-900 mb-2">Leer QR</h2>
+                  <p className="text-sm text-teal-700 mb-4">Escaneá un QR para detectar automáticamente si corresponde ingreso o salida</p>
+                  <button
+                    onClick={() => { setQrError(''); setQrScannerMode('smart'); }}
+                    className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-5 py-2.5 bg-teal-700 text-white rounded-lg hover:bg-teal-800 transition-colors whitespace-nowrap cursor-pointer"
+                  >
+                    <i className="ri-scan-line"></i>Escanear QR
+                  </button>
+                </div>
+              </div>
+            </div>
+
             <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 hover:shadow-md transition-shadow">
               <div className="flex items-start gap-4">
                 <div className="flex-shrink-0 w-12 h-12 sm:w-14 sm:h-14 bg-amber-100 rounded-lg flex items-center justify-center">
@@ -569,7 +787,12 @@ export default function CasetillaPage() {
               <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-4">
                 <div>
                   <h2 className="text-xl sm:text-2xl font-bold text-gray-900">Reservas Pendientes</h2>
-                  <p className="text-sm text-gray-600 mt-1">Seleccione una reserva para crear su ingreso</p>
+                  <p className="text-sm text-gray-600 mt-1">
+                    {selectedDate === todayStr
+                      ? 'Reservas pendientes para hoy'
+                      : `Reservas pendientes para el ${new Date(selectedDate + 'T12:00:00').toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit', year: 'numeric' })}`
+                    }
+                  </p>
                 </div>
                 <div className="flex items-center gap-2">
                   <button
@@ -607,7 +830,12 @@ export default function CasetillaPage() {
               <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-4">
                 <div>
                   <h2 className="text-xl sm:text-2xl font-bold text-gray-900">Registrar Salida</h2>
-                  <p className="text-sm text-gray-600 mt-1">Seleccione una reserva para registrar su salida</p>
+                  <p className="text-sm text-gray-600 mt-1">
+                    {selectedDate === todayStr
+                      ? 'Reservas disponibles para salida hoy'
+                      : `Reservas disponibles para salida el ${new Date(selectedDate + 'T12:00:00').toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit', year: 'numeric' })}`
+                    }
+                  </p>
                 </div>
                 <div className="flex items-center gap-2">
                   <button
@@ -674,7 +902,12 @@ export default function CasetillaPage() {
               <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-4">
                 <div>
                   <h2 className="text-xl sm:text-2xl font-bold text-gray-900">No arribó</h2>
-                  <p className="text-sm text-gray-600 mt-1">Reservas que superaron el tiempo de tolerancia sin ingreso</p>
+                  <p className="text-sm text-gray-600 mt-1">
+                    {selectedDate === todayStr
+                      ? 'Reservas marcadas como No arribó para hoy'
+                      : `Reservas marcadas como No arribó para el ${new Date(selectedDate + 'T12:00:00').toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit', year: 'numeric' })}`
+                    }
+                  </p>
                 </div>
                 <button onClick={() => { clearSession(); setViewModeRaw('HOME'); }} className="inline-flex items-center justify-center gap-2 px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors whitespace-nowrap cursor-pointer">
                   <i className="ri-arrow-left-line"></i>Volver
@@ -693,7 +926,7 @@ export default function CasetillaPage() {
         isOpen={qrScannerMode !== null}
         onClose={() => { setQrScannerMode(null); }}
         onReservationIdScanned={handleQRScanned}
-        title={qrScannerMode === 'ingreso' ? 'Escanear QR — Ingreso' : 'Escanear QR — Salida'}
+        title={qrScannerMode === 'ingreso' ? 'Escanear QR — Ingreso' : qrScannerMode === 'salida' ? 'Escanear QR — Salida' : 'Escanear QR'}
       />
     </div>
   );

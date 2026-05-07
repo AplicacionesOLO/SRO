@@ -18,11 +18,11 @@ export default function Login() {
     setLoading(true);
 
     try {
-      const success = await login(email, password);
-      if (success) {
-        // ✅ Redirigir a la ruta guardada o al dashboard por defecto
-        const returnUrl = (location.state as any)?.returnUrl || '/dashboard';
-        navigate(returnUrl, { replace: true });
+      const user = await login(email, password);
+      if (user) {
+        // Si rol CASETILLA → redirigir directo a Punto Control IN/OUT
+        const redirectPath = user.role === 'CASETILLA' ? '/casetilla' : ((location.state as any)?.returnUrl || '/calendario');
+        navigate(redirectPath, { replace: true });
       } else {
         setError('Credenciales incorrectas. Por favor, verifica tu correo y contraseña.');
       }

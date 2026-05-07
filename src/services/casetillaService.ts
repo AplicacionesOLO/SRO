@@ -1,5 +1,6 @@
 import { supabase } from '../lib/supabase';
 import type { CreateCasetillaIngresoInput, CasetillaIngreso } from '../types/casetilla';
+import { getStartOfDayInTimezone, getEndOfDayInTimezone, DEFAULT_TIMEZONE } from '../utils/timezoneUtils';
 import { emailTriggerService } from './emailTriggerService';
 
 // ─── Tipos de segregación ────────────────────────────────────────────────────
@@ -51,6 +52,23 @@ type DurationReportFilters = {
 };
 
 class CasetillaService {
+  // ─── Helper: construir rango UTC desde fecha local del almacén ────────────
+  /**
+   * Convierte un Date de UI al rango UTC [start, end] del día en el timezone del almacén.
+   * Si no hay timezone, usa fallback seguro sin romper.
+   */
+  private _buildDateFilterParams(selectedDate: Date, timezone?: string | null): { fromIso: string; toIso: string } | null {
+    const tz = timezone || DEFAULT_TIMEZONE;
+    try {
+      const fromIso = getStartOfDayInTimezone(selectedDate, tz).toISOString();
+      const toIso = getEndOfDayInTimezone(selectedDate, tz).toISOString();
+      return { fromIso, toIso };
+    } catch {
+      // Fallback seguro: si el timezone no existe, devolvemos null para no filtrar
+      return null;
+    }
+  }
+
   // ─── SEGREGACIÓN: obtener warehouses permitidos para el usuario ──────────
   // FUENTE REAL: user_warehouse_access (user_warehouses está vacía y no se usa)
   async getUserAllowedWarehouseIds(orgId: string, userId: string): Promise<string[] | null> {
@@ -505,7 +523,9 @@ class CasetillaService {
   async getPendingReservations(
     orgId: string,
     allowedWarehouseIds?: string[] | null,
-    clientId?: string | null
+    clientId?: string | null,
+    selectedDate?: Date | null,
+    timezone?: string | null
   ) {
     try {
       // ✅ Usar RPC que filtra PENDING + NOT EXISTS casetilla_ingresos en una sola query SQL
@@ -516,6 +536,21 @@ class CasetillaService {
       if (!reservations || reservations.length === 0) return [];
 
       let rows = reservations as PendingReservationRow[];
+
+      // ─── FILTRO POR FECHA: aplicar desde base de datos si se puede ────────
+      if (selectedDate) {
+        const dateRange = this._buildDateFilterParams(selectedDate, timezone);
+        if (dateRange) {
+          // Filtrar por start_datetime dentro del rango UTC del día seleccionado
+          const { fromIso, toIso } = dateRange;
+          rows = rows.filter((r) => {
+            if (!r.start_datetime) return false; // sin fecha → no coincide con el día
+            const start = new Date(r.start_datetime);
+            return start >= new Date(fromIso) && start <= new Date(toIso);
+          });
+        }
+      }
+      // ─────────────────────────────────────────────────────────────────────
 
       // ─── NO-SHOW: excluir reservas vencidas por tolerancia ──────────────
       rows = await this.filterNoShowExpired(rows, orgId);
@@ -688,10 +723,12 @@ class CasetillaService {
     orgId: string,
     searchTerm: string,
     allowedWarehouseIds?: string[] | null,
-    clientId?: string | null
+    clientId?: string | null,
+    selectedDate?: Date | null,
+    timezone?: string | null
   ) {
     try {
-      const allReservations = await this.getPendingReservations(orgId, allowedWarehouseIds, clientId);
+      const allReservations = await this.getPendingReservations(orgId, allowedWarehouseIds, clientId, selectedDate, timezone);
 
       if (!searchTerm.trim()) return allReservations;
 
@@ -716,7 +753,9 @@ class CasetillaService {
 async getExitEligibleReservations(
   orgId: string,
   allowedWarehouseIds?: string[] | null,
-  clientId?: string | null
+  clientId?: string | null,
+  selectedDate?: Date | null,
+  timezone?: string | null
 ) {
   try {
     // 1) Obtener status IDs a excluir: DISPATCHED, NO_SHOW, DONE
@@ -733,12 +772,26 @@ async getExitEligibleReservations(
     const excludedStatusIds = (excludedStatuses ?? []).map((s: any) => s.id as string);
 
     // 2) Traer ingresos ordenados (último ingreso primero)
-    const { data: ingresos, error: ingresosError } = await supabase
+    let ingresosQuery = supabase
       .from("casetilla_ingresos")
       .select("reservation_id, created_at")
       .eq("org_id", orgId)
-      .not("reservation_id", "is", null)
-      .order("created_at", { ascending: false });
+      .not("reservation_id", "is", null);
+
+    // ─── FILTRO POR FECHA: limitar ingresos al día seleccionado ──────────
+    if (selectedDate) {
+      const dateRange = this._buildDateFilterParams(selectedDate, timezone);
+      if (dateRange) {
+        ingresosQuery = ingresosQuery
+          .gte('created_at', dateRange.fromIso)
+          .lte('created_at', dateRange.toIso);
+      }
+    }
+    // ─────────────────────────────────────────────────────────────────────
+
+    ingresosQuery = ingresosQuery.order("created_at", { ascending: false });
+
+    const { data: ingresos, error: ingresosError } = await ingresosQuery;
 
     if (ingresosError) throw ingresosError;
     if (!ingresos || ingresos.length === 0) return [];
@@ -933,7 +986,141 @@ async getExitEligibleReservations(
 }
 
 
-  // ✅ NUEVA FUNCIÓN: Crear salida
+  // ✅ NUEVA FUNCIÓN: Detectar estado de una reserva para QR inteligente
+  // Retorna: 'pending' | 'has_ingreso' | 'has_salida' | 'cancelled' | 'no_show' | 'expired_no_show' | 'not_found'
+  async getReservationCasetillaState(reservationId: string, orgId: string): Promise<{
+    state: 'pending' | 'has_ingreso' | 'has_salida' | 'cancelled' | 'no_show' | 'expired_no_show' | 'not_found';
+    reservation: PendingReservationRow | null;
+  }> {
+    try {
+      // 1) Traer la reserva
+      const { data: res, error } = await supabase
+        .from('reservations')
+        .select('id, status_id, is_cancelled, driver, truck_plate, dua, dock_id, org_id, shipper_provider, purchase_order, order_request_number, created_at, cargo_type, is_imported, notes, start_datetime, end_datetime')
+        .eq('id', reservationId)
+        .eq('org_id', orgId)
+        .maybeSingle();
+
+      if (error || !res) {
+        return { state: 'not_found', reservation: null };
+      }
+
+      // 2) Si está cancelada
+      if (res.is_cancelled) {
+        return { state: 'cancelled', reservation: null };
+      }
+
+      // 3) Obtener status NO_SHOW para verificar
+      const { data: noShowRow } = await supabase
+        .from('reservation_statuses')
+        .select('id')
+        .eq('org_id', orgId)
+        .eq('code', 'NO_SHOW')
+        .eq('is_active', true)
+        .maybeSingle();
+
+      if (noShowRow && res.status_id === noShowRow.id) {
+        return { state: 'no_show', reservation: null };
+      }
+
+      // 4) Verificar si ya tiene ingreso
+      const { data: ingreso } = await supabase
+        .from('casetilla_ingresos')
+        .select('id')
+        .eq('reservation_id', reservationId)
+        .eq('org_id', orgId)
+        .maybeSingle();
+
+      if (!ingreso) {
+        // No tiene ingreso → verificar si venció por tolerancia de No Arribó
+        // antes de marcarla como 'pending' para IN
+        if (res.start_datetime && res.dock_id) {
+          const { data: dock } = await supabase
+            .from('docks')
+            .select('warehouse_id')
+            .eq('id', res.dock_id)
+            .eq('org_id', orgId)
+            .maybeSingle();
+
+          if (dock?.warehouse_id) {
+            const { data: wh } = await supabase
+              .from('warehouses')
+              .select('timezone, no_show_tolerance_minutes')
+              .eq('id', dock.warehouse_id)
+              .eq('org_id', orgId)
+              .maybeSingle();
+
+            if (wh && wh.no_show_tolerance_minutes != null && wh.no_show_tolerance_minutes > 0) {
+              const start = new Date(res.start_datetime);
+              const cutoff = new Date(start.getTime() + Number(wh.no_show_tolerance_minutes) * 60_000);
+
+              if (new Date() > cutoff) {
+                return { state: 'expired_no_show', reservation: null };
+              }
+            }
+          }
+        }
+
+        // No venció → está pendiente para IN
+        const row: PendingReservationRow = {
+          id: res.id,
+          dua: res.dua,
+          driver: res.driver || '',
+          truck_plate: res.truck_plate,
+          purchase_order: res.purchase_order,
+          order_request_number: res.order_request_number,
+          shipper_provider: res.shipper_provider,
+          dock_id: res.dock_id,
+          created_at: res.created_at,
+          status_id: res.status_id,
+          is_cancelled: res.is_cancelled,
+          notes: res.notes,
+          cargo_type: res.cargo_type,
+          start_datetime: res.start_datetime,
+          end_datetime: res.end_datetime,
+          is_imported: res.is_imported,
+        };
+        return { state: 'pending', reservation: row };
+      }
+
+      // 5) Tiene ingreso → verificar si ya tiene salida
+      const { data: salida } = await supabase
+        .from('casetilla_salidas')
+        .select('id')
+        .eq('reservation_id', reservationId)
+        .eq('org_id', orgId)
+        .maybeSingle();
+
+      if (salida) {
+        return { state: 'has_salida', reservation: null };
+      }
+
+      // Tiene ingreso pero no salida → elegible para OUT
+      const row: PendingReservationRow = {
+        id: res.id,
+        dua: res.dua,
+        driver: res.driver || '',
+        truck_plate: res.truck_plate,
+        purchase_order: res.purchase_order,
+        order_request_number: res.order_request_number,
+        shipper_provider: res.shipper_provider,
+        dock_id: res.dock_id,
+        created_at: res.created_at,
+        status_id: res.status_id,
+        is_cancelled: res.is_cancelled,
+        notes: res.notes,
+        cargo_type: res.cargo_type,
+        start_datetime: res.start_datetime,
+        end_datetime: res.end_datetime,
+        is_imported: res.is_imported,
+      };
+      return { state: 'has_ingreso', reservation: row };
+    } catch {
+      return { state: 'not_found', reservation: null };
+    }
+  }
+
+
   async createSalida(orgId: string, userId: string, reservationId: string, fotos?: string[]) {
     try {
       //console.log('[CasetillaService][createSalida] START', { orgId, userId, reservationId });
@@ -1217,7 +1404,9 @@ async getExitEligibleReservations(
   async getNoShowReservations(
     orgId: string,
     allowedWarehouseIds?: string[] | null,
-    clientId?: string | null
+    clientId?: string | null,
+    selectedDate?: Date | null,
+    timezone?: string | null
   ) {
     try {
       // Obtener status NO_SHOW — solo activo
@@ -1257,7 +1446,17 @@ async getExitEligibleReservations(
         .eq('is_cancelled', false)
         .order('start_datetime', { ascending: false });
 
-      console.log('[RES-LEGACY-CALLER]', 'casetillaService.getNoShowReservations', 'NO dock_id filter', { orgId, noShowStatusId });
+      // ─── FILTRO POR FECHA: aplicar rango start_datetime en DB ───────────
+      if (selectedDate) {
+        const dateRange = this._buildDateFilterParams(selectedDate, timezone);
+        if (dateRange) {
+          q = q
+            .gte('start_datetime', dateRange.fromIso)
+            .lte('start_datetime', dateRange.toIso);
+        }
+      }
+      // ─────────────────────────────────────────────────────────────────────
+
 
       const { data: reservations, error } = await q;
       if (error) throw error;
