@@ -71,25 +71,40 @@ export default function ReservasPage() {
       const endDate = new Date();
       endDate.setMonth(endDate.getMonth() + 3);
 
-      // Cargar en paralelo — docks con restricción completa (warehouse + cliente)
+      // PASO 1: obtener dock IDs visibles/permitidos PRIMERO (~10-20ms)
+      const allowedDockIds = await calendarService.getVisibleDockIds(orgId, null, effectiveWarehouseIds, allowedClientIds);
+
+      // Si no hay docks visibles, no hay reservas posibles -> early return
+      if (allowedDockIds.length === 0) {
+        setReservations([]);
+        setDocks([]);
+        const [statusesData, providersData, cargoTypesData] = await Promise.all([
+          calendarService.getReservationStatuses(orgId),
+          providersService.getActive(orgId),
+          cargoTypesService.getAll(orgId),
+        ]);
+        setStatuses(statusesData);
+        setProviders(providersData);
+        setCargoTypes(cargoTypesData);
+        return;
+      }
+
+      // PASO 2: cargar reservas + docks full + datos auxiliares en paralelo
       const [reservationsData, docksData, statusesData, providersData, cargoTypesData] = await Promise.all([
-        calendarService.getAllReservations(orgId, startDate.toISOString(), endDate.toISOString(), effectiveWarehouseIds),
-        // ← allowedClientIds filtra los andenes al subconjunto del cliente asignado
+        calendarService.getAllReservations(
+          orgId,
+          startDate.toISOString(),
+          endDate.toISOString(),
+          effectiveWarehouseIds,
+          allowedDockIds
+        ),
         calendarService.getDocks(orgId, null, effectiveWarehouseIds, allowedClientIds),
         calendarService.getReservationStatuses(orgId),
         providersService.getActive(orgId),
         cargoTypesService.getAll(orgId),
       ]);
 
-      // Filtrar reservas contra los andenes permitidos (mismo mecanismo implícito del calendario)
-      // Si allowedClientIds es null → acceso global, no restringir por andén
-      let filteredReservations = reservationsData;
-      if (allowedClientIds !== null && docksData.length >= 0) {
-        const allowedDockIds = new Set(docksData.map((d) => d.id));
-        filteredReservations = reservationsData.filter((r) => allowedDockIds.has(r.dock_id));
-      }
-
-      setReservations(filteredReservations);
+      setReservations(reservationsData);
       setDocks(docksData);
       setStatuses(statusesData);
       setProviders(providersData);
@@ -285,10 +300,10 @@ export default function ReservasPage() {
         'ID': r.id,
         'Fecha Inicio': formatDateTime(r.start_datetime),
         'Fecha Fin': formatDateTime(r.end_datetime),
-        'Andén': getDockName(r.dock_id),
+        'Anden': getDockName(r.dock_id),
         'Estado': statusInfo.name,
-        'Cancelada': r.is_cancelled ? 'Sí' : 'No',
-        'Razón Cancelación': r.cancel_reason || '',
+        'Cancelada': r.is_cancelled ? 'Si' : 'No',
+        'Razon Cancelacion': r.cancel_reason || '',
         'Orden de Compra': r.purchase_order || '',
         'Proveedor': getProviderName(r.shipper_provider),
         'Chofer': r.driver || '',
@@ -297,7 +312,7 @@ export default function ReservasPage() {
         'Placa': r.truck_plate || '',
         'Tipo Transporte': r.transport_type || '',
         'Tipo Carga': getCargoTypeName(r.cargo_type),
-        'N° Solicitud Pedido': r.order_request_number || '',
+        'N Solicitud Pedido': r.order_request_number || '',
         'Notas': r.notes || '',
       };
     });
@@ -339,7 +354,7 @@ export default function ReservasPage() {
           <div>
             <h1 className="text-2xl font-bold text-gray-900">Reservas</h1>
             <p className="text-sm text-gray-600 mt-1">
-              Gestión completa de reservas de andenes
+              Gestion completa de reservas de andenes
               {activeWarehouse && (
                 <span className="ml-2 inline-flex items-center gap-1 px-2 py-0.5 bg-teal-50 text-teal-700 rounded-full text-xs font-medium">
                   <i className="ri-building-2-line"></i>
@@ -349,7 +364,7 @@ export default function ReservasPage() {
             </p>
           </div>
           <div className="flex items-center gap-3">
-            {/* Selector de almacén */}
+            {/* Selector de almacen */}
             {hasMultipleWarehouses && (
               <WarehouseSelector variant="dropdown" />
             )}
@@ -374,7 +389,7 @@ export default function ReservasPage() {
           </div>
         </div>
 
-        {/* Chips de almacén si tiene múltiples */}
+        {/* Chips de almacen si tiene multiples */}
         {hasMultipleWarehouses && (
           <div className="mb-3">
             <WarehouseSelector variant="chips" />
@@ -469,7 +484,7 @@ export default function ReservasPage() {
                       )}
                     </div>
                   </th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Andén</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Anden</th>
                   <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Estado</th>
                   <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Orden Compra</th>
                   <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Proveedor</th>
@@ -586,11 +601,11 @@ export default function ReservasPage() {
           </div>
         </div>
 
-        {/* Paginación */}
+        {/* Paginacion */}
         {totalPages > 1 && (
           <div className="mt-6 flex items-center justify-between">
             <div className="text-sm text-gray-600">
-              Página {currentPage} de {totalPages}
+              Pagina {currentPage} de {totalPages}
             </div>
             <div className="flex items-center gap-2">
               <button
@@ -650,7 +665,7 @@ export default function ReservasPage() {
         />
       )}
 
-      {/* Modal de confirmación de eliminación */}
+      {/* Modal de confirmacion de eliminacion */}
       {deleteModal.isOpen && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-lg shadow-xl max-w-md w-full">
@@ -659,14 +674,14 @@ export default function ReservasPage() {
                 <i className="ri-alert-line text-2xl text-red-600 w-6 h-6 flex items-center justify-center"></i>
               </div>
               <h3 className="text-lg font-semibold text-gray-900 text-center mb-2">
-                {deleteModal.reservationId ? 'Confirmar Eliminación' : 'Sin Permisos'}
+                {deleteModal.reservationId ? 'Confirmar Eliminacion' : 'Sin Permisos'}
               </h3>
               <p className="text-sm text-gray-600 text-center mb-6">
                 {deleteModal.reservationId ? (
                   <>
-                    ¿Estás seguro de que deseas eliminar la reserva <strong>{deleteModal.reservationName}</strong>?
+                    Estas seguro de que deseas eliminar la reserva <strong>{deleteModal.reservationName}</strong>?
                     <br />
-                    Esta acción no se puede deshacer.
+                    Esta accion no se puede deshacer.
                   </>
                 ) : (
                   'No tienes permisos para eliminar reservas.'

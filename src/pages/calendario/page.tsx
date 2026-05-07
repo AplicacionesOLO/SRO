@@ -702,17 +702,51 @@ export default function CalendarioPage() {
           if (w.timezone) warehouseTimezoneMap.set(w.id, w.timezone);
         }
 
-        // Cargar datos en paralelo
-        const [docksData, reservationsData, blocksData, statusesData, categoriesData] = await Promise.all([
-          calendarService.getDocks(orgId, warehouseId, allowedWarehouseIds, allowedClientIds, warehouseTimezoneMap),
-          calendarService.getReservations(orgId, bufferStart.toISOString(), bufferEnd.toISOString(), allowedWarehouseIds),
+        // ── PASO 1: Cargar dock IDs PRIMERO (ultra-rápido, sin joins) ──
+        const allowedDockIds = await calendarService.getVisibleDockIds(
+          orgId,
+          warehouseId,
+          allowedWarehouseIds,
+          allowedClientIds
+        );
+
+        // Si no hay docks visibles, no hay nada que mostrar
+        if (allowedDockIds.length === 0) {
+          setDocks([]);
+          setReservations([]);
+          setBlocks([]);
+          setStatuses(await calendarService.getReservationStatuses(orgId));
+          setCategories(await calendarService.getDockCategories(orgId));
+          setLoading(false);
+          return;
+        }
+
+        // ── PASO 2: Cargar reservas, bloques, docks full y estáticos en paralelo ──
+        // getReservations ahora usa .in('dock_id', allowedDockIds) que es ~50x más rápida
+        const [reservationsData, blocksData, docksData, statusesData, categoriesData] = await Promise.all([
+          allowedDockIds.length > 0
+            ? calendarService.getReservations(
+                orgId,
+                bufferStart.toISOString(),
+                bufferEnd.toISOString(),
+                allowedWarehouseIds,
+                allowedDockIds
+              )
+            : Promise.resolve([]),
           calendarService.getDockTimeBlocks(orgId, bufferStart.toISOString(), bufferEnd.toISOString()),
+          calendarService.getDocks(
+            orgId,
+            warehouseId,
+            allowedWarehouseIds,
+            allowedClientIds,
+            warehouseTimezoneMap
+          ),
           calendarService.getReservationStatuses(orgId),
           calendarService.getDockCategories(orgId),
         ]);
 
         // Filtrar reservas y bloques para mostrar solo los del warehouse seleccionado
-        const dockIds = new Set(docksData.map((d) => d.id));
+        const dockIds = new Set(allowedDockIds);
         const filteredReservations = reservationsData.filter((r) => dockIds.has(r.dock_id));
         const filteredBlocks = blocksData.filter((b) => dockIds.has(b.dock_id));
 
@@ -744,7 +778,7 @@ export default function CalendarioPage() {
 
     inFlightRef.current.set(cacheKey, fetchPromise);
     await fetchPromise;
-  }, [orgId, dateRange, rangeDays, warehouseId, filterCategory, allowedClientIds]);
+  }, [orgId, dateRange, rangeDays, warehouseId, filterCategory, allowedClientIds, allowedWarehouseIds]);
 
   // ── Mantener refs sincronizados con valores actuales (useLayoutEffect para
   // asegurar que loadDataRef esté actualizado ANTES de que useEffect de carga corra)

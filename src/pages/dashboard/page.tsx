@@ -5,7 +5,9 @@ import { es } from 'date-fns/locale';
 import { useAuth } from '../../contexts/AuthContext';
 import { usePermissions } from '../../hooks/usePermissions';
 import { useActiveWarehouse } from '../../contexts/ActiveWarehouseContext';
+import { useUserScope } from '../../hooks/useUserScope';
 import { dashboardService, DashboardStats, DashboardPeriod } from '../../services/dashboardService';
+import { calendarService } from '../../services/calendarService';
 import WarehousePageHeader from '../../components/feature/WarehousePageHeader';
 
 const PERIOD_OPTIONS: { value: DashboardPeriod; label: string; icon: string }[] = [
@@ -50,6 +52,7 @@ export default function Dashboard() {
     loading: warehouseLoading,
   } = useActiveWarehouse();
   const navigate = useNavigate();
+  const { allowedWarehouseIds, allowedClientIds, scopeLoading } = useUserScope();
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [period, setPeriod] = useState<DashboardPeriod>('month');
@@ -66,20 +69,43 @@ export default function Dashboard() {
     if (!orgId) return;
     setLoading(true);
     try {
-      const data = await dashboardService.getStats(orgId, activeWarehouseId, period);
+      // ── PASO 1: Obtener docks visibles/permitidos PRIMERO ──
+      // getVisibleDockIds aplica restricción por warehouse + cliente asignado
+      const allowedDockIds = await calendarService.getVisibleDockIds(
+        orgId,
+        null, // no filtrar por warehouseId individual
+        allowedWarehouseIds,
+        allowedClientIds
+      );
+
+      // Si no hay docks visibles, no hay reservas posibles -> early return
+      if (allowedDockIds.length === 0) {
+        console.log('[RES-FAST-CALLER]', 'dashboard.page', 'NO docks visible -> empty stats', { allowedWarehouseIds, allowedClientIds });
+        setStats(null);
+        setLoading(false);
+        return;
+      }
+
+      // ── PASO 2: Cargar stats con dock_ids indexados ──
+      const data = await dashboardService.getStats(
+        orgId,
+        activeWarehouseId,
+        period,
+        allowedDockIds
+      );
       setStats(data);
     } catch {
       // silenced
     } finally {
       setLoading(false);
     }
-  }, [orgId, activeWarehouseId, period]);
+  }, [orgId, activeWarehouseId, period, allowedWarehouseIds, allowedClientIds]);
 
   useEffect(() => {
-    if (orgId && !warehouseLoading) {
+    if (orgId && !warehouseLoading && !scopeLoading) {
       loadDashboardData();
     }
-  }, [orgId, activeWarehouseId, warehouseLoading, period]);
+  }, [orgId, activeWarehouseId, warehouseLoading, scopeLoading, period]);
 
   if (authLoading || permissionsLoading) {
     return (

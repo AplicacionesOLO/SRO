@@ -1,3 +1,4 @@
+import { getVisibleDocksForUser, isAdminOrManager } from './calendarService';
 import { supabase } from '../lib/supabase';
 import {
   startOfMonth, endOfMonth,
@@ -184,7 +185,8 @@ export const dashboardService = {
   async getStats(
     orgId: string,
     warehouseId?: string | null,
-    period: DashboardPeriod = 'month'
+    period: DashboardPeriod = 'month',
+    allowedDockIds?: string[] | null
   ): Promise<DashboardStats> {
     const now = new Date();
     const { start: periodStart, end: periodEnd, prevStart, prevEnd } = getPeriodRange(period, now);
@@ -197,7 +199,19 @@ export const dashboardService = {
     const thisMonthEnd = endOfMonth(now);
 
     // Obtener dock IDs una sola vez
-    const dockIds = await getDockIds(orgId, warehouseId);
+    // Prioridad: allowedDockIds del caller (fast path) > getDockIds legacy
+    let dockIds: string[] | null = null;
+    if (allowedDockIds && allowedDockIds.length > 0) {
+      dockIds = allowedDockIds;
+      console.log('[RES-FAST-CALLER]', 'dashboardService.getStats', 'WITH dock_id filter', { warehouseId, period, dockCount: dockIds.length, source: 'caller' });
+    } else {
+      dockIds = await getDockIds(orgId, warehouseId);
+      if (dockIds === null) {
+        console.log('[RES-LEGACY-CALLER]', 'dashboardService.getStats', 'NO dock_id filter', { warehouseId, period });
+      } else {
+        console.log('[RES-FAST-CALLER]', 'dashboardService.getStats', 'WITH dock_id filter', { warehouseId, period, dockCount: dockIds.length, source: 'warehouse' });
+      }
+    }
 
     // ── Query 1: Reservas del período seleccionado ──────────────────────────
     let periodQuery = supabase

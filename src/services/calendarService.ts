@@ -150,6 +150,25 @@ interface SegregationCacheEntry {
 const segregationCache = new Map<string, SegregationCacheEntry>();
 const SEGREGATION_CACHE_TTL = 2 * 60 * 1000; // 2 minutos
 
+// ── Cache global para getVisibleDockIds (solo IDs, ultra-ligero) ───────
+interface DockIdsCacheEntry {
+  dockIds: string[];
+  timestamp: number;
+}
+const dockIdsCache = new Map<string, DockIdsCacheEntry>();
+const DOCK_IDS_CACHE_TTL = 2 * 60 * 1000; // 2 minutos
+
+function getDockIdsCacheKey(
+  orgId: string,
+  warehouseId: string | null,
+  allowedWarehouseIds: string[] | null,
+  allowedClientIds: string[] | null
+): string {
+  const whHash = allowedWarehouseIds ? [...allowedWarehouseIds].sort().join(',') : 'null';
+  const clientHash = allowedClientIds ? [...allowedClientIds].sort().join(',') : 'null';
+  return `dockIds:${orgId}:${warehouseId || 'all'}:${whHash}:${clientHash}`;
+}
+
 // ── Cache global para datos estáticos de calendario ─────────────────────
 interface StaticCacheEntry<T> {
   data: T;
@@ -231,18 +250,60 @@ export const calendarService = {
     orgId: string,
     startDate: string,
     endDate: string,
-    allowedWarehouseIds?: string[] | null
+    allowedWarehouseIds?: string[] | null,
+    allowedDockIds?: string[] | null
   ): Promise<Reservation[]> {
-    // ── Pre-calcular dock_ids permitidos ANTES del query ────────────────────
-    let allowedDockIds: string[] | undefined;
+    // ── RUTA RÁPIDA: dock_ids explícitos → consulta indexada por dock_id ──
+    if (allowedDockIds && allowedDockIds.length > 0) {
+      console.log(`[RES-FAST] getReservations dock_id IN (${allowedDockIds.length})`);
+      const { data, error } = await supabase
+        .from('reservations')
+        .select(`
+          *,
+          status:reservation_statuses(name, code, color)
+        `)
+        .eq('org_id', orgId)
+        .eq('is_cancelled', false)
+        .gte('start_datetime', startDate)
+        .lte('start_datetime', endDate)
+        .in('dock_id', allowedDockIds)
+        .order('start_datetime', { ascending: true });
+
+      if (error) {
+        return [];
+      }
+
+      const result = data || [];
+
+      if (result.length > 0) {
+        const creatorIds = [...new Set(result.map((r) => r.created_by).filter(Boolean))];
+        if (creatorIds.length > 0) {
+          const { data: profiles } = await supabase
+            .from('profiles')
+            .select('id, name, email')
+            .in('id', creatorIds);
+          const profileMap = new Map((profiles || []).map((p: any) => [p.id, p]));
+          return result.map((r) => ({
+            ...r,
+            creator: profileMap.get(r.created_by) ?? null,
+          }));
+        }
+      }
+
+      return result;
+    }
+
+    // ── Legacy fallback: pre-calcular dock_ids desde warehouses ───────────
+    console.log(`[RES-LEGACY] getReservations fallback warehouse=${allowedWarehouseIds?.length}`);
+    let resolvedDockIds: string[] | undefined;
     if (allowedWarehouseIds && allowedWarehouseIds.length > 0) {
       const { data: docksData } = await supabase
         .from('docks')
         .select('id')
         .eq('org_id', orgId)
         .in('warehouse_id', allowedWarehouseIds);
-      allowedDockIds = (docksData ?? []).map((d: any) => d.id as string);
-      if (allowedDockIds.length === 0) return [];
+      resolvedDockIds = (docksData ?? []).map((d: any) => d.id as string);
+      if (resolvedDockIds.length === 0) return [];
     }
 
     let query = supabase
@@ -256,8 +317,8 @@ export const calendarService = {
       .gte('start_datetime', startDate)
       .lte('start_datetime', endDate);
 
-    if (allowedDockIds && allowedDockIds.length > 0) {
-      query = query.in('dock_id', allowedDockIds);
+    if (resolvedDockIds && resolvedDockIds.length > 0) {
+      query = query.in('dock_id', resolvedDockIds);
     }
 
     const { data, error } = await query.order('start_datetime', { ascending: true });
@@ -268,7 +329,6 @@ export const calendarService = {
 
     const result = data || [];
 
-    // ── Enriquecer con perfil del creador ───────────────────────────────────
     if (result.length > 0) {
       const creatorIds = [...new Set(result.map((r) => r.created_by).filter(Boolean))];
       if (creatorIds.length > 0) {
@@ -292,18 +352,42 @@ export const calendarService = {
     orgId: string,
     startDate: string,
     endDate: string,
-    allowedWarehouseIds?: string[] | null
+    allowedWarehouseIds?: string[] | null,
+    allowedDockIds?: string[] | null
   ): Promise<Reservation[]> {
-    // ── Pre-calcular dock_ids permitidos ANTES del query ────────────────────
-    let allowedDockIds: string[] | undefined;
+    // ── RUTA RÁPIDA: dock_ids explícitos ──────────────────────────────────
+    if (allowedDockIds && allowedDockIds.length > 0) {
+      console.log(`[RES-FAST] getAllReservations dock_id IN (${allowedDockIds.length})`);
+      const { data, error } = await supabase
+        .from('reservations')
+        .select(`
+          *,
+          status:reservation_statuses(name, code, color)
+        `)
+        .eq('org_id', orgId)
+        .gte('start_datetime', startDate)
+        .lte('start_datetime', endDate)
+        .in('dock_id', allowedDockIds)
+        .order('start_datetime', { ascending: false });
+
+      if (error) {
+        return [];
+      }
+
+      return data || [];
+    }
+
+    // ── Legacy fallback: pre-calcular desde warehouses ────────────────────
+    console.log(`[RES-LEGACY] getAllReservations fallback warehouse=${allowedWarehouseIds?.length}`);
+    let resolvedDockIds: string[] | undefined;
     if (allowedWarehouseIds && allowedWarehouseIds.length > 0) {
       const { data: docksData } = await supabase
         .from('docks')
         .select('id')
         .eq('org_id', orgId)
         .in('warehouse_id', allowedWarehouseIds);
-      allowedDockIds = (docksData ?? []).map((d: any) => d.id as string);
-      if (allowedDockIds.length === 0) return [];
+      resolvedDockIds = (docksData ?? []).map((d: any) => d.id as string);
+      if (resolvedDockIds.length === 0) return [];
     }
 
     let query = supabase
@@ -316,8 +400,8 @@ export const calendarService = {
       .gte('start_datetime', startDate)
       .lte('start_datetime', endDate);
 
-    if (allowedDockIds && allowedDockIds.length > 0) {
-      query = query.in('dock_id', allowedDockIds);
+    if (resolvedDockIds && resolvedDockIds.length > 0) {
+      query = query.in('dock_id', resolvedDockIds);
     }
 
     const { data, error } = await query.order('start_datetime', { ascending: false });
@@ -413,6 +497,98 @@ export const calendarService = {
     }
 
     return data || [];
+  },
+
+  /**
+   * RUTA ULTRA-RÁPIDA: devuelve SOLO los IDs de docks visibles.
+   * NO trae joins, NO trae datos de UI. ~10-20ms vs 300-600ms de getDocks().
+   * Cacheada por orgId + warehouseId + allowedWarehouseIds + allowedClientIds.
+   */
+  async getVisibleDockIds(
+    orgId: string,
+    warehouseId?: string | null,
+    allowedWarehouseIds?: string[] | null,
+    allowedClientIds?: string[] | null
+  ): Promise<string[]> {
+    const cacheKey = getDockIdsCacheKey(orgId, warehouseId || null, allowedWarehouseIds || null, allowedClientIds || null);
+    const cached = dockIdsCache.get(cacheKey);
+    if (cached && (Date.now() - cached.timestamp) < DOCK_IDS_CACHE_TTL) {
+      return cached.dockIds;
+    }
+
+    const t0 = performance.now();
+
+    // 1. Traer solo id, warehouse_id — SIN joins
+    let query = supabase
+      .from('docks')
+      .select('id, warehouse_id')
+      .eq('org_id', orgId)
+      .eq('is_active', true);
+
+    if (warehouseId) {
+      query = query.eq('warehouse_id', warehouseId);
+    } else if (allowedWarehouseIds && allowedWarehouseIds.length > 0) {
+      query = query.in('warehouse_id', allowedWarehouseIds);
+    }
+
+    const { data, error } = await query;
+
+    if (error) {
+      console.error('[DOCK-FAST] getVisibleDockIds query error', error);
+      return [];
+    }
+
+    let filteredIds: string[] = (data || []).map((d) => (d as any).id);
+
+    // 2. Segregación por clientes (si aplica)
+    if (allowedClientIds && allowedClientIds.length > 0) {
+      // Reutilizar cache de segregation si ya existe
+      const segCacheKey = getSegregationCacheKey(orgId, warehouseId || null, allowedClientIds, filteredIds);
+      const cachedSeg = segregationCache.get(segCacheKey);
+      const now = Date.now();
+
+      if (cachedSeg && (now - cachedSeg.timestamp) < SEGREGATION_CACHE_TTL) {
+        filteredIds = filteredIds.filter((id) => cachedSeg.allowedDockIds.has(id));
+      } else {
+        const { data: clientDockRows } = await supabase
+          .from('client_docks')
+          .select('dock_id')
+          .eq('org_id', orgId)
+          .in('client_id', allowedClientIds)
+          .in('dock_id', filteredIds);
+
+        if (clientDockRows && clientDockRows.length > 0) {
+          const allowedSet = new Set(clientDockRows.map((r: any) => r.dock_id as string));
+          segregationCache.set(segCacheKey, {
+            allowedDockIds: allowedSet,
+            timestamp: Date.now(),
+          });
+          filteredIds = filteredIds.filter((id) => allowedSet.has(id));
+        } else {
+          filteredIds = [];
+        }
+      }
+    }
+
+    const t1 = performance.now();
+    console.log(`[DOCK-FAST] getVisibleDockIds ${filteredIds.length} ids in ${Math.round(t1 - t0)}ms`);
+
+    // Cachear resultado
+    dockIdsCache.set(cacheKey, {
+      dockIds: filteredIds,
+      timestamp: Date.now(),
+    });
+
+    return filteredIds;
+  },
+
+  invalidateDockIdsCache(orgId: string, warehouseId?: string | null) {
+    const prefix = `dockIds:${orgId}:${warehouseId || 'all'}:`;
+    for (const key of dockIdsCache.keys()) {
+      if (key.startsWith(prefix)) {
+        dockIdsCache.delete(key);
+      }
+    }
   },
 
   async getDocks(

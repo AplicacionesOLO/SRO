@@ -1257,6 +1257,8 @@ async getExitEligibleReservations(
         .eq('is_cancelled', false)
         .order('start_datetime', { ascending: false });
 
+      console.log('[RES-LEGACY-CALLER]', 'casetillaService.getNoShowReservations', 'NO dock_id filter', { orgId, noShowStatusId });
+
       const { data: reservations, error } = await q;
       if (error) throw error;
       if (!reservations || reservations.length === 0) return [];
