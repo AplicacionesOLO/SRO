@@ -100,6 +100,9 @@ interface CalendarEvent {
 const DEFAULT_FALLBACK_TZ = 'America/Costa_Rica';
 const BUFFER_DAYS = 2;
 
+// Module-level registry to deduplicate Realtime channels across CalendarioPage instances
+const calendarRealtimeRegistry = new Map<string, ReturnType<typeof supabase.channel>>();
+
 export default function CalendarioPage() {
   const { can, orgId, loading: permLoading } = usePermissions();
   const { user } = useAuth();
@@ -857,22 +860,32 @@ export default function CalendarioPage() {
   const realtimeDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // ── ID de la reserva actualmente abierta en el modal (para detectar conflicto Realtime) ──
   const openReservationIdRef = useRef<string | null>(null);
+  // ── Canal Realtime activo — evita suscripciones duplicadas por re-montaje ──
+  const realtimeChannelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
+  // ── Ownership del canal: solo el creador (owner) debe removerlo en cleanup ──
+  const isOwnerRef = useRef(false);
   // ── Aviso discreto de actualizaciones pendientes ──────────────────────────
   const [pendingUpdateBanner, setPendingUpdateBanner] = useState(false);
   // ── Aviso de conflicto: la reserva abierta fue modificada externamente ────
   const [conflictBanner, setConflictBanner] = useState(false);
 
-  // ✅ Realtime subscription a la tabla reservations.
+  // ✅ Realtime subscription consolidada a la tabla reservations.
   //
-  // Comportamiento:
-  // - Si NO hay modal/formulario abierto → invalidar caché y recargar con debounce (800ms)
-  // - Si SÍ hay modal/formulario abierto:
-  //   a) Si el cambio afecta la MISMA reserva abierta → mostrar aviso de conflicto
-  //   b) Si el cambio afecta OTRA reserva → marcar pendingRealtimeRefreshRef + aviso discreto
-  //   En ambos casos NO se llama loadData() ni se cierra el modal.
-  // - Debounce agrupa múltiples eventos en una sola recarga
+  // Deduplicación module-level: calendarRealtimeRegistry garantiza 1 canal por orgId
+  // incluso bajo React StrictMode o múltiples instancias del componente.
+  // Solo el owner (quien creó el canal) lo remueve en cleanup.
+  // Debounce 1200ms para agrupar eventos y reducir recargas.
   useEffect(() => {
     if (!orgId || !ready) return;
+
+    const key = `calendar:${orgId}`;
+
+    // ── Deduplicación module-level ────────────────────────────────────────
+    if (calendarRealtimeRegistry.has(key)) {
+      realtimeChannelRef.current = calendarRealtimeRegistry.get(key)!;
+      isOwnerRef.current = false;
+      return;
+    }
 
     const channel = supabase
       .channel(`calendar_reservations_rt_${orgId}`)
@@ -893,22 +906,17 @@ export default function CalendarioPage() {
             (payload.new as any)?.id || (payload.old as any)?.id;
 
           if (isInteracting) {
-            // ── El usuario está en un modal/formulario ──────────────────────
             const openId = openReservationIdRef.current;
 
             if (openId && changedId && openId === changedId) {
-              // La reserva abierta fue modificada externamente → aviso de conflicto
               setConflictBanner(true);
             } else {
-              // Otra reserva cambió → aviso discreto de actualizaciones pendientes
               setPendingUpdateBanner(true);
             }
-            // En ambos casos: marcar refresh pendiente, NO recargar ahora
             pendingRealtimeRefreshRef.current = true;
             return;
           }
 
-          // ── Sin modal abierto: recargar con debounce ────────────────────
           if (realtimeDebounceRef.current) {
             clearTimeout(realtimeDebounceRef.current);
           }
@@ -916,20 +924,29 @@ export default function CalendarioPage() {
             realtimeDebounceRef.current = null;
             cacheRef.current.clear();
             loadDataRef.current(true);
-          }, 800);
+          }, 1200);
         }
       )
       .subscribe();
+
+    calendarRealtimeRegistry.set(key, channel);
+    realtimeChannelRef.current = channel;
+    isOwnerRef.current = true;
 
     return () => {
       if (realtimeDebounceRef.current) {
         clearTimeout(realtimeDebounceRef.current);
         realtimeDebounceRef.current = null;
       }
-      supabase.removeChannel(channel);
+      // Solo el owner remueve el canal; las demás instancias hacen cleanup liviano
+      if (isOwnerRef.current && realtimeChannelRef.current) {
+        supabase.removeChannel(realtimeChannelRef.current);
+        calendarRealtimeRegistry.delete(key);
+        realtimeChannelRef.current = null;
+        isOwnerRef.current = false;
+      }
     };
-  // Solo re-montar cuando cambia orgId o ready — NO incluir estados de modal ni loadData
-  // para evitar re-suscripciones innecesarias. El handler usa refs para acceder a valores actuales.
+  // Solo re-montar cuando cambia orgId o ready
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orgId, ready]);
 
@@ -977,9 +994,12 @@ export default function CalendarioPage() {
     ctxSetWarehouseId(selectedId);
   };
 
-  // ✅ Navegación: Ir a hoy
+  // ✅ Navegación: Ir a hoy (misma funcionalidad que "1 día")
   const goToToday = () => {
-    setAnchorDate(new Date());
+    const todayStr = toWarehouseDateString(new Date(), warehouseTimezone);
+    const [y, m, d] = todayStr.split('-').map(Number);
+    setAnchorDate(new Date(Date.UTC(y, m - 1, d, 12, 0, 0)));
+    setRangeDays(1);
   };
 
   const handlePickDate = (value: string) => {
@@ -1300,6 +1320,7 @@ export default function CalendarioPage() {
       requiredMinutes,
       preCargoTypeId,
       preProviderId,
+      preQuantityValue,
       slotInterval,
       isWithinBusinessHours,
       copyDraft,
@@ -2047,7 +2068,7 @@ export default function CalendarioPage() {
                 {/* Input de fecha */}
                 <input
                   type="date"
-                  value={anchorDate.toISOString().slice(0, 10)}
+                  value={toWarehouseDateString(anchorDate, warehouseTimezone)}
                   onChange={(e) => handlePickDate(e.target.value)}
                   className="bg-white border border-gray-300 rounded-md focus:ring-2 focus:ring-teal-500 focus:border-transparent"
                   style={{ padding: 'clamp(3px, 0.3vw, 6px) clamp(6px, 0.5vw, 10px)', fontSize: 'inherit' }}
@@ -2296,6 +2317,7 @@ export default function CalendarioPage() {
                             top: '50%',
                             transform: 'translateY(-50%)',
                             left: '0px',
+                            opacity: '0',
                           }}
                         >
                           {isToday && <span className="inline-block w-1.5 h-1.5 rounded-full bg-teal-500 flex-shrink-0" />}

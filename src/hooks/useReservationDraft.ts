@@ -30,6 +30,8 @@ export interface ReservationDraftData {
   savedAt: string;       // ISO timestamp
   orgId: string;
   defaults?: any;        // slot defaults al momento de crear el borrador
+  /** Cantidad capturada en tipos de carga dinámicos */
+  cargoQuantity?: string;
 }
 
 export interface DraftContextCheck {

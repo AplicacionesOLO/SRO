@@ -443,6 +443,7 @@ export default function ReservationModal({
         setShowDraftBanner(true);
         // El draft tiene sus propios valores; no necesitamos backfill de statusId
         statusIdPendingRef.current = false;
+        setCargoQuantity(draft.cargoQuantity ?? '');
       } else {
         // Sin borrador: inicialización normal
         // Si statuses aún están vacíos, el statusId quedará '' y se backfilleará después
@@ -487,8 +488,8 @@ export default function ReservationModal({
   // ── Auto-save del borrador (500 ms debounce, solo nueva reserva) ──────────
   useEffect(() => {
     if (!isOpen || !isNewReservation) return;
-    saveDraft({ formData, isImported, cancelReason, recurrenceConfig, defaults });
-  }, [formData, isImported, cancelReason, recurrenceConfig, isOpen, isNewReservation]);
+    saveDraft({ formData, isImported, cancelReason, recurrenceConfig, defaults, cargoQuantity });
+  }, [formData, isImported, cancelReason, recurrenceConfig, isOpen, isNewReservation, cargoQuantity]);
 
   const isProviderFieldDisabled = allowedProviders.length === 1;
   const hasNoProviders = allowedProviders.length === 0;
@@ -1495,8 +1496,8 @@ export default function ReservationModal({
                     </div>
 
                     {/* ✅ Tipo de operación */}
-                    <div className="bg-white border border-gray-200 rounded-xl p-4">
-                      <h4 className="text-sm font-semibold text-gray-900 mb-4">Tipo de operación</h4>
+                    <div className={`bg-white border rounded-xl p-4 ${!formData.operationType && !isReadOnly ? 'border-red-300' : 'border-gray-200'}`}>
+                      <h4 className="text-sm font-semibold text-gray-900 mb-4">Tipo de operación *</h4>
                       <div className="flex gap-2 flex-wrap">
                         {[
                           { value: 'distribucion', label: 'Distribución', icon: 'ri-truck-line' },
@@ -1526,7 +1527,9 @@ export default function ReservationModal({
                         })}
                       </div>
                       {!isReadOnly && (
-                        <p className="mt-2 text-xs text-gray-500">Seleccioná el tipo de operación que clasifica esta reserva.</p>
+                        <p className="mt-2 text-xs text-gray-500">
+                          Seleccioná el tipo de operación que clasifica esta reserva. Este campo es obligatorio.
+                        </p>
                       )}
                     </div>
 
@@ -2101,9 +2104,9 @@ export default function ReservationModal({
               {!isReadOnly && (
                 <button
                   type="submit"
-                  disabled={saving || hasNoProviders}
+                  disabled={saving || hasNoProviders || !formData.operationType}
                   className="px-4 py-2.5 bg-teal-600 text-white text-sm font-semibold rounded-lg hover:bg-teal-700 transition-colors whitespace-nowrap disabled:opacity-50 shadow-sm"
-                  title={hasNoProviders ? 'No podés crear reservas sin proveedores asignados' : ''}
+                  title={hasNoProviders ? 'No podés crear reservas sin proveedores asignados' : !formData.operationType ? 'Seleccioná un tipo de operación para guardar' : ''}
                 >
                   {saving ? 'Guardando...' : reservation ? 'Guardar Cambios' : 'Crear Reserva'}
                 </button>

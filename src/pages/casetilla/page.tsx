@@ -228,6 +228,8 @@ export default function CasetillaPage() {
   const isFormOpenRef = useRef(false);
   const selectedExitRef = useRef<ExitEligibleReservation | null>(null);
   const wasFormOpenRef = useRef(false);
+  // ── Canal Realtime activo — evita suscripciones duplicadas por re-montaje ──
+  const realtimeChannelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
   // ── Aviso de actualizaciones pendientes (discreto) ──────────────────────
   const [pendingUpdateBanner, setPendingUpdateBanner] = useState(false);
 
@@ -260,6 +262,8 @@ export default function CasetillaPage() {
 
   useEffect(() => {
     if (!orgId) return;
+    // ── Deduplicación: si ya existe canal activo, no crear otro ──────────
+    if (realtimeChannelRef.current) return;
 
     const channel = supabase
       .channel(`casetilla_reservations_rt_${orgId}`)
@@ -282,7 +286,7 @@ export default function CasetillaPage() {
             return;
           }
 
-          // Debounce: agrupar múltiples eventos en una sola recarga
+          // Debounce: agrupar múltiples eventos en una sola recarga (1200ms)
           if (casetillaRealtimeDebounceRef.current) {
             clearTimeout(casetillaRealtimeDebounceRef.current);
           }
@@ -297,17 +301,22 @@ export default function CasetillaPage() {
             } else if (vm === 'NO_SHOW') {
               loadNoShowRef.current();
             }
-          }, 800);
+          }, 1200);
         }
       )
       .subscribe();
+
+    realtimeChannelRef.current = channel;
 
     return () => {
       if (casetillaRealtimeDebounceRef.current) {
         clearTimeout(casetillaRealtimeDebounceRef.current);
         casetillaRealtimeDebounceRef.current = null;
       }
-      supabase.removeChannel(channel);
+      if (realtimeChannelRef.current) {
+        supabase.removeChannel(realtimeChannelRef.current);
+        realtimeChannelRef.current = null;
+      }
     };
   }, [orgId]);
 
