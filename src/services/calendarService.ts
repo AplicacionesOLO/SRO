@@ -282,10 +282,11 @@ export const calendarService = {
             .select('id, name, email')
             .in('id', creatorIds);
           const profileMap = new Map((profiles || []).map((p: any) => [p.id, p]));
-          return result.map((r) => ({
+          const enriched = result.map((r) => ({
             ...r,
             creator: profileMap.get(r.created_by) ?? null,
           }));
+          return enriched;
         }
       }
 
@@ -335,10 +336,11 @@ export const calendarService = {
           .select('id, name, email')
           .in('id', creatorIds);
         const profileMap = new Map((profiles || []).map((p: any) => [p.id, p]));
-        return result.map((r) => ({
+        const enriched = result.map((r) => ({
           ...r,
           creator: profileMap.get(r.created_by) ?? null,
         }));
+        return enriched;
       }
     }
 
@@ -370,7 +372,6 @@ export const calendarService = {
       if (error) {
         return [];
       }
-
       return data || [];
     }
 
@@ -405,12 +406,11 @@ export const calendarService = {
     if (error) {
       return [];
     }
-
     return data || [];
   },
 
-  async getDockTimeBlocks(orgId: string, startDate: string, endDate: string): Promise<DockTimeBlock[]> {
-    const { data, error } = await supabase
+  async getDockTimeBlocks(orgId: string, startDate: string, endDate: string, allowedDockIds?: string[]): Promise<DockTimeBlock[]> {
+    let query = supabase
       .from('dock_time_blocks')
       .select('*')
       .eq('org_id', orgId)
@@ -418,6 +418,12 @@ export const calendarService = {
       .lt('start_datetime', endDate)
       .gt('end_datetime', startDate)
       .order('start_datetime', { ascending: true });
+
+    if (allowedDockIds && allowedDockIds.length > 0) {
+      query = query.in('dock_id', allowedDockIds);
+    }
+
+    const { data, error } = await query;
 
     if (error) {
       return [];
@@ -432,10 +438,11 @@ export const calendarService = {
 
       const profileMap = new Map(profiles?.map((p) => [p.id, p]) || []);
 
-      return data.map((block) => ({
+      const enriched = data.map((block) => ({
         ...block,
         creator: profileMap.get(block.created_by) || undefined,
       }));
+      return enriched;
     }
 
     return data || [];
@@ -512,8 +519,6 @@ export const calendarService = {
       return cached.dockIds;
     }
 
-    const t0 = performance.now();
-
     // 1. Traer solo id, warehouse_id — SIN joins
     let query = supabase
       .from('docks')
@@ -566,14 +571,7 @@ export const calendarService = {
       }
     }
 
-    const t1 = performance.now();
-
-    // Cachear resultado
-    dockIdsCache.set(cacheKey, {
-      dockIds: filteredIds,
-      timestamp: Date.now(),
-    });
-
+    dockIdsCache.set(cacheKey, { dockIds: filteredIds, timestamp: Date.now() });
     return filteredIds;
   },
 
@@ -621,7 +619,6 @@ export const calendarService = {
     let filteredData = data as any[];
 
     // ── SEGREGACIÓN por clientes asignados al usuario ─────────────────────
-    const tSeg0 = performance.now();
     if (allowedClientIds && allowedClientIds.length > 0) {
       const allDockIds = filteredData.map((d: any) => d.id);
 
@@ -653,17 +650,20 @@ export const calendarService = {
       }
     }
 
-    if (filteredData.length === 0) return [];
+    if (filteredData.length === 0) {
+      return [];
+    }
 
     // Enriquecer cada dock con el timezone de su almacén
     // Si se pasó un mapa de timezones desde el contexto, usarlo directamente
     if (warehouseTimezoneMap && warehouseTimezoneMap.size > 0) {
-      return filteredData.map((dock: any) => ({
+      const result = filteredData.map((dock: any) => ({
         ...dock,
         warehouse_timezone: dock.warehouse_id
           ? (warehouseTimezoneMap.get(dock.warehouse_id) || null)
           : null,
       }));
+      return result;
     }
 
     // Fallback: query a warehouses
@@ -682,12 +682,13 @@ export const calendarService = {
       });
     }
 
-    return filteredData.map((dock: any) => ({
+    const result = filteredData.map((dock: any) => ({
       ...dock,
       warehouse_timezone: dock.warehouse_id
         ? (resolvedTimezoneMap.get(dock.warehouse_id) || null)
         : null,
     }));
+    return result;
   },
 
   async getWarehouses(orgId: string): Promise<Warehouse[]> {
