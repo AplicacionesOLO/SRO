@@ -32,6 +32,10 @@ export interface ReservationDraftData {
   defaults?: any;        // slot defaults al momento de crear el borrador
   /** Cantidad capturada en tipos de carga dinámicos */
   cargoQuantity?: string;
+  /** Estado de reserva consolidada */
+  isConsolidated?: boolean;
+  /** Proveedores consolidados */
+  consolidatedProviders?: Array<{ provider_id: string; provider_name: string; package_quantity: number }>;
 }
 
 export interface DraftContextCheck {

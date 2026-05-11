@@ -142,6 +142,13 @@ export default function CalendarioPage() {
   const [allocationError, setAllocationError] = useState<string>('');
   const [enabledDockIds, setEnabledDockIds] = useState<Set<string>>(new Set());
   const [nowTz, setNowTz] = useState<Date>(new Date());
+
+  // Estados para reserva consolidada desde el pre-modal
+  const [preIsConsolidated, setPreIsConsolidated] = useState(false);
+  const [preConsolidatedProviders, setPreConsolidatedProviders] = useState<
+    Array<{ provider_id: string; provider_name: string; package_quantity: number }>
+  >([]);
+
   const bodyScrollRef = useRef<HTMLDivElement | null>(null);
   const headerInnerRef = useRef<HTMLDivElement | null>(null);
   const rafRef = useRef<number | null>(null);
@@ -631,14 +638,14 @@ export default function CalendarioPage() {
         setReserveModalSlot({ ...copyFields, dock_id: dockId, start_datetime: cellStart.toISOString(), end_datetime: calculatedEnd.toISOString() });
         setCopyOfReservationId(_copyOfId || null); setCopyDraft(null);
       } else {
-        setReserveModalSlot({ dock_id: dockId, start_datetime: cellStart.toISOString(), end_datetime: calculatedEnd.toISOString(), cargo_type: preCargoTypeId, shipper_provider: preProviderId, quantity_value: preQuantityValue });
+        setReserveModalSlot({ dock_id: dockId, start_datetime: cellStart.toISOString(), end_datetime: calculatedEnd.toISOString(), cargo_type: preCargoTypeId, shipper_provider: preProviderId, quantity_value: preQuantityValue, is_consolidated: preIsConsolidated, consolidated_providers: preConsolidatedProviders });
       }
       setSelectedReservation(null); setReserveModalOpen(true);
-      setSelectionMode(false); setRequiredMinutes(0); setPreCargoTypeId(''); setPreProviderId(''); setPreQuantityValue(null);
+      setSelectionMode(false); setRequiredMinutes(0); setPreCargoTypeId(''); setPreProviderId(''); setPreQuantityValue(null); setPreIsConsolidated(false); setPreConsolidatedProviders([]);
       return;
     }
     handleSelectSlot({ dockId, date: day.toISOString(), time: timeSlot.label, eventType: 'free', startTime: cellStart, endTime: cellEnd });
-  }, [handleSelectSlot, selectionMode, isSlotEligible, requiredMinutes, preCargoTypeId, preProviderId, slotInterval, isWithinBusinessHours, copyDraft]);
+  }, [handleSelectSlot, selectionMode, isSlotEligible, requiredMinutes, preCargoTypeId, preProviderId, slotInterval, isWithinBusinessHours, copyDraft, warehouseTimezone]);
 
   const handleDragStart = (e: React.DragEvent, event: CalendarEvent) => {
     if (event.type === 'reservation' && canMove) { setDraggedEvent(event); e.dataTransfer.effectAllowed = 'move'; }
@@ -731,9 +738,78 @@ export default function CalendarioPage() {
 
   const [notifyModal, setNotifyModal] = useState({ isOpen: false, type: 'info' as 'info' | 'warning' | 'error' | 'success', title: '', message: '' });
 
-  const handlePreReservationConfirm = useCallback(async (payload: { cargoTypeId: string; providerId: string; clientId: string; clientIds: string[]; requiredMinutes: number; quantityValue?: number | null }) => {
+  const handlePreReservationConfirm = useCallback(async (payload: { cargoTypeId: string; providerId: string; clientId: string; clientIds: string[]; requiredMinutes: number; quantityValue?: number | null; isConsolidated?: boolean; consolidatedProviders?: Array<{ provider_id: string; provider_name: string; package_quantity: number }> }) => {
     setPreCargoTypeId(payload.cargoTypeId); setPreProviderId(payload.providerId); setRequiredMinutes(payload.requiredMinutes); setPreQuantityValue(payload.quantityValue ?? null); setPreModalOpen(false);
+    setPreIsConsolidated(payload.isConsolidated ?? false);
+    setPreConsolidatedProviders(payload.consolidatedProviders ?? []);
     setAllocationLoading(true); setAllocationError(''); setAllocationRule(null);
+
+    // ─── FLUJO CONSOLIDADO ────────────────────────────────────────────────────
+    if (payload.isConsolidated && payload.consolidatedProviders && payload.consolidatedProviders.length > 0) {
+      const providerIds = payload.consolidatedProviders.map((cp) => cp.provider_id);
+      const providerNameMap: Record<string, string> = {};
+      for (const cp of payload.consolidatedProviders) {
+        providerNameMap[cp.provider_id] = cp.provider_name;
+      }
+
+      try {
+        const { rule, missingProviderNames, error } = await dockAllocationService.getDockAllocationIntersectionRule(
+          orgId!,
+          providerIds,
+          providerNameMap,
+          warehouseId,
+        );
+
+        if (missingProviderNames.length > 0) {
+          setAllocationError(
+            `El proveedor "${missingProviderNames[0]}" no tiene cliente vinculado. No se pueden aplicar reglas para el consolidado.`
+          );
+          setAllocationRule(null);
+          setAllocationLoading(false);
+          setSelectionMode(true);
+          return;
+        }
+
+        if (error) {
+          setAllocationError(error);
+          setAllocationRule(null);
+          setAllocationLoading(false);
+          setSelectionMode(true);
+          return;
+        }
+
+        if (rule && rule.clientDocks.length === 0 && !rule.allowAllDocks) {
+          setAllocationError(
+            'No hay andenes disponibles que cumplan las reglas de todos los proveedores del consolidado.'
+          );
+          setAllocationRule(null);
+          setAllocationLoading(false);
+          setSelectionMode(true);
+          return;
+        }
+
+        if (rule) {
+          setAllocationRule(rule);
+          setAllocationError('');
+        } else {
+          setAllocationError(
+            'No se pudieron cargar las reglas del cliente. Contactá a un administrador.'
+          );
+          setAllocationRule(null);
+        }
+      } catch (err: any) {
+        setAllocationError(
+          'Error al calcular la intersección de andenes para el consolidado. Contactá a un administrador.'
+        );
+        setAllocationRule(null);
+      } finally {
+        setAllocationLoading(false);
+        setSelectionMode(true);
+      }
+      return;
+    }
+
+    // ─── FLUJO NORMAL (no consolidado) ────────────────────────────────────────
     const clientId = payload.clientId;
     const clientIds = payload.clientIds || (clientId ? [clientId] : []);
     if (clientIds.length === 0) { setAllocationError('No se encontró un cliente vinculado al proveedor. Las reglas de andenes no se aplicarán.'); setAllocationRule(null); setSelectionMode(true); return; }
@@ -746,7 +822,7 @@ export default function CalendarioPage() {
   }, [orgId, warehouseId]);
 
   const handleExitSelectionMode = useCallback(() => {
-    setSelectionMode(false); setRequiredMinutes(0); setPreCargoTypeId(''); setPreProviderId(''); setPreQuantityValue(null); setAllocationRule(null); setAllocationError(''); setEnabledDockIds(new Set());
+    setSelectionMode(false); setRequiredMinutes(0); setPreCargoTypeId(''); setPreProviderId(''); setPreQuantityValue(null); setPreIsConsolidated(false); setPreConsolidatedProviders([]); setAllocationRule(null); setAllocationError(''); setEnabledDockIds(new Set());
   }, []);
 
   useEffect(() => { if (!orgId) return; providersService.getActive(orgId).then(setProviders).catch(() => {}); }, [orgId]);

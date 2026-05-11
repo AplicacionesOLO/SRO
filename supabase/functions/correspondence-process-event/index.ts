@@ -1,7 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const VERSION = "v931-restored-no-jwt-verify";
+const VERSION = "v947-consolidated-vars";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -107,14 +107,22 @@ async function resolveCasetillaPhotos(supabase: any, reservationId: string, stat
   return `<div style="margin:12px 0;"><p style="font-size:13px;font-weight:600;color:#374151;margin-bottom:8px;">Fotos del punto de control (${fotos.length} imagen${fotos.length !== 1 ? "es" : ""}):</p>${imgs}</div>`.trim();
 }
 
+function normalizeEmails(emails: string[]): string[] {
+  return emails
+    .map((e) => e.trim().toLowerCase())
+    .filter((e) => e.includes("@"));
+}
+
 async function resolveRecipients(
   rule: any,
   orgId: string,
-  supabase: any
-): Promise<{ toEmails: string[]; ccEmails: string[]; bccEmails: string[] }> {
+  supabase: any,
+  reservationCreatedBy: string | null
+): Promise<{ toEmails: string[]; ccEmails: string[]; bccEmails: string[]; creatorEmail: string | null }> {
   let toEmails: string[] = [];
   let ccEmails: string[] = [];
   let bccEmails: string[] = [];
+  let creatorEmail: string | null = null;
 
   const asEmailArr = (v: any): string[] =>
     Array.isArray(v) ? v.filter((x: any) => typeof x === "string" && x.includes("@")) : [];
@@ -214,11 +222,123 @@ async function resolveRecipients(
     }
   }
 
+  if (rule.include_creator_recipient === true && reservationCreatedBy) {
+    const { data: creatorProfile } = await supabase
+      .from("profiles")
+      .select("email")
+      .eq("id", reservationCreatedBy)
+      .maybeSingle();
+
+    if (creatorProfile?.email) {
+      creatorEmail = creatorProfile.email.trim().toLowerCase();
+      if (creatorEmail.includes("@")) {
+        toEmails = [...toEmails, creatorEmail];
+        console.log("[CORR] creator recipient added", { creatorId: reservationCreatedBy, email: creatorEmail });
+      } else {
+        console.warn("[CORR] creator email invalid", { creatorId: reservationCreatedBy, email: creatorProfile.email });
+      }
+    } else {
+      console.warn("[CORR] creator email not found", { creatorId: reservationCreatedBy });
+    }
+  }
+
+  const normalizedTo = normalizeEmails(toEmails);
+
+  console.log("[CORR] final recipients", {
+    ruleId: rule.id,
+    manualCount: asEmailArr(rule.recipients_emails).length,
+    creatorIncluded: rule.include_creator_recipient === true,
+    creatorEmail,
+    finalCount: normalizedTo.length,
+    toEmails: normalizedTo,
+  });
+
   return {
-    toEmails: [...new Set(toEmails.filter(Boolean))],
-    ccEmails: [...new Set(ccEmails.filter(Boolean))],
-    bccEmails: [...new Set(bccEmails.filter(Boolean))],
+    toEmails: [...new Set(normalizedTo)].filter(Boolean),
+    ccEmails: [...new Set(normalizeEmails(ccEmails))].filter(Boolean),
+    bccEmails: [...new Set(normalizeEmails(bccEmails))].filter(Boolean),
+    creatorEmail,
   };
+}
+
+async function generateQRDataUrl(reservationId: string): Promise<string | null> {
+  try {
+    const payload = JSON.stringify({ type: "sro_reservation", reservation_id: reservationId });
+    const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=400x400&data=${encodeURIComponent(payload)}`;
+    const resp = await fetch(qrUrl);
+    if (!resp.ok) return null;
+    const buffer = await resp.arrayBuffer();
+    const base64 = btoa(String.fromCharCode(...new Uint8Array(buffer)));
+    return `data:image/png;base64,${base64}`;
+  } catch (e: any) {
+    console.warn("[QR] generateQRDataUrl error", e?.message ?? String(e));
+    return null;
+  }
+}
+
+async function ensureReservationQrImageUrl(
+  supabase: any,
+  orgId: string,
+  reservationId: string,
+  existingQrImageUrl: string | null
+): Promise<string> {
+  if (existingQrImageUrl && existingQrImageUrl.startsWith("http")) {
+    console.log("[CORR] qr_image_url found", { reservationId, url: existingQrImageUrl });
+    return existingQrImageUrl;
+  }
+
+  console.log("[CORR] qr_image_url missing, attempting inline generation", { reservationId });
+
+  const dataUrl = await generateQRDataUrl(reservationId);
+  if (!dataUrl) {
+    console.error("[CORR] qr_image_url inline generation failed (dataUrl null)", { reservationId });
+    return "";
+  }
+
+  try {
+    const base64Data = dataUrl.replace(/^data:image\/png;base64,/, "");
+    const binary = Uint8Array.from(atob(base64Data), (c) => c.charCodeAt(0));
+
+    const path = `${orgId}/reservations/${reservationId}/qr.png`;
+    const { error: uploadError } = await supabase.storage
+      .from("reservation-qrs")
+      .upload(path, binary, {
+        cacheControl: "3600",
+        upsert: true,
+        contentType: "image/png",
+      });
+
+    if (uploadError) {
+      console.error("[CORR] qr_image_url upload error", { reservationId, error: uploadError.message });
+      return "";
+    }
+
+    const { data: urlData } = supabase.storage.from("reservation-qrs").getPublicUrl(path);
+    const publicUrl = urlData?.publicUrl ?? "";
+
+    if (!publicUrl) {
+      console.error("[CORR] qr_image_url publicUrl empty", { reservationId });
+      return "";
+    }
+
+    const { error: updateError } = await supabase
+      .from("reservations")
+      .update({ qr_image_url: publicUrl })
+      .eq("id", reservationId)
+      .eq("org_id", orgId);
+
+    if (updateError) {
+      console.error("[CORR] qr_image_url update reservations error", { reservationId, error: updateError.message });
+    } else {
+      console.log("[CORR] qr_image_url saved to reservations", { reservationId, publicUrl });
+    }
+
+    console.log("[CORR] qr_image_url inline generation success", { reservationId, publicUrl });
+    return publicUrl;
+  } catch (e: any) {
+    console.error("[CORR] qr_image_url inline generation exception", { reservationId, error: e?.message ?? String(e) });
+    return "";
+  }
 }
 
 serve(async (req) => {
@@ -231,13 +351,13 @@ serve(async (req) => {
     const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
     if (!supabaseUrl || !serviceRoleKey) return json(500, { error: "Missing env vars", reqId });
 
-    // Use service role client - no JWT validation needed (verify_jwt: false at gateway)
     const supabase = createClient(supabaseUrl, serviceRoleKey);
 
     let body: Body | null = null;
     try { body = (await req.json()) as Body; } catch { return json(400, { error: "Invalid JSON", reqId }); }
 
-    const { orgId, reservationId, actorUserId, eventType, statusFromId, statusToId } = body ?? ({} as any);
+    const b: Body = body || { orgId: "", reservationId: "", actorUserId: "", eventType: "", statusFromId: null, statusToId: null };
+    const { orgId, reservationId, actorUserId, eventType, statusFromId, statusToId } = b;
 
     console.log("[correspondence-process-event][REQUEST]", { reqId, version: VERSION, orgId: !!orgId, reservationId, eventType });
 
@@ -247,7 +367,7 @@ serve(async (req) => {
 
     const { data: reservation, error: resErr } = await supabase
       .from("reservations")
-      .select("id, dock_id, dua, invoice, driver, truck_plate, shipper_provider, start_datetime, end_datetime, created_by, status_id")
+      .select("id, dock_id, dua, invoice, driver, truck_plate, shipper_provider, start_datetime, end_datetime, created_by, status_id, qr_image_url, qr_card_image_url, is_consolidated, quantity_value")
       .eq("id", reservationId)
       .maybeSingle();
 
@@ -364,6 +484,81 @@ serve(async (req) => {
       }
     }
 
+    // ─── Consolidated providers variables ──────────────────────────────
+    const isConsolidated = (reservation as any)?.is_consolidated ?? false;
+    const quantityValue = (reservation as any)?.quantity_value ?? null;
+
+    let consolidatedProvidersList = "";
+    let consolidatedProvidersTable = "";
+    let consolidatedTotalPackages = "";
+
+    if (isConsolidated) {
+      console.log("[CORR] consolidated reservation detected", { reservationId });
+      try {
+        const { data: cpRows, error: cpErr } = await supabase
+          .from("reservation_consolidated_providers")
+          .select("provider_id, package_quantity")
+          .eq("reservation_id", reservationId);
+
+        if (cpErr) {
+          console.warn("[CORR] error fetching consolidated providers", { reservationId, error: cpErr.message });
+        }
+
+        const rows = cpRows ?? [];
+        console.log("[CORR] consolidated providers count", { reservationId, count: rows.length });
+
+        if (rows.length === 0) {
+          console.warn("[CORR] consolidated providers missing", { reservationId });
+        }
+
+        if (rows.length > 0) {
+          const providerIds = rows.map((r: any) => r.provider_id).filter(Boolean);
+          let providerMap = new Map<string, string>();
+          if (providerIds.length > 0) {
+            const { data: providersData } = await supabase
+              .from("providers")
+              .select("id, name")
+              .in("id", providerIds);
+            providerMap = new Map((providersData ?? []).map((p: any) => [p.id, p.name]));
+          }
+
+          consolidatedProvidersList = rows
+            .map((r: any) => {
+              const name = providerMap.get(r.provider_id) ?? "Proveedor desconocido";
+              const qty = r.package_quantity ?? 0;
+              return `${name} - ${qty} bulto${qty !== 1 ? "s" : ""}`;
+            })
+            .join("\n");
+
+          const tableRows = rows
+            .map((r: any) => {
+              const name = providerMap.get(r.provider_id) ?? "Proveedor desconocido";
+              const qty = r.package_quantity ?? 0;
+              return `<tr><td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;">${name}</td><td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;text-align:right;">${qty}</td></tr>`;
+            })
+            .join("");
+
+          consolidatedProvidersTable = `<table style="border-collapse:collapse;width:100%;max-width:400px;font-family:Arial,sans-serif;font-size:14px;"><thead><tr style="background:#f3f4f6;"><th style="padding:8px 12px;border-bottom:2px solid #d1d5db;text-align:left;font-weight:600;">Proveedor</th><th style="padding:8px 12px;border-bottom:2px solid #d1d5db;text-align:right;font-weight:600;">Bultos</th></tr></thead><tbody>${tableRows}</tbody></table>`;
+        }
+
+        consolidatedTotalPackages = quantityValue !== null ? String(quantityValue) : "";
+      } catch (e: any) {
+        console.warn("[CORR] consolidated providers exception", { reservationId, error: e?.message });
+      }
+    }
+    // ────────────────────────────────────────────────────────────────────
+
+    const rawQrImageUrl: string | null = (reservation as any)?.qr_image_url ?? null;
+    const qrImageUrl = await ensureReservationQrImageUrl(supabase, orgId, reservationId, rawQrImageUrl);
+
+    const rawQrCardImageUrl: string | null = (reservation as any)?.qr_card_image_url ?? null;
+    const qrCardImageUrl = (rawQrCardImageUrl && rawQrCardImageUrl.startsWith("http")) ? rawQrCardImageUrl : "";
+    if (qrCardImageUrl) {
+      console.log("[CORR] qr_card_image_url found", { reservationId, url: qrCardImageUrl });
+    } else {
+      console.log("[CORR] qr_card_image_url missing", { reservationId });
+    }
+
     const templateCtx: Record<string, any> = {
       reservation_id: reservation.id ?? "",
       dock: dockName,
@@ -381,9 +576,20 @@ serve(async (req) => {
       created_by: createdByName,
       actor: actorName,
       fotos: "",
+      qr_image_url: qrImageUrl,
+      qr_image: qrImageUrl
+        ? '<img src="' + qrImageUrl + '" alt="QR de la reserva" style="max-width:180px;width:180px;height:auto;border:1px solid #e5e7eb;border-radius:8px;" />'
+        : '',
+      qr_card_image_url: qrCardImageUrl,
+      qr_card_image: qrCardImageUrl
+        ? '<img src="' + qrCardImageUrl + '" alt="Ficha de cita" style="max-width:420px;width:100%;height:auto;border-radius:12px;border:1px solid #e5e7eb;" />'
+        : '',
+      is_consolidated: isConsolidated ? "Sí" : "No",
+      consolidated_total_packages: consolidatedTotalPackages,
+      consolidated_providers_list: consolidatedProvidersList,
+      consolidated_providers_table: consolidatedProvidersTable,
     };
 
-    // Siempre usar aplicacionesolo@ologistics.com como remitente
     const smtpFrom = "aplicacionesolo@ologistics.com";
     const smtpServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
 
@@ -409,7 +615,7 @@ serve(async (req) => {
       if (rule.sender_mode === "actor") senderUserId = actorUserId;
       if (rule.sender_mode === "fixed" && rule.sender_user_id) senderUserId = rule.sender_user_id;
 
-      const { toEmails, ccEmails, bccEmails } = await resolveRecipients(rule, orgId, supabase);
+      const { toEmails, ccEmails, bccEmails } = await resolveRecipients(rule, orgId, supabase, createdById);
 
       if (toEmails.length === 0) {
         failed++;

@@ -36,6 +36,8 @@ export interface CorrespondenceRule {
   include_casetilla_photos: boolean;
   /** Solo aplica cuando status_to es "Finalizada". Si true, la regla solo se dispara si la reserva tiene DUA (importación). */
   require_dua: boolean;
+  /** Si true, incluye automáticamente al usuario que creó la reserva como destinatario adicional. */
+  include_creator_recipient: boolean;
   created_by: string;
   created_at: string;
   updated_by: string | null;
@@ -125,6 +127,8 @@ export interface CorrespondenceRuleFormData {
   include_casetilla_photos: boolean;
   /** Solo aplica cuando status_to es "Finalizada". Si true, la regla solo se dispara si la reserva tiene DUA (importación). */
   require_dua: boolean;
+  /** Si true, incluye automáticamente al usuario que creó la reserva como destinatario adicional. */
+  include_creator_recipient: boolean;
 }
 
 export const CORRESPONDENCE_EVENT_LABELS: Record<CorrespondenceEventType, string> = {
@@ -162,5 +166,13 @@ export const TEMPLATE_VARIABLES = [
   { key: '{{provider}}', label: 'Proveedor / Expedidor' },
   { key: '{{created_by}}', label: 'Creado por' },
   { key: '{{actor}}', label: 'Usuario que ejecutó la acción' },
+  { key: '{{qr_image}}', label: 'Imagen QR de la reserva' },
+  { key: '{{qr_image_url}}', label: 'URL del QR de la reserva' },
+  { key: '{{qr_card_image}}', label: 'Ficha de cita completa (imagen)' },
+  { key: '{{qr_card_image_url}}', label: 'URL de la ficha de cita' },
   { key: '{{fotos}}', label: 'Fotos del punto de control (In/Out)' },
+  { key: '{{is_consolidated}}', label: '¿Es reserva consolidada?' },
+  { key: '{{consolidated_total_packages}}', label: 'Total de bultos del consolidado' },
+  { key: '{{consolidated_providers_list}}', label: 'Lista de proveedores consolidados (texto)' },
+  { key: '{{consolidated_providers_table}}', label: 'Tabla HTML de proveedores consolidados' },
 ];

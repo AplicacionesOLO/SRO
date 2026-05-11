@@ -20,6 +20,8 @@ export interface Reservation {
   cancel_reason: string | null;
   cancelled_by: string | null;
   cancelled_at: string | null;
+  /** Indica si la reserva es consolidada (múltiples proveedores) */
+  is_consolidated?: boolean;
   created_by: string;
   created_at: string;
   updated_by: string | null;
@@ -40,6 +42,11 @@ export interface Reservation {
   /** Cantidad capturada para tipos de carga dinámicos (contenedores, bultos, líneas, etc.) */
   quantity_value?: number | null;
 
+  /** URL pública del QR simple */
+  qr_image_url?: string | null;
+  /** URL pública de la ficha de cita completa */
+  qr_card_image_url?: string | null;
+
   status?: {
     name: string;
     code: string;
@@ -51,6 +58,18 @@ export interface Reservation {
     name: string | null;
     email: string | null;
   } | null;
+}
+
+/** Proveedor dentro de una reserva consolidada */
+export interface ReservationConsolidatedProvider {
+  id: string;
+  reservation_id: string;
+  org_id: string;
+  provider_id: string;
+  package_quantity: number;
+  created_at: string;
+  /** Nombre del proveedor (enriquecido en joins) */
+  provider_name?: string;
 }
 
 export interface DockTimeBlock {
@@ -195,6 +214,202 @@ function getSegregationCacheKey(
  * Cambiá este bucket name si el tuyo se llama diferente en Supabase Storage.
  */
 const RESERVATION_FILES_BUCKET = 'reservation-files';
+const RESERVATION_QRS_BUCKET = 'reservation-qrs';
+
+const buildQRStoragePath = (orgId: string, reservationId: string) => {
+  return `${orgId}/reservations/${reservationId}/qr.png`;
+};
+
+const getPublicUrlForQR = (path: string) => {
+  const { data } = supabase.storage.from(RESERVATION_QRS_BUCKET).getPublicUrl(path);
+  return data?.publicUrl ?? '';
+};
+
+/**
+ * Genera el QR de una reserva y lo sube a Supabase Storage.
+ * Devuelve la URL pública del QR o null si falla.
+ * Ejecuta en background; NO bloquea el flujo de creación.
+ */
+export async function ensureReservationQR(
+  orgId: string,
+  reservationId: string
+): Promise<string | null> {
+  console.log('[QR] ensureReservationQR START', { reservationId, orgId });
+  try {
+    const { generateQRBlob } = await import('@/utils/reservationQr.utils');
+    const blob = await generateQRBlob(reservationId);
+
+    const path = buildQRStoragePath(orgId, reservationId);
+    console.log('[QR] uploading to storage', { path, bucket: RESERVATION_QRS_BUCKET });
+
+    const { error: uploadError } = await supabase.storage
+      .from(RESERVATION_QRS_BUCKET)
+      .upload(path, blob, {
+        cacheControl: '3600',
+        upsert: true,
+        contentType: 'image/png',
+      });
+
+    if (uploadError) {
+      console.error('[QR] upload error', { reservationId, error: uploadError.message });
+      return null;
+    }
+
+    const publicUrl = getPublicUrlForQR(path);
+    console.log('[QR] upload success', { reservationId, publicUrl });
+
+    // Guardar qr_image_url en la reserva
+    if (publicUrl) {
+      const { error: updateError } = await supabase
+        .from('reservations')
+        .update({ qr_image_url: publicUrl })
+        .eq('id', reservationId)
+        .eq('org_id', orgId);
+
+      if (updateError) {
+        console.error('[QR] update reservations.qr_image_url error', { reservationId, error: updateError.message });
+      } else {
+        console.log('[QR] update reservations.qr_image_url success', { reservationId });
+      }
+    }
+
+    return publicUrl;
+  } catch (err: any) {
+    console.error('[QR] ensureReservationQR error', { reservationId, error: err?.message ?? String(err) });
+    return null;
+  }
+}
+
+const buildQRCardStoragePath = (orgId: string, reservationId: string) => {
+  return `${orgId}/reservations/${reservationId}/card.png`;
+};
+
+const getPublicUrlForQRCard = (path: string) => {
+  const { data } = supabase.storage.from(RESERVATION_QRS_BUCKET).getPublicUrl(path);
+  return data?.publicUrl ?? '';
+};
+
+/**
+ * Genera la ficha de cita (imagen completa tipo tarjeta) y la sube a Storage.
+ * Devuelve la URL pública o null si falla.
+ * Esta función es self-contained: resuelve provider name, timezone, genera canvas y sube.
+ */
+export async function ensureReservationQRCard(
+  orgId: string,
+  reservationId: string
+): Promise<string | null> {
+  console.log('[QR-CARD] ensureReservationQRCard START', { reservationId, orgId });
+
+  try {
+    // 1. Verificar si ya existe
+    const { data: existing } = await supabase
+      .from('reservations')
+      .select('qr_card_image_url')
+      .eq('id', reservationId)
+      .eq('org_id', orgId)
+      .maybeSingle();
+
+    if (existing?.qr_card_image_url) {
+      console.log('[QR-CARD] already exists', { reservationId, url: existing.qr_card_image_url });
+      return existing.qr_card_image_url;
+    }
+
+    // 2. Traer datos de la reserva
+    const { data: reservation, error: resErr } = await supabase
+      .from('reservations')
+      .select('id, org_id, dock_id, shipper_provider, start_datetime, end_datetime, operation_type')
+      .eq('id', reservationId)
+      .eq('org_id', orgId)
+      .maybeSingle();
+
+    if (resErr || !reservation) {
+      console.error('[QR-CARD] fetch reservation error', { reservationId, error: resErr?.message });
+      return null;
+    }
+
+    // 3. Resolver nombre del proveedor
+    let providerName = reservation.shipper_provider || '—';
+    const looksLikeUuid = /^[0-9a-f-]{36}$/i.test(providerName);
+    if (looksLikeUuid) {
+      const { data: providerData } = await supabase
+        .from('providers')
+        .select('name')
+        .eq('id', providerName)
+        .maybeSingle();
+      if (providerData?.name) providerName = providerData.name;
+    }
+
+    // 4. Resolver timezone del almacén
+    let warehouseTimezone = 'America/Costa_Rica';
+    if (reservation.dock_id) {
+      const { data: dockData } = await supabase
+        .from('docks')
+        .select('warehouse_id')
+        .eq('id', reservation.dock_id)
+        .maybeSingle();
+
+      if (dockData?.warehouse_id) {
+        const { data: whData } = await supabase
+          .from('warehouses')
+          .select('timezone')
+          .eq('id', dockData.warehouse_id)
+          .maybeSingle();
+        if (whData?.timezone) warehouseTimezone = whData.timezone;
+      }
+    }
+
+    // 5. Generar imagen de ficha
+    const { generateQRCardBlob } = await import('@/utils/reservationQr.utils');
+    const blob = await generateQRCardBlob({
+      id: reservationId,
+      providerName,
+      startDatetime: reservation.start_datetime,
+      endDatetime: reservation.end_datetime,
+      operationType: reservation.operation_type,
+      warehouseTimezone,
+    });
+
+    // 6. Subir a Storage
+    const path = buildQRCardStoragePath(orgId, reservationId);
+    console.log('[QR-CARD] uploading to storage', { path, bucket: RESERVATION_QRS_BUCKET });
+
+    const { error: uploadError } = await supabase.storage
+      .from(RESERVATION_QRS_BUCKET)
+      .upload(path, blob, {
+        cacheControl: '3600',
+        upsert: true,
+        contentType: 'image/png',
+      });
+
+    if (uploadError) {
+      console.error('[QR-CARD] upload error', { reservationId, error: uploadError.message });
+      return null;
+    }
+
+    // 7. Guardar URL pública en la reserva
+    const publicUrl = getPublicUrlForQRCard(path);
+    console.log('[QR-CARD] upload success', { reservationId, publicUrl });
+
+    if (publicUrl) {
+      const { error: updateError } = await supabase
+        .from('reservations')
+        .update({ qr_card_image_url: publicUrl })
+        .eq('id', reservationId)
+        .eq('org_id', orgId);
+
+      if (updateError) {
+        console.error('[QR-CARD] update reservations.qr_card_image_url error', { reservationId, error: updateError.message });
+      } else {
+        console.log('[QR-CARD] update reservations.qr_card_image_url success', { reservationId });
+      }
+    }
+
+    return publicUrl;
+  } catch (err: any) {
+    console.error('[QR-CARD] ensureReservationQRCard error', { reservationId, error: err?.message ?? String(err) });
+    return null;
+  }
+}
 
 const sanitizeFileName = (name: string) => {
   const clean = name
@@ -766,6 +981,20 @@ export const calendarService = {
       `)
       .eq('id', data.id)
       .single();
+
+    // ✅ Disparar generación de QR en background (no bloqueante)
+    if (reservation.org_id) {
+      ensureReservationQR(reservation.org_id, data.id).catch(() => {
+        // non-blocking: si falla, el QR simplemente no existe
+      });
+    }
+
+    // ✅ Generar ficha de cita (bloqueante con catch, garantiza que exista antes del email)
+    if (reservation.org_id) {
+      await ensureReservationQRCard(reservation.org_id, data.id).catch(() => {
+        // non-breaking: si falla, el correo sigue sin la ficha
+      });
+    }
 
     // Si hay error 403/RLS al leer, no fallar: devolver objeto mínimo
     if (fetchErr) {
@@ -1570,6 +1799,68 @@ export const calendarService = {
       } catch (e) {
         // console.warn('[Calendar] deleteReservationFile.storageRemoveWarning', { path, error: e });
       }
+    }
+  },
+
+  // ============================================================
+  // ✅ RESERVAS CONSOLIDADAS (múltiples proveedores)
+  // ============================================================
+
+  async getReservationConsolidatedProviders(
+    orgId: string,
+    reservationId: string
+  ): Promise<ReservationConsolidatedProvider[]> {
+    const { data, error } = await supabase
+      .from('reservation_consolidated_providers')
+      .select(`
+        *,
+        provider:providers(name)
+      `)
+      .eq('org_id', orgId)
+      .eq('reservation_id', reservationId)
+      .order('created_at', { ascending: true });
+
+    if (error) {
+      return [];
+    }
+
+    return (data || []).map((row: any) => ({
+      ...row,
+      provider_name: row.provider?.name ?? undefined,
+    }));
+  },
+
+  async saveConsolidatedProviders(
+    orgId: string,
+    reservationId: string,
+    providers: Array<{ provider_id: string; package_quantity: number }>
+  ): Promise<void> {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) throw new Error('Usuario no autenticado');
+
+    // 1. Eliminar líneas existentes
+    const { error: deleteError } = await supabase
+      .from('reservation_consolidated_providers')
+      .delete()
+      .eq('org_id', orgId)
+      .eq('reservation_id', reservationId);
+
+    if (deleteError) throw deleteError;
+
+    // 2. Insertar nuevas líneas
+    if (providers.length > 0) {
+      const rows = providers.map((p) => ({
+        org_id: orgId,
+        reservation_id: reservationId,
+        provider_id: p.provider_id,
+        package_quantity: p.package_quantity,
+      }));
+
+      const { error: insertError } = await supabase
+        .from('reservation_consolidated_providers')
+        .insert(rows);
+
+      if (insertError) throw insertError;
     }
   },
 };

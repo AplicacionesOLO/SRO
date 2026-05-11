@@ -9,6 +9,12 @@ export interface DockAllocationRule {
   clientDocks: { dockId: string; dockOrder: number }[];
 }
 
+export interface DockIntersectionResult {
+  rule: DockAllocationRule | null;
+  missingProviderNames: string[]; // proveedores sin cliente vinculado
+  error?: string;
+}
+
 export const dockAllocationService = {
   /**
    * Given an orgId and clientId, fetch:
@@ -224,6 +230,164 @@ export const dockAllocationService = {
       return result;
     } catch (err) {
       return null;
+    }
+  },
+
+  /**
+   * NEW: Compute the intersection of allowed docks across ALL providers in a consolidated reservation.
+   *
+   * For each provider:
+   *   1. Resolve client_ids via client_providers (+ optional warehouse_clients filter).
+   *   2. If no clients -> provider is "missing" and will be reported.
+   *   3. Load client_rules and client_docks for those client(s).
+   *   4. Determine the dock set for this provider (allow_all_docks? all docks : union of client_docks).
+   *   5. Intersect all provider dock sets.
+   *
+   * The resulting rule:
+   *   - clientId = primary (first client's id)
+   *   - clientName = joined provider names (for display)
+   *   - allowAllDocks = true ONLY if ALL providers allowAllDocks and intersection is not empty
+   *   - clientDocks = ordered intersection, preserving dock_order from first occurrence
+   *   - mode = if all agree, use that; otherwise SEQUENTIAL
+   */
+  async getDockAllocationIntersectionRule(
+    orgId: string,
+    providerIds: string[],
+    providerNameMap: Record<string, string>,
+    warehouseId?: string | null,
+    allDockIds?: string[]
+  ): Promise<DockIntersectionResult> {
+    if (!orgId || providerIds.length === 0) {
+      return { rule: null, missingProviderNames: [], error: 'No hay proveedores en el consolidado.' };
+    }
+
+    try {
+      const providerDockSets: Array<{
+        providerId: string;
+        clientIds: string[];
+        allowAll: boolean;
+        docks: { dockId: string; dockOrder: number }[];
+        mode: string;
+      }> = [];
+
+      for (const providerId of providerIds) {
+        const clientIds = await this.resolveClientIdsFromProvider(orgId, providerId, warehouseId);
+
+        if (clientIds.length === 0) {
+          return {
+            rule: null,
+            missingProviderNames: [providerNameMap[providerId] || providerId],
+            error: `El proveedor ${providerNameMap[providerId] || providerId} no tiene cliente vinculado.`,
+          };
+        }
+
+        // Load client_rules for this provider's clients
+        const { data: rulesRows } = await supabase
+          .from('client_rules')
+          .select('client_id, dock_allocation_mode, allow_all_docks')
+          .eq('org_id', orgId)
+          .in('client_id', clientIds);
+
+        // Load client_docks
+        const { data: cdRows } = await supabase
+          .from('client_docks')
+          .select('client_id, dock_id, dock_order')
+          .eq('org_id', orgId)
+          .in('client_id', clientIds)
+          .order('dock_order', { ascending: true });
+
+        const ruleMap = new Map((rulesRows || []).map((r: any) => [r.client_id, r]));
+        const clientDockMap = new Map<string, { dockId: string; dockOrder: number }[]>();
+        for (const cd of (cdRows || []) as any[]) {
+          const arr = clientDockMap.get(cd.client_id) || [];
+          arr.push({ dockId: cd.dock_id, dockOrder: cd.dock_order ?? 999 });
+          clientDockMap.set(cd.client_id, arr);
+        }
+
+        // Union of docks across all clients of this provider
+        const seen = new Set<string>();
+        let allowAll = false;
+        let mode = 'NONE';
+
+        for (const cid of clientIds) {
+          const r = ruleMap.get(cid);
+          if (r?.allow_all_docks === true) allowAll = true;
+          if (r?.dock_allocation_mode) mode = r.dock_allocation_mode;
+
+          const docks = clientDockMap.get(cid) || [];
+          for (const d of docks) {
+            if (!seen.has(d.dockId)) seen.add(d.dockId);
+          }
+        }
+
+        const docks = Array.from(seen).map((dockId) => {
+          // find first dock_order across all clients for this dock
+          let order = 999;
+          for (const cid of clientIds) {
+            const arr = clientDockMap.get(cid) || [];
+            const found = arr.find((d) => d.dockId === dockId);
+            if (found && found.dockOrder < order) order = found.dockOrder;
+          }
+          return { dockId, dockOrder: order };
+        }).sort((a, b) => a.dockOrder - b.dockOrder);
+
+        providerDockSets.push({ providerId, clientIds, allowAll, docks, mode });
+      }
+
+      // If ALL providers have allowAll, we still need to intersect — unless allDockIds is provided
+      // But the intersection of "all" across multiple providers is still "all" if they all allow all.
+      // However, we should intersect with the available docks in the warehouse.
+      const allAllowAll = providerDockSets.every((p) => p.allowAll);
+
+      // Compute intersection of dock sets
+      const intersectDocks = (sets: Array<{ docks: { dockId: string; dockOrder: number }[] }>) => {
+        if (sets.length === 0) return [] as { dockId: string; dockOrder: number }[];
+        // Start with first set
+        let intersection = new Map<string, number>(sets[0].docks.map((d) => [d.dockId, d.dockOrder]));
+        for (let i = 1; i < sets.length; i++) {
+          const nextSet = new Set(sets[i].docks.map((d) => d.dockId));
+          const next = new Map(sets[i].docks.map((d) => [d.dockId, d.dockOrder]));
+          for (const [dockId] of intersection) {
+            if (!nextSet.has(dockId)) {
+              intersection.delete(dockId);
+            } else {
+              // keep minimum order
+              intersection.set(dockId, Math.min(intersection.get(dockId)!, next.get(dockId)!));
+            }
+          }
+        }
+        return Array.from(intersection.entries())
+          .map(([dockId, dockOrder]) => ({ dockId, dockOrder }))
+          .sort((a, b) => a.dockOrder - b.dockOrder);
+      };
+
+      const intersectionDocks = intersectDocks(providerDockSets);
+
+      // Determine combined mode
+      const modes = new Set(providerDockSets.map((p) => p.mode));
+      let combinedMode: DockAllocationRule['dockAllocationMode'] = 'SEQUENTIAL';
+      if (modes.size === 1) {
+        const sole = [...modes][0] as DockAllocationRule['dockAllocationMode'];
+        combinedMode = sole;
+      }
+
+      const providerNames = providerIds.map((id) => providerNameMap[id] || id).join(', ');
+
+      const result: DockAllocationRule = {
+        clientId: providerDockSets[0]?.clientIds[0] || '',
+        clientName: providerNames,
+        dockAllocationMode: combinedMode,
+        allowAllDocks: allAllowAll && intersectionDocks.length > 0,
+        clientDocks: intersectionDocks,
+      };
+
+      return { rule: result, missingProviderNames: [], error: undefined };
+    } catch (err) {
+      return {
+        rule: null,
+        missingProviderNames: [],
+        error: 'Error al calcular la intersección de andenes para el consolidado.',
+      };
     }
   },
 

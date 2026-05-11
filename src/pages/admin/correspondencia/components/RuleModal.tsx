@@ -35,7 +35,7 @@ export default function RuleModal({ isOpen, onClose, onSave, rule, orgId, active
   const [roles, setRoles] = useState<RoleRow[]>([]);
   const [statuses, setStatuses] = useState<StatusRow[]>([]);
 
-  // ✅ Estado para popup de errores/validación
+  // Estado para popup de errores/validación
   const [popup, setPopup] = useState<{
     isOpen: boolean;
     type: 'success' | 'warning' | 'error' | 'info';
@@ -71,8 +71,9 @@ export default function RuleModal({ isOpen, onClose, onSave, rule, orgId, active
     is_active: true,
     include_casetilla_photos: false,
     require_dua: false,
+    include_creator_recipient: false,
     warehouse_id: activeWarehouseId ?? null,
-  } as any);
+  });
 
   const [recipientEmailInput, setRecipientEmailInput] = useState("");
 
@@ -81,7 +82,6 @@ export default function RuleModal({ isOpen, onClose, onSave, rule, orgId, active
 
     let cancelled = false;
 
-    // Cargar almacenes disponibles para el selector de migración
     supabase.from('warehouses').select('id, name').eq('org_id', orgId).order('name')
       .then(({ data }) => { if (!cancelled && data) setWarehouses(data.map((w: any) => ({ id: w.id, name: w.name }))); })
       .catch(() => {});
@@ -113,8 +113,9 @@ export default function RuleModal({ isOpen, onClose, onSave, rule, orgId, active
           is_active: rule.is_active,
           include_casetilla_photos: rule.include_casetilla_photos ?? false,
           require_dua: rule.require_dua ?? false,
+          include_creator_recipient: rule.include_creator_recipient ?? false,
           warehouse_id: (rule as any).warehouse_id ?? activeWarehouseId ?? null,
-        } as any);
+        });
         setRecipientEmailInput("");
       } else {
         resetForm();
@@ -127,18 +128,11 @@ export default function RuleModal({ isOpen, onClose, onSave, rule, orgId, active
   }, [isOpen, rule, orgId]);
 
   const loadData = async (isCancelled: () => boolean) => {
-    // FIX: Validar que orgId existe antes de cargar
     if (!orgId) {
       return;
     }
 
     try {
-      // ============================
-      // FIX: Usuarios (2 queries separadas para evitar PGRST200)
-      // ============================
-      //console.log('[RuleModal] Loading users for orgId:', orgId);
-
-      // Query 1: Obtener user_ids de la organización
       const { data: userOrgData, error: userOrgErr } = await supabase
         .from("user_org_roles")
         .select("user_id")
@@ -149,11 +143,9 @@ export default function RuleModal({ isOpen, onClose, onSave, rule, orgId, active
       }
 
       const userIds = userOrgData?.map((item: any) => item.user_id) || [];
-      //console.log('[RuleModal] Found user_ids:', userIds.length);
 
       let usersData: any[] = [];
 
-      // Query 2: Obtener profiles de esos usuarios
       if (userIds.length > 0) {
         const { data: profilesData, error: profilesErr } = await supabase
           .from("profiles")
@@ -165,9 +157,6 @@ export default function RuleModal({ isOpen, onClose, onSave, rule, orgId, active
         }
       }
 
-      // ============================
-      // Gmail accounts conectadas (connected/active)
-      // ============================
       const { data: gmailAccounts } = await supabase
         .from("gmail_accounts")
         .select("user_id")
@@ -187,9 +176,6 @@ export default function RuleModal({ isOpen, onClose, onSave, rule, orgId, active
         );
       }
 
-      // ============================
-      // Roles (globales, no filtrar por org)
-      // ============================
       const { data: rolesData } = await supabase
         .from("roles")
         .select("id, name")
@@ -199,9 +185,6 @@ export default function RuleModal({ isOpen, onClose, onSave, rule, orgId, active
         setRoles(rolesData.map((r: any) => ({ id: String(r.id), name: String(r.name ?? "") })));
       }
 
-      // ============================
-      // Estados de reserva (filtrados por org) — solo activos
-      // ============================
       const { data: statusesData } = await supabase
         .from("reservation_statuses")
         .select("id, name, color")
@@ -218,12 +201,6 @@ export default function RuleModal({ isOpen, onClose, onSave, rule, orgId, active
           }))
         );
       }
-
-      /**console.log('[RuleModal] loadData complete:', {
-        users: usersData.length,
-        roles: rolesData?.length || 0,
-        statuses: statusesData?.length || 0,
-      });*/
     } catch (error) {
       setPopup({
         isOpen: true,
@@ -256,8 +233,9 @@ export default function RuleModal({ isOpen, onClose, onSave, rule, orgId, active
       is_active: true,
       include_casetilla_photos: false,
       require_dua: false,
+      include_creator_recipient: false,
       warehouse_id: activeWarehouseId ?? null,
-    } as any);
+    });
     setRecipientEmailInput("");
   };
 
@@ -272,13 +250,11 @@ export default function RuleModal({ isOpen, onClose, onSave, rule, orgId, active
     return lower.includes('arrib') || lower.includes('despacha') || lower.includes('dispatch');
   }, [selectedStatusToName]);
 
-  // Muestra la opción DUA solo cuando el estado destino es "Finalizada"
   const showDuaOption = useMemo(() => {
     const lower = selectedStatusToName.toLowerCase();
     return formData.event_type === 'reservation_status_changed' && lower.includes('finaliz');
   }, [selectedStatusToName, formData.event_type]);
 
-  // Al cambiar estado destino, si ya no aplica la opción de fotos, resetear el toggle
   const handleStatusToChange = (value: string) => {
     const newStatusName = statuses.find(s => s.id === value)?.name?.toLowerCase() ?? '';
     const willShowPhoto = newStatusName.includes('arrib') || newStatusName.includes('despacha') || newStatusName.includes('dispatch');
@@ -287,8 +263,8 @@ export default function RuleModal({ isOpen, onClose, onSave, rule, orgId, active
       ...prev,
       status_to_id: value || null,
       include_casetilla_photos: willShowPhoto ? prev.include_casetilla_photos : false,
-      require_dua: willShowDua ? (prev as any).require_dua : false,
-    } as any));
+      require_dua: willShowDua ? prev.require_dua : false,
+    }));
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -317,12 +293,12 @@ export default function RuleModal({ isOpen, onClose, onSave, rule, orgId, active
       }
     }
 
-    if (formData.recipients_mode === "manual" && formData.recipients_emails.length === 0) {
+    if (formData.recipients_mode === "manual" && formData.recipients_emails.length === 0 && !formData.include_creator_recipient) {
       setPopup({
         isOpen: true,
         type: 'warning',
         title: 'Destinatarios requeridos',
-        message: 'Debes agregar al menos un correo destinatario'
+        message: 'Debes agregar al menos un correo destinatario, o activar "Incluir usuario que creó la reserva"'
       });
       return;
     }
@@ -422,7 +398,6 @@ export default function RuleModal({ isOpen, onClose, onSave, rule, orgId, active
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      {/* ✅ Popup de errores/validación */}
       <ConfirmModal
         isOpen={popup.isOpen}
         type={popup.type}
@@ -548,7 +523,7 @@ export default function RuleModal({ isOpen, onClose, onSave, rule, orgId, active
                   ))}
                 </select>
 
-                {/* Toggle de fotos — aparece solo cuando aplica */}
+                {/* Toggle de fotos */}
                 {showPhotoOption && (
                   <div className="mt-3 p-3 bg-teal-50 border border-teal-200 rounded-lg">
                     <label className="flex items-start gap-3 cursor-pointer">
@@ -576,15 +551,15 @@ export default function RuleModal({ isOpen, onClose, onSave, rule, orgId, active
                   </div>
                 )}
 
-                {/* Condición DUA — aparece solo cuando estado destino es "Finalizada" */}
+                {/* Condición DUA */}
                 {showDuaOption && (
                   <div className="mt-3 p-3 bg-amber-50 border border-amber-200 rounded-lg">
                     <label className="flex items-start gap-3 cursor-pointer">
                       <input
                         type="checkbox"
-                        checked={(formData as any).require_dua ?? false}
+                        checked={formData.require_dua}
                         onChange={(e) =>
-                          setFormData((prev) => ({ ...prev, require_dua: e.target.checked } as any))
+                          setFormData((prev) => ({ ...prev, require_dua: e.target.checked }))
                         }
                         className="w-4 h-4 text-amber-600 rounded focus:ring-amber-500 mt-0.5 shrink-0"
                       />
@@ -690,6 +665,29 @@ export default function RuleModal({ isOpen, onClose, onSave, rule, orgId, active
               </select>
             </div>
 
+            {/* Incluir creador de la reserva — disponible en todos los modos */}
+            <div className="p-3 bg-teal-50 border border-teal-200 rounded-lg">
+              <label className="flex items-start gap-3 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={formData.include_creator_recipient}
+                  onChange={(e) =>
+                    setFormData((prev) => ({ ...prev, include_creator_recipient: e.target.checked }))
+                  }
+                  className="w-4 h-4 text-teal-600 rounded focus:ring-teal-500 mt-0.5 shrink-0"
+                />
+                <div>
+                  <p className="text-sm font-medium text-teal-800">
+                    Incluir usuario que creó la reserva como destinatario
+                  </p>
+                  <p className="text-xs text-teal-600 mt-0.5">
+                    Cuando está activo, el correo se envía automáticamente al email del usuario que creó la reserva, además de los destinatarios principales configurados arriba.
+                    Si el creador ya está en la lista manual, no se duplica.
+                  </p>
+                </div>
+              </label>
+            </div>
+
             {/* Correos Manuales */}
             {formData.recipients_mode === "manual" && (
               <div>
@@ -735,8 +733,11 @@ export default function RuleModal({ isOpen, onClose, onSave, rule, orgId, active
                   ))}
                 </div>
 
-                {formData.recipients_emails.length === 0 && (
-                  <p className="text-xs text-gray-500 mt-1">Agrega al menos un correo destinatario</p>
+                {formData.recipients_emails.length === 0 && !formData.include_creator_recipient && (
+                  <p className="text-xs text-gray-500 mt-1">Agrega al menos un correo destinatario, o activa "Incluir usuario que creó la reserva"</p>
+                )}
+                {formData.recipients_emails.length === 0 && formData.include_creator_recipient && (
+                  <p className="text-xs text-teal-600 mt-1">Solo se enviará al creador de la reserva (sin correos manuales adicionales)</p>
                 )}
               </div>
             )}
@@ -810,7 +811,6 @@ export default function RuleModal({ isOpen, onClose, onSave, rule, orgId, active
             <div className="mb-2 flex flex-wrap gap-2">
               <span className="text-xs text-gray-600">Variables disponibles:</span>
               {TEMPLATE_VARIABLES.filter(v => {
-                // Mostrar {{fotos}} solo cuando showPhotoOption y include_casetilla_photos están activos
                 if (v.key === '{{fotos}}') return showPhotoOption && formData.include_casetilla_photos;
                 return true;
               }).map((v) => (
@@ -853,7 +853,7 @@ export default function RuleModal({ isOpen, onClose, onSave, rule, orgId, active
             </p>
           </div>
 
-          {/* Almacén de la regla — selector para migrar legacy o asignar al crear */}
+          {/* Almacén de la regla */}
           <div className="border border-gray-200 rounded-lg p-4 space-y-3">
             <h3 className="font-medium text-gray-900 flex items-center gap-2">
               <i className="ri-store-2-line text-teal-600 w-4 h-4 flex items-center justify-center"></i>
@@ -863,8 +863,8 @@ export default function RuleModal({ isOpen, onClose, onSave, rule, orgId, active
               Asigná esta regla a un almacén específico. Las reglas sin almacén son globales y se aplican a todos.
             </p>
             <select
-              value={(formData as any).warehouse_id || ""}
-              onChange={(e) => setFormData((prev) => ({ ...prev, warehouse_id: e.target.value || null } as any))}
+              value={formData.warehouse_id || ""}
+              onChange={(e) => setFormData((prev) => ({ ...prev, warehouse_id: e.target.value || null }))}
               className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-teal-500 focus:border-transparent"
             >
               <option value="">Global (sin almacén específico)</option>
@@ -872,7 +872,7 @@ export default function RuleModal({ isOpen, onClose, onSave, rule, orgId, active
                 <option key={w.id} value={w.id}>{w.name}</option>
               ))}
             </select>
-            {!(formData as any).warehouse_id && rule && !(rule as any).warehouse_id && (
+            {!formData.warehouse_id && rule && !(rule as any).warehouse_id && (
               <p className="text-xs text-amber-600 flex items-center gap-1">
                 <i className="ri-information-line w-3 h-3 flex items-center justify-center"></i>
                 Esta es una regla legacy global. Podés migrarla a un almacén seleccionándolo arriba.

@@ -1,4 +1,3 @@
-
 import { useState, useEffect, useRef } from 'react';
 import type { CargoType, Provider } from '../../../types/catalog';
 import { saveGenericDraft, readGenericDraft, clearGenericDraft } from '../../../hooks/useReservationDraft';
@@ -23,6 +22,8 @@ interface PreReservationMiniModalProps {
     clientIds: string[];
     requiredMinutes: number;
     quantityValue?: number | null;
+    isConsolidated?: boolean;
+    consolidatedProviders?: Array<{ provider_id: string; provider_name: string; package_quantity: number }>;
   }) => void;
 }
 
@@ -61,6 +62,19 @@ export default function PreReservationMiniModal({
   const [loadingClient, setLoadingClient] = useState(false);
   const [clientError, setClientError] = useState<string>('');
 
+  // Reserva consolidada
+  const [isConsolidated, setIsConsolidated] = useState(false);
+  const [consolidatedProviders, setConsolidatedProviders] = useState<
+    Array<{ provider_id: string; provider_name: string; package_quantity: number }>
+  >([]);
+  const [consolidatedProviderId, setConsolidatedProviderId] = useState('');
+  const [consolidatedQuantity, setConsolidatedQuantity] = useState('');
+  const [consolidatedError, setConsolidatedError] = useState('');
+
+  // Estados expand/collapse para secciones colapsables en reserva consolidada
+  const [expandConsolidated, setExpandConsolidated] = useState(false);
+  const [expandDynamic, setExpandDynamic] = useState(false);
+
   // Evita race conditions (cambios rápidos de selects)
   const reqKeyRef = useRef<string>('');
 
@@ -77,10 +91,17 @@ export default function PreReservationMiniModal({
   // Restaurar draft al abrir
   useEffect(() => {
     if (isOpen) {
-      const draft = readGenericDraft<{ cargoTypeId: string; providerId: string }>(DRAFT_KEY);
+      const draft = readGenericDraft<{
+        cargoTypeId: string;
+        providerId: string;
+        isConsolidated?: boolean;
+        consolidatedProviders?: Array<{ provider_id: string; provider_name: string; package_quantity: number }>;
+      }>(DRAFT_KEY);
       if (draft) {
         if (draft.formData.cargoTypeId) setSelectedCargoTypeId(draft.formData.cargoTypeId);
         if (draft.formData.providerId) setSelectedProviderId(draft.formData.providerId);
+        if (draft.formData.isConsolidated != null) setIsConsolidated(draft.formData.isConsolidated);
+        if (draft.formData.consolidatedProviders) setConsolidatedProviders(draft.formData.consolidatedProviders);
       }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -89,9 +110,14 @@ export default function PreReservationMiniModal({
   // Auto-save draft cuando cambian las selecciones
   useEffect(() => {
     if (!isOpen) return;
-    saveGenericDraft(DRAFT_KEY, { cargoTypeId: selectedCargoTypeId, providerId: selectedProviderId });
+    saveGenericDraft(DRAFT_KEY, {
+      cargoTypeId: selectedCargoTypeId,
+      providerId: selectedProviderId,
+      isConsolidated,
+      consolidatedProviders,
+    });
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedCargoTypeId, selectedProviderId, isOpen]);
+  }, [selectedCargoTypeId, selectedProviderId, isOpen, isConsolidated, consolidatedProviders]);
 
   // Cargar catálogos cuando se abre el modal
   useEffect(() => {
@@ -104,23 +130,13 @@ export default function PreReservationMiniModal({
   const loadCatalogs = async () => {
     setLoading(true);
     try {
-      /**console.log('[PreReservationMiniModal] 🔍 Loading catalogs', {
-        orgId,
-        userId: user?.id,
-        userRole: user?.role,
-        isPrivileged,
-      });*/
-
       const cargoTypesData = await cargoTypesService.getByWarehouse(orgId, warehouseId ?? null, true);
 
       let providersData: Provider[] = [];
 
       if (isPrivileged) {
-        // Usuarios privilegiados: cargar proveedores del almacén activo (no todos los de la org)
         providersData = await providersService.getByWarehouse(orgId, warehouseId ?? null, true);
       } else {
-        // Usuarios no privilegiados: proveedores asignados al usuario,
-        // intersectados con los del almacén activo
         const [userProviders, warehouseProviders] = await Promise.all([
           userProvidersService.getUserProviders(orgId, user!.id),
           providersService.getByWarehouse(orgId, warehouseId ?? null, true),
@@ -144,19 +160,10 @@ export default function PreReservationMiniModal({
       setCargoTypes(cargoTypesData);
       setProviders(providersData);
 
-      /**console.log('[PreReservationMiniModal] ✅ Catalogs loaded', {
-        cargoTypesCount: cargoTypesData.length,
-        providersCount: providersData.length,
-      });*/
-
-      // Auto‑seleccionar si hay 1 solo proveedor
-      if (providersData.length === 1 && !selectedProviderId) {
+      // Auto-seleccionar si hay 1 solo proveedor (solo si no es consolidado)
+      if (providersData.length === 1 && !selectedProviderId && !isConsolidated) {
         const singleProvider = providersData[0];
         setSelectedProviderId(singleProvider.id);
-        /**console.log('[PreReservationMiniModal] 🎯 Auto‑selecting single provider', {
-          providerId: singleProvider.id,
-          providerName: singleProvider.name,
-        });*/
       }
     } catch (error: any) {
       // non-blocking catalog load error
@@ -191,21 +198,14 @@ export default function PreReservationMiniModal({
         if (clientIds.length > 0) {
           setResolvedClientIds(clientIds);
           setResolvedClientId(clientIds[0]);
-          /**console.log('[PreReservationMiniModal] ✅ Clients resolved', {
-            providerId: selectedProviderId,
-            clientCount: clientIds.length,
-            clientIds,
-          });*/
         } else {
           setResolvedClientIds([]);
           setResolvedClientId('');
           setClientError(
             'No se encontró un cliente vinculado a este proveedor. Las reglas de andenes no se aplicarán.',
           );
-
         }
       } catch (err: any) {
-
         setResolvedClientId('');
         setResolvedClientIds([]);
         setClientError('Error al resolver el cliente del proveedor.');
@@ -217,7 +217,7 @@ export default function PreReservationMiniModal({
     resolveClient();
   }, [isOpen, orgId, selectedProviderId, warehouseId]);
 
-  // Resetear form cuando se cierra (NO limpia draft — se preserva para restaurar al reabrir)
+  // Resetear form cuando se cierra
   useEffect(() => {
     if (!isOpen) {
       setRequiredMinutes(30);
@@ -229,11 +229,19 @@ export default function PreReservationMiniModal({
       setClientError('');
       setQuantityValue('');
       reqKeyRef.current = '';
+      setIsConsolidated(false);
+      setConsolidatedProviders([]);
+      setConsolidatedProviderId('');
+      setConsolidatedQuantity('');
+      setConsolidatedError('');
     }
   }, [isOpen]);
 
   const selectedCargoType = cargoTypes.find(ct => ct.id === selectedCargoTypeId);
   const isDynamic = selectedCargoType?.is_dynamic === true;
+
+  // Calcular total de bultos consolidados
+  const totalConsolidatedPackages = consolidatedProviders.reduce((sum, cp) => sum + cp.package_quantity, 0);
 
   // Buscar perfil de tiempo y calcular duración requerida
   useEffect(() => {
@@ -244,7 +252,6 @@ export default function PreReservationMiniModal({
 
     // Sin tipo+proveedor: intentar usar default del tipo si existe
     if (!cargoTypeId || !providerId) {
-      // Para tipos dinámicos sin proveedor elegido, no calcular aún
       if (selectedCargoType?.is_dynamic) {
         setRequiredMinutes(30);
         setDurationSource('none');
@@ -265,10 +272,19 @@ export default function PreReservationMiniModal({
       return;
     }
 
-    // Para tipos dinámicos: recalcular cuando cambia quantityValue también
-    const qty = isDynamic ? (quantityValue.trim() ? Number(quantityValue) : null) : null;
+    // Para tipos dinámicos: si es consolidado, usar total de bultos como cantidad base
+    let effectiveQty: number | null = null;
+    if (isDynamic) {
+      if (isConsolidated) {
+        if (totalConsolidatedPackages > 0) {
+          effectiveQty = totalConsolidatedPackages;
+        }
+      } else {
+        effectiveQty = quantityValue.trim() !== '' ? Number(quantityValue) : null;
+      }
+    }
 
-    const reqKey = `${orgId}:${providerId}:${cargoTypeId}:${qty ?? ''}`;
+    const reqKey = `${orgId}:${providerId}:${cargoTypeId}:${effectiveQty ?? ''}:${isConsolidated}`;
     reqKeyRef.current = reqKey;
 
     const run = async () => {
@@ -279,20 +295,18 @@ export default function PreReservationMiniModal({
         if (reqKeyRef.current !== reqKey) return;
 
         // ── TIPO DINÁMICO ────────────────────────────────────────────────
-        if (isDynamic && qty != null && Number.isFinite(qty) && qty > 0) {
-          // Rate efectivo: perfil específico > tipo de carga > fallback avg_minutes
+        if (isDynamic && effectiveQty != null && Number.isFinite(effectiveQty) && effectiveQty > 0) {
           const effectiveSpu =
             (profile?.seconds_per_unit != null ? Number(profile.seconds_per_unit) : null) ??
             (selectedCargoType?.seconds_per_unit != null ? Number(selectedCargoType.seconds_per_unit) : null);
 
           if (effectiveSpu != null) {
-            const dynamicMin = Math.ceil((effectiveSpu * qty) / 60);
+            const dynamicMin = Math.ceil((effectiveSpu * effectiveQty) / 60);
             setRequiredMinutes(Math.max(dynamicMin, 5));
             setDurationSource('dynamic_calc');
             return;
           }
 
-          // Sin seconds_per_unit configurado → fallback a avg_minutes del perfil
           if (profile?.avg_minutes && profile.avg_minutes >= 5) {
             setRequiredMinutes(profile.avg_minutes);
             setDurationSource('profile');
@@ -316,7 +330,6 @@ export default function PreReservationMiniModal({
           setDurationSource('fallback_30');
         }
       } catch (error: any) {
-  
         const def = selectedCargoType?.default_minutes ?? null;
         if (typeof def === 'number' && def >= 5) {
           setRequiredMinutes(def);
@@ -341,27 +354,66 @@ export default function PreReservationMiniModal({
     isDynamic,
     quantityValue,
     warehouseId,
+    isConsolidated,
+    totalConsolidatedPackages,
   ]);
 
+  // Helpers para proveedores consolidados
+  const handleAddConsolidatedProvider = () => {
+    setConsolidatedError('');
+
+    if (!consolidatedProviderId) {
+      setConsolidatedError('Seleccioná un proveedor para agregar.');
+      return;
+    }
+
+    const qty = Number(consolidatedQuantity);
+    if (!Number.isFinite(qty) || qty <= 0) {
+      setConsolidatedError('La cantidad de bultos debe ser mayor a 0.');
+      return;
+    }
+
+    if (consolidatedProviders.some(cp => cp.provider_id === consolidatedProviderId)) {
+      setConsolidatedError('Este proveedor ya fue agregado.');
+      return;
+    }
+
+    const providerName = providers.find(p => p.id === consolidatedProviderId)?.name || '—';
+    setConsolidatedProviders(prev => [
+      ...prev,
+      { provider_id: consolidatedProviderId, provider_name: providerName, package_quantity: qty },
+    ]);
+    setConsolidatedProviderId('');
+    setConsolidatedQuantity('');
+  };
+
+  const handleRemoveConsolidatedProvider = (providerId: string) => {
+    setConsolidatedProviders(prev => prev.filter(cp => cp.provider_id !== providerId));
+  };
+
   // Para dinámicos: requerir cantidad válida antes de habilitar Continuar
-  const dynamicQuantityValid = !isDynamic || (
+  const dynamicQuantityValid = !isDynamic || isConsolidated || (
     quantityValue.trim() !== '' &&
     Number.isFinite(Number(quantityValue)) &&
     Number(quantityValue) > 0
   );
 
+  const providerReady = isConsolidated
+    ? consolidatedProviders.length > 0
+    : Boolean(selectedProviderId);
+
   const canContinue =
-    Boolean(selectedCargoTypeId && selectedProviderId) &&
+    Boolean(selectedCargoTypeId && providerReady) &&
     dynamicQuantityValid &&
     requiredMinutes >= 5 &&
     !loadingClient &&
     !loadingDuration;
 
   const handleConfirm = () => {
-    if (!canContinue || !selectedCargoTypeId || !selectedProviderId) return;
+    if (!canContinue || !selectedCargoTypeId || (!isConsolidated && !selectedProviderId)) return;
 
     clearGenericDraft(DRAFT_KEY);
-    const qty = isDynamic && quantityValue.trim() ? Number(quantityValue) : null;
+    const qty = isDynamic && !isConsolidated && quantityValue.trim() ? Number(quantityValue) : null;
     onConfirm({
       cargoTypeId: selectedCargoTypeId,
       providerId: selectedProviderId,
@@ -369,6 +421,8 @@ export default function PreReservationMiniModal({
       clientIds: resolvedClientIds,
       requiredMinutes,
       quantityValue: qty,
+      isConsolidated,
+      consolidatedProviders: isConsolidated ? consolidatedProviders : undefined,
     });
   };
 
@@ -376,6 +430,11 @@ export default function PreReservationMiniModal({
     clearGenericDraft(DRAFT_KEY);
     setSelectedCargoTypeId('');
     setSelectedProviderId('');
+    setIsConsolidated(false);
+    setConsolidatedProviders([]);
+    setConsolidatedProviderId('');
+    setConsolidatedQuantity('');
+    setConsolidatedError('');
     onClose();
   };
 
@@ -385,7 +444,7 @@ export default function PreReservationMiniModal({
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-lg shadow-xl max-w-md w-full">
+      <div className="bg-white rounded-lg shadow-xl max-w-md w-full max-h-[90vh] overflow-y-auto">
         {/* Header */}
         <div className="px-6 py-4 border-b border-gray-200">
           <div className="flex items-center justify-between">
@@ -449,7 +508,8 @@ export default function PreReservationMiniModal({
                 )}
               </div>
 
-              {/* Proveedor / Expedidor */}
+              {/* Proveedor / Expedidor — oculto cuando es consolidada */}
+              {!isConsolidated && (
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   Proveedor / Expedidor <span className="text-red-500">*</span>
@@ -519,9 +579,143 @@ export default function PreReservationMiniModal({
                   </p>
                 )}
               </div>
+              )}
 
-              {/* ── Campo dinámico: aparece solo si el tipo lo requiere ── */}
-              {isDynamic && (
+              {/* Checkbox Reserva Consolidada */}
+              {providers.length > 0 && (
+                <div className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    id="pre-consolidated-check"
+                    checked={isConsolidated}
+                    onChange={(e) => {
+                      const checked = e.target.checked;
+                      setIsConsolidated(checked);
+                      if (checked) {
+                        setSelectedProviderId('');
+                        setQuantityValue('');
+                        setResolvedClientId('');
+                        setResolvedClientIds([]);
+                        setClientError('');
+                      } else {
+                        setConsolidatedProviders([]);
+                        setConsolidatedProviderId('');
+                        setConsolidatedQuantity('');
+                        setConsolidatedError('');
+                        if (providers.length === 1) {
+                          setSelectedProviderId(providers[0].id);
+                        }
+                      }
+                    }}
+                    className="w-4 h-4 rounded border-gray-300 text-teal-600 focus:ring-teal-500 cursor-pointer"
+                  />
+                  <label htmlFor="pre-consolidated-check" className="text-sm text-gray-700 cursor-pointer select-none">
+                    Reserva consolidada
+                  </label>
+                </div>
+              )}
+
+              {/* Panel Consolidado */}
+              {isConsolidated && providers.length > 0 && (
+                <div className="bg-gray-50 border border-gray-200 rounded-md overflow-hidden">
+                  <button
+                    type="button"
+                    onClick={() => setExpandConsolidated(v => !v)}
+                    className="w-full flex items-center justify-between px-3 py-2.5 cursor-pointer hover:bg-gray-100/50 transition-colors"
+                  >
+                    <div className="flex items-center gap-2">
+                      <i className="ri-stack-line text-teal-700 text-sm flex-shrink-0"></i>
+                      <span className="text-sm font-semibold text-gray-900">Proveedores del consolidado</span>
+                    </div>
+                    <i className={`ri-arrow-down-s-line text-gray-500 flex-shrink-0 transition-transform duration-200 ${expandConsolidated ? 'rotate-180' : ''}`}></i>
+                  </button>
+                  {expandConsolidated && (
+                    <div className="px-3 pb-3 space-y-3">
+                      <div className="flex gap-2 items-end">
+                        <div className="flex-1 min-w-0">
+                          <label className="block text-xs font-medium text-gray-600 mb-1">Proveedor</label>
+                          <SearchSelect
+                            options={providers
+                              .filter(p => !consolidatedProviders.some(cp => cp.provider_id === p.id))
+                              .map(p => ({ id: p.id, label: p.name }))}
+                            value={consolidatedProviderId}
+                            onChange={setConsolidatedProviderId}
+                            placeholder="Buscar proveedor..."
+                            disabled={providers.length === 0}
+                          />
+                        </div>
+                        <div className="w-24 flex-shrink-0">
+                          <label className="block text-xs font-medium text-gray-600 mb-1">Bultos</label>
+                          <input
+                            type="number"
+                            min={1}
+                            value={consolidatedQuantity}
+                            onChange={(e) => setConsolidatedQuantity(e.target.value)}
+                            placeholder="0"
+                            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-teal-500 text-sm"
+                          />
+                        </div>
+                        <button
+                          type="button"
+                          onClick={handleAddConsolidatedProvider}
+                          className="px-3 py-2 bg-teal-600 text-white text-sm font-medium rounded-md hover:bg-teal-700 transition-colors whitespace-nowrap flex items-center gap-1 flex-shrink-0 cursor-pointer"
+                        >
+                          <i className="ri-add-line"></i>
+                          Agregar
+                        </button>
+                      </div>
+
+                      {consolidatedError && (
+                        <p className="text-xs text-red-600 flex items-center gap-1">
+                          <i className="ri-error-warning-line text-sm"></i>
+                          {consolidatedError}
+                        </p>
+                      )}
+
+                      {consolidatedProviders.length > 0 && (
+                        <div className="space-y-1.5">
+                          {consolidatedProviders.map((cp) => (
+                            <div
+                              key={cp.provider_id}
+                              className="flex items-center justify-between p-2 bg-white border border-gray-200 rounded-md"
+                            >
+                              <div className="flex items-center gap-2 min-w-0">
+                                <i className="ri-truck-line text-teal-600 text-sm flex-shrink-0"></i>
+                                <div className="min-w-0">
+                                  <p className="text-sm font-medium text-gray-900 truncate">{cp.provider_name}</p>
+                                  <p className="text-xs text-gray-500">{cp.package_quantity} bulto{cp.package_quantity !== 1 ? 's' : ''}</p>
+                                </div>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => handleRemoveConsolidatedProvider(cp.provider_id)}
+                                className="text-red-500 hover:text-red-700 transition-colors flex-shrink-0"
+                                title="Eliminar proveedor"
+                              >
+                                <i className="ri-delete-bin-line text-lg"></i>
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      <div className="flex items-center justify-between border-t border-gray-200 pt-2">
+                        <span className="text-sm font-medium text-gray-700">Total de bultos</span>
+                        <span className="text-sm font-bold text-teal-700">{totalConsolidatedPackages}</span>
+                      </div>
+
+                      {consolidatedProviders.length === 0 && (
+                        <p className="text-xs text-gray-500">
+                          Agregá al menos un proveedor con la cantidad de bultos.
+                        </p>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Campo dinámico: cantidad (solo si no es consolidado) */}
+              {isDynamic && !isConsolidated && (
                 <div className="bg-amber-50 border border-amber-200 rounded-md p-3 space-y-2">
                   <div className="flex items-center gap-2">
                     <i className="ri-flashlight-line text-amber-600 text-sm flex-shrink-0"></i>
@@ -554,12 +748,49 @@ export default function PreReservationMiniModal({
                       const calcMin = Math.ceil((effectiveSpu * Number(quantityValue)) / 60);
                       return (
                         <p className="text-xs text-amber-700 mt-1">
-                          ceil({effectiveSpu} seg × {quantityValue} / 60) ={' '}
+                          ceil({effectiveSpu} seg &times; {quantityValue} / 60) ={' '}
                           <span className="font-semibold">{calcMin} min</span>
                         </p>
                       );
                     })()}
                   </div>
+                </div>
+              )}
+
+              {/* Campo dinámico consolidado: panel colapsable */}
+              {isDynamic && isConsolidated && (
+                <div className="bg-amber-50 border border-amber-200 rounded-md overflow-hidden">
+                  <button
+                    type="button"
+                    onClick={() => setExpandDynamic(v => !v)}
+                    className="w-full flex items-center justify-between px-3 py-2.5 cursor-pointer hover:bg-amber-100/50 transition-colors"
+                  >
+                    <div className="flex items-center gap-2">
+                      <i className="ri-flashlight-line text-amber-600 text-sm flex-shrink-0"></i>
+                      <p className="text-xs font-semibold text-amber-900">
+                        Datos del tipo de carga dinámico
+                      </p>
+                    </div>
+                    <i className={`ri-arrow-down-s-line text-gray-500 flex-shrink-0 transition-transform duration-200 ${expandDynamic ? 'rotate-180' : ''}`}></i>
+                  </button>
+                  {expandDynamic && (
+                    <div className="px-3 pb-3 space-y-2">
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        {selectedCargoType?.unit_label || selectedCargoType?.measurement_key || 'Cantidad'}
+                      </label>
+                      <input
+                        type="number"
+                        min="1"
+                        step="1"
+                        value={totalConsolidatedPackages}
+                        readOnly
+                        className="w-full px-3 py-2 border border-amber-300 rounded-md text-sm bg-amber-50/80 text-amber-900 cursor-default select-none"
+                      />
+                      <p className="text-xs text-amber-700 mt-1">
+                        Cantidad total calculada desde los proveedores consolidados.
+                      </p>
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -573,7 +804,7 @@ export default function PreReservationMiniModal({
                       {selectedCargoType
                         ? loadingDuration
                           ? 'calculando...'
-                          : isDynamic && !dynamicQuantityValid
+                          : isDynamic && !isConsolidated && !dynamicQuantityValid
                             ? 'ingresá la cantidad para calcular'
                             : `${requiredMinutes} min`
                         : '—'}
@@ -582,7 +813,7 @@ export default function PreReservationMiniModal({
                       {loadingDuration
                         ? 'Calculando duración...'
                         : durationSource === 'dynamic_calc'
-                        ? `Calculado: ceil(seg/unidad × cantidad / 60) = ${requiredMinutes} min`
+                        ? `Calculado: ceil(seg/unidad &times; cantidad / 60) = ${requiredMinutes} min`
                         : durationSource === 'profile'
                         ? 'Usando tiempo promedio del perfil (Proveedor x Tipo de carga).'
                         : durationSource === 'cargo_default'
