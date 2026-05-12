@@ -3,6 +3,7 @@ import { format, parseISO } from 'date-fns';
 import { es } from 'date-fns/locale';
 import type { ActivityLog, ActivityLogGrouped } from '../../../types/activityLog';
 import { activityLogService } from '../../../services/activityLogService';
+import { operationalStatusService } from '../../../services/operationalStatusService';
 
 interface ActivityTabProps {
   orgId: string;
@@ -16,6 +17,18 @@ export function ActivityTab({ orgId, reservationId, docks, statuses }: ActivityT
   const [loading, setLoading] = useState(true);
   const [orderAsc, setOrderAsc] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Todos los estados (incluyendo inactivos) para resolver UUIDs históricos
+  const [allStatuses, setAllStatuses] = useState<Array<{ id: string; name: string; color: string }>>([]);
+
+  // Cargar todos los estados al montar (sin filtrar is_active)
+  useEffect(() => {
+    if (!orgId) return;
+    operationalStatusService.getStatuses(orgId).then((data) => {
+      setAllStatuses(data);
+    }).catch(() => {
+      // Silently fail — fallback al prop
+    });
+  }, [orgId]);
 
   // Mapas rápidos para resolver IDs -> nombre
   const dockNameById = useMemo(() => {
@@ -24,11 +37,15 @@ export function ActivityTab({ orgId, reservationId, docks, statuses }: ActivityT
     return map;
   }, [docks]);
 
+  // Combina todos los estados (prop filtrado + fetch completo) para máxima cobertura histórica
   const statusById = useMemo(() => {
     const map = new Map<string, { name: string; color: string }>();
+    // Primero los del fetch completo (incluye inactivos)
+    allStatuses.forEach(s => map.set(s.id, { name: s.name, color: s.color }));
+    // Luego los del prop (por si hay recientes aún no en el fetch)
     statuses.forEach(s => map.set(s.id, { name: s.name, color: s.color }));
     return map;
-  }, [statuses]);
+  }, [allStatuses, statuses]);
 
   useEffect(() => {
     if (!orgId || !reservationId) {
@@ -304,6 +321,91 @@ function getActivityDescription(
   }
 
   if (log.action === 'updated' && log.field) {
+    // ── Proveedores del consolidado ──────────────────────────────────────
+    if (log.field === 'consolidated_provider_added') {
+      return {
+        title: 'Proveedor consolidado agregado',
+        subtitle: (
+          <span className="px-2 py-1 rounded-md bg-green-50 border border-green-200 text-xs text-green-800 font-medium">
+            {log.new_value ?? '—'}
+          </span>
+        ),
+      };
+    }
+
+    if (log.field === 'consolidated_provider_removed') {
+      return {
+        title: 'Proveedor consolidado eliminado',
+        subtitle: (
+          <span className="px-2 py-1 rounded-md bg-red-50 border border-red-200 text-xs text-red-800 font-medium line-through">
+            {log.old_value ?? '—'}
+          </span>
+        ),
+      };
+    }
+
+    if (log.field === 'consolidated_provider_changed') {
+      return {
+        title: 'Cantidad de proveedor actualizada',
+        subtitle: (
+          <>
+            <span className="px-2 py-1 rounded-md bg-gray-50 border border-gray-200 text-xs text-gray-700">
+              {log.old_value ?? '—'}
+            </span>
+            <i className="ri-arrow-right-line text-gray-400 w-4 h-4 flex items-center justify-center" />
+            <span className="px-2 py-1 rounded-md bg-teal-50 border border-teal-200 text-xs text-teal-900">
+              {log.new_value ?? '—'}
+            </span>
+          </>
+        ),
+      };
+    }
+
+    // ── QR regenerado ─────────────────────────────────────────────────────
+    if (log.field === 'qr_regenerated') {
+      const isError = (log.new_value || '').startsWith('ERROR:');
+      return {
+        title: isError ? 'Ficha QR — Error al regenerar' : 'Ficha QR actualizada',
+        subtitle: (
+          <span className={`px-2 py-1 rounded-md text-xs font-medium inline-flex items-center gap-1 ${
+            isError
+              ? 'bg-red-50 border border-red-200 text-red-800'
+              : 'bg-teal-50 border border-teal-200 text-teal-800'
+          }`}>
+            <i className={`${isError ? 'ri-error-warning-line' : 'ri-qr-code-line'} w-3 h-3 inline-flex items-center justify-center`}></i>
+            {isError ? 'Fallo en la regeneración' : 'QR e imagen actualizados automáticamente'}
+          </span>
+        ),
+      };
+    }
+
+    // ── is_consolidated ─────────────────────────────────────────────────
+    if (log.field === 'is_consolidated') {
+      const wasConsolidated = log.old_value === 'Sí';
+      const isNowConsolidated = log.new_value === 'Sí';
+      return {
+        title: isNowConsolidated
+          ? 'Reserva cambiada a consolidada'
+          : 'Reserva cambiada a no consolidada',
+        subtitle: (
+          <>
+            <span className="px-2 py-1 rounded-md bg-gray-50 border border-gray-200 text-xs text-gray-700">
+              {wasConsolidated ? 'Consolidada' : 'Normal'}
+            </span>
+            <i className="ri-arrow-right-line text-gray-400 w-4 h-4 flex items-center justify-center" />
+            <span className={`px-2 py-1 rounded-md text-xs font-medium ${
+              isNowConsolidated
+                ? 'bg-teal-50 border border-teal-200 text-teal-900'
+                : 'bg-gray-50 border border-gray-200 text-gray-700'
+            }`}>
+              {isNowConsolidated ? 'Consolidada' : 'Normal'}
+            </span>
+          </>
+        ),
+      };
+    }
+
+    // ── Campos estándar ──────────────────────────────────────────────────
     const fieldLabels: Record<string, string> = {
       status_id: 'Estado',
       start_datetime: 'Fecha/hora inicio',
@@ -326,10 +428,8 @@ function getActivityDescription(
     const oldVal = formatValue(log.field, log.old_value, dockNameById, statusById);
     const newVal = formatValue(log.field, log.new_value, dockNameById, statusById);
 
-    // Título corto y consistente
     const title = `${fieldLabel} actualizado`;
 
-    // Subtítulo con chips
     const subtitle = (
       <>
         <span className="px-2 py-1 rounded-md bg-gray-50 border border-gray-200 text-xs text-gray-700">
@@ -389,6 +489,11 @@ function getActionIcon(log: ActivityLog): string {
   if (log.action === 'created') return 'ri-add-circle-line';
   if (log.action === 'cancelled') return 'ri-close-circle-line';
   if (log.action === 'uncancelled') return 'ri-restart-line';
+  if (log.field === 'qr_regenerated') return 'ri-qr-code-line';
+  if (log.field === 'is_consolidated') return 'ri-git-merge-line';
+  if (log.field === 'consolidated_provider_added') return 'ri-user-add-line';
+  if (log.field === 'consolidated_provider_removed') return 'ri-user-unfollow-line';
+  if (log.field === 'consolidated_provider_changed') return 'ri-stack-line';
   if (log.field === 'status_id') return 'ri-checkbox-circle-line';
   if (log.field === 'start_datetime' || log.field === 'end_datetime') return 'ri-calendar-line';
   if (log.field === 'dock_id') return 'ri-building-line';
@@ -403,6 +508,14 @@ function getActionColor(log: ActivityLog): string {
   if (log.action === 'created') return 'text-green-600';
   if (log.action === 'cancelled') return 'text-red-600';
   if (log.action === 'uncancelled') return 'text-blue-600';
+  if (log.field === 'qr_regenerated') {
+    const isError = (log.new_value || '').startsWith('ERROR:');
+    return isError ? 'text-red-500' : 'text-teal-600';
+  }
+  if (log.field === 'is_consolidated') return 'text-teal-600';
+  if (log.field === 'consolidated_provider_added') return 'text-green-600';
+  if (log.field === 'consolidated_provider_removed') return 'text-red-600';
+  if (log.field === 'consolidated_provider_changed') return 'text-teal-600';
   return 'text-gray-600';
 }
 

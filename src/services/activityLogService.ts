@@ -100,5 +100,39 @@ export const activityLogService = {
     }
 
     return data || [];
+  },
+
+  /**
+   * Escribir una entrada de actividad desde el frontend.
+   * No bloqueante: si falla, no interrumpe el flujo principal.
+   */
+  async writeLog(entry: {
+    orgId: string;
+    entityType: string;
+    entityId: string;
+    action: string;
+    field?: string | null;
+    oldValue?: string | null;
+    newValue?: string | null;
+    metadata?: Record<string, any> | null;
+  }): Promise<void> {
+    const { data: { user } } = await supabase.auth.getUser();
+
+    const { error } = await supabase.from('activity_log').insert({
+      org_id: entry.orgId,
+      entity_type: entry.entityType,
+      entity_id: entry.entityId,
+      action: entry.action,
+      field: entry.field ?? null,
+      old_value: entry.oldValue ?? null,
+      new_value: entry.newValue ?? null,
+      metadata: entry.metadata ?? null,
+      actor_user_id: user?.id ?? null,
+    });
+
+    if (error) {
+      // Silencioso — no fallar el flujo principal
+      console.warn('[activityLogService] writeLog error:', error.message);
+    }
   }
 };

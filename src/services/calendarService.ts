@@ -227,14 +227,18 @@ const getPublicUrlForQR = (path: string) => {
 
 /**
  * Genera el QR de una reserva y lo sube a Supabase Storage.
- * Devuelve la URL pública del QR o null si falla.
+ * Devuelve la URL pública del QR (con cache-buster si forceRefresh) o null si falla.
  * Ejecuta en background; NO bloquea el flujo de creación.
+ *
+ * @param options.forceRefresh  true = siempre sube y agrega ?t=<ts> para invalidar caché
  */
 export async function ensureReservationQR(
   orgId: string,
-  reservationId: string
+  reservationId: string,
+  options?: { forceRefresh?: boolean }
 ): Promise<string | null> {
-  console.log('[QR] ensureReservationQR START', { reservationId, orgId });
+  const forceRefresh = options?.forceRefresh ?? false;
+  console.log('[QR] ensureReservationQR START', { reservationId, orgId, forceRefresh });
   try {
     const { generateQRBlob } = await import('@/utils/reservationQr.utils');
     const blob = await generateQRBlob(reservationId);
@@ -255,7 +259,9 @@ export async function ensureReservationQR(
       return null;
     }
 
-    const publicUrl = getPublicUrlForQR(path);
+    const baseUrl = getPublicUrlForQR(path);
+    // Agregar cache-buster cuando se fuerza regeneración para que los clientes no usen la versión anterior
+    const publicUrl = forceRefresh && baseUrl ? `${baseUrl}?t=${Date.now()}` : baseUrl;
     console.log('[QR] upload success', { reservationId, publicUrl });
 
     // Guardar qr_image_url en la reserva
@@ -269,7 +275,7 @@ export async function ensureReservationQR(
       if (updateError) {
         console.error('[QR] update reservations.qr_image_url error', { reservationId, error: updateError.message });
       } else {
-        console.log('[QR] update reservations.qr_image_url success', { reservationId });
+        console.log('[QR] qr_image_url updated', { reservationId });
       }
     }
 
@@ -293,25 +299,31 @@ const getPublicUrlForQRCard = (path: string) => {
  * Genera la ficha de cita (imagen completa tipo tarjeta) y la sube a Storage.
  * Devuelve la URL pública o null si falla.
  * Esta función es self-contained: resuelve provider name, timezone, genera canvas y sube.
+ *
+ * @param options.forceRefresh  true = omite el check "ya existe" y sobreescribe siempre
  */
 export async function ensureReservationQRCard(
   orgId: string,
-  reservationId: string
+  reservationId: string,
+  options?: { forceRefresh?: boolean }
 ): Promise<string | null> {
-  console.log('[QR-CARD] ensureReservationQRCard START', { reservationId, orgId });
+  const forceRefresh = options?.forceRefresh ?? false;
+  console.log('[QR-CARD] ensureReservationQRCard START', { reservationId, orgId, forceRefresh });
 
   try {
-    // 1. Verificar si ya existe
-    const { data: existing } = await supabase
-      .from('reservations')
-      .select('qr_card_image_url')
-      .eq('id', reservationId)
-      .eq('org_id', orgId)
-      .maybeSingle();
+    // 1. Verificar si ya existe (solo si NO es forceRefresh)
+    if (!forceRefresh) {
+      const { data: existing } = await supabase
+        .from('reservations')
+        .select('qr_card_image_url')
+        .eq('id', reservationId)
+        .eq('org_id', orgId)
+        .maybeSingle();
 
-    if (existing?.qr_card_image_url) {
-      console.log('[QR-CARD] already exists', { reservationId, url: existing.qr_card_image_url });
-      return existing.qr_card_image_url;
+      if (existing?.qr_card_image_url) {
+        console.log('[QR-CARD] already exists, skipping', { reservationId });
+        return existing.qr_card_image_url;
+      }
     }
 
     // 2. Traer datos de la reserva
@@ -386,9 +398,10 @@ export async function ensureReservationQRCard(
       return null;
     }
 
-    // 7. Guardar URL pública en la reserva
-    const publicUrl = getPublicUrlForQRCard(path);
-    console.log('[QR-CARD] upload success', { reservationId, publicUrl });
+    // 7. Guardar URL pública en la reserva (con cache-buster si forceRefresh)
+    const baseUrl = getPublicUrlForQRCard(path);
+    const publicUrl = forceRefresh && baseUrl ? `${baseUrl}?t=${Date.now()}` : baseUrl;
+    console.log('[QR-CARD] card upload success', { reservationId, publicUrl });
 
     if (publicUrl) {
       const { error: updateError } = await supabase
@@ -400,7 +413,7 @@ export async function ensureReservationQRCard(
       if (updateError) {
         console.error('[QR-CARD] update reservations.qr_card_image_url error', { reservationId, error: updateError.message });
       } else {
-        console.log('[QR-CARD] update reservations.qr_card_image_url success', { reservationId });
+        console.log('[QR-CARD] qr_card_image_url updated', { reservationId });
       }
     }
 
@@ -408,6 +421,78 @@ export async function ensureReservationQRCard(
   } catch (err: any) {
     console.error('[QR-CARD] ensureReservationQRCard error', { reservationId, error: err?.message ?? String(err) });
     return null;
+  }
+}
+
+/**
+ * Regenera ambos assets QR (imagen QR simple + ficha de cita) para una reserva actualizada.
+ * Sobreescribe el archivo en Storage y agrega ?t=<timestamp> como cache-buster.
+ * Registra la regeneración en activity_log.
+ * NO BLOQUEA: si falla, la reserva ya fue guardada correctamente.
+ *
+ * Llamar DESPUÉS de un updateReservation exitoso.
+ */
+export async function regenerateReservationQRAssets(
+  orgId: string,
+  reservationId: string
+): Promise<void> {
+  console.log('[QR] regenerate START', { reservationId });
+
+  try {
+    // Regenerar ambos assets en paralelo con forceRefresh = true
+    const [qrUrl, cardUrl] = await Promise.all([
+      ensureReservationQR(orgId, reservationId, { forceRefresh: true }),
+      ensureReservationQRCard(orgId, reservationId, { forceRefresh: true }),
+    ]);
+
+    if (qrUrl) {
+      console.log('[QR] qr_image_url updated (regenerate)', { reservationId });
+    } else {
+      console.warn('[QR] regenerate failed: qr_image_url is null', { reservationId });
+    }
+
+    if (cardUrl) {
+      console.log('[QR] qr_card_image_url updated (regenerate)', { reservationId });
+    } else {
+      console.warn('[QR] regenerate failed: qr_card_image_url is null', { reservationId });
+    }
+
+    if (!qrUrl && !cardUrl) {
+      console.error('[QR] regenerate failed: both assets returned null', { reservationId });
+      // Registrar el fallo en activity_log de todas formas
+      await supabase.from('activity_log').insert({
+        org_id: orgId,
+        entity_type: 'reservation',
+        entity_id: reservationId,
+        action: 'updated',
+        field: 'qr_regenerated',
+        old_value: null,
+        new_value: 'ERROR: No se pudieron regenerar los assets QR.',
+        actor_user_id: null,
+      });
+      return;
+    }
+
+    // Registrar actividad exitosa
+    const { data: { user } } = await supabase.auth.getUser();
+    const { error: logError } = await supabase.from('activity_log').insert({
+      org_id: orgId,
+      entity_type: 'reservation',
+      entity_id: reservationId,
+      action: 'updated',
+      field: 'qr_regenerated',
+      old_value: null,
+      new_value: 'Ficha QR actualizada automáticamente después de modificar la reserva.',
+      actor_user_id: user?.id ?? null,
+    });
+
+    if (logError) {
+      console.warn('[ACTIVITY] reservation QR log write error:', logError.message);
+    } else {
+      console.log('[ACTIVITY] reservation QR updated logged', { reservationId });
+    }
+  } catch (err: any) {
+    console.error('[QR] regenerate failed', { reservationId, error: err?.message ?? String(err) });
   }
 }
 
@@ -1838,7 +1923,21 @@ export const calendarService = {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) throw new Error('Usuario no autenticado');
 
-    // 1. Eliminar líneas existentes
+    // 1. Leer lista existente ANTES de borrar (para el diff del log)
+    const { data: existingRows } = await supabase
+      .from('reservation_consolidated_providers')
+      .select('provider_id, package_quantity, provider:providers(name)')
+      .eq('org_id', orgId)
+      .eq('reservation_id', reservationId);
+
+    const existingMap = new Map<string, { package_quantity: number; name: string }>(
+      (existingRows || []).map((row: any) => [
+        row.provider_id,
+        { package_quantity: row.package_quantity, name: row.provider?.name ?? row.provider_id },
+      ])
+    );
+
+    // 2. Eliminar líneas existentes
     const { error: deleteError } = await supabase
       .from('reservation_consolidated_providers')
       .delete()
@@ -1847,7 +1946,7 @@ export const calendarService = {
 
     if (deleteError) throw deleteError;
 
-    // 2. Insertar nuevas líneas
+    // 3. Insertar nuevas líneas
     if (providers.length > 0) {
       const rows = providers.map((p) => ({
         org_id: orgId,
@@ -1861,6 +1960,88 @@ export const calendarService = {
         .insert(rows);
 
       if (insertError) throw insertError;
+    }
+
+    // 4. Resolver nombres de proveedores nuevos (los que no estaban antes)
+    const providerNameMap = new Map<string, string>();
+    existingMap.forEach((val, key) => providerNameMap.set(key, val.name));
+
+    const unknownIds = providers.map(p => p.provider_id).filter(id => !existingMap.has(id));
+    if (unknownIds.length > 0) {
+      const { data: providerData } = await supabase
+        .from('providers')
+        .select('id, name')
+        .in('id', unknownIds);
+      (providerData || []).forEach((p: any) => providerNameMap.set(p.id, p.name ?? p.id));
+    }
+
+    // 5. Calcular diff y construir entradas de activity_log
+    const newMap = new Map(providers.map(p => [p.provider_id, p.package_quantity]));
+    const logEntries: Array<{
+      org_id: string;
+      entity_type: string;
+      entity_id: string;
+      action: string;
+      field: string;
+      old_value: string | null;
+      new_value: string | null;
+      actor_user_id: string;
+    }> = [];
+
+    // Eliminados: estaban y ya no están
+    for (const [providerId, { package_quantity, name }] of existingMap) {
+      if (!newMap.has(providerId)) {
+        logEntries.push({
+          org_id: orgId,
+          entity_type: 'reservation',
+          entity_id: reservationId,
+          action: 'updated',
+          field: 'consolidated_provider_removed',
+          old_value: `${name} — ${package_quantity} bultos`,
+          new_value: null,
+          actor_user_id: user.id,
+        });
+      }
+    }
+
+    // Agregados: son nuevos
+    for (const p of providers) {
+      if (!existingMap.has(p.provider_id)) {
+        const name = providerNameMap.get(p.provider_id) ?? p.provider_id;
+        logEntries.push({
+          org_id: orgId,
+          entity_type: 'reservation',
+          entity_id: reservationId,
+          action: 'updated',
+          field: 'consolidated_provider_added',
+          old_value: null,
+          new_value: `${name} — ${p.package_quantity} bultos`,
+          actor_user_id: user.id,
+        });
+      }
+    }
+
+    // Cantidad cambiada: estaban y siguen, pero con diferente cantidad
+    for (const p of providers) {
+      const existing = existingMap.get(p.provider_id);
+      if (existing && existing.package_quantity !== p.package_quantity) {
+        const name = providerNameMap.get(p.provider_id) ?? existing.name;
+        logEntries.push({
+          org_id: orgId,
+          entity_type: 'reservation',
+          entity_id: reservationId,
+          action: 'updated',
+          field: 'consolidated_provider_changed',
+          old_value: `${name} — ${existing.package_quantity} bultos`,
+          new_value: `${name} — ${p.package_quantity} bultos`,
+          actor_user_id: user.id,
+        });
+      }
+    }
+
+    // 6. Escribir log (no bloqueante — no falla el guardado si el log falla)
+    if (logEntries.length > 0) {
+      supabase.from('activity_log').insert(logEntries).then(() => {}).catch(() => {});
     }
   },
 };

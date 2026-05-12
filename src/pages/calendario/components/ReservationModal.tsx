@@ -5,7 +5,8 @@ import type { ReservationQRData } from '../../../components/feature/ReservationQ
 import SearchSelect from '../../../components/base/SearchSelect';
 import { Dock } from '../../../types/dock';
 import { useAuth } from '../../../contexts/AuthContext';
-import { calendarService, type Reservation } from '../../../services/calendarService';
+import { calendarService, regenerateReservationQRAssets, type Reservation } from '../../../services/calendarService';
+import { activityLogService } from '../../../services/activityLogService';
 import { ActivityTab } from './ActivityTab';
 import { providersService } from '../../../services/providersService';
 import { cargoTypesService } from '../../../services/cargoTypesService';
@@ -648,6 +649,42 @@ export default function ReservationModal({
       }
       if (isConsolidated && saved.id) {
         await calendarService.saveConsolidatedProviders(orgId, saved.id, consolidatedProviders.map(cp => ({ provider_id: cp.provider_id, package_quantity: cp.package_quantity })));
+      }
+      // Log cambio de is_consolidated (solo en edición y cuando efectivamente cambió)
+      if (reservation && saved.id) {
+        const prevConsolidated = !!reservation.is_consolidated;
+        if (prevConsolidated !== isConsolidated) {
+          activityLogService.writeLog({
+            orgId,
+            entityType: 'reservation',
+            entityId: saved.id,
+            action: 'updated',
+            field: 'is_consolidated',
+            oldValue: prevConsolidated ? 'Sí' : 'No',
+            newValue: isConsolidated ? 'Sí' : 'No',
+          }).catch(() => {});
+        }
+      }
+      // Regenerar QR assets en background después de un UPDATE real (no bloqueante)
+      // Solo para edición y cuando hay cambios visuales (no aplica a status-only ni a creaciones)
+      if (reservation && saved.id) {
+        const isStatusOnlyChangeLocal = reservation &&
+          formData.statusId !== reservation.status_id &&
+          formData.dockId === reservation.dock_id &&
+          formData.startDate === toWarehouseDateString(new Date(reservation.start_datetime), tz) &&
+          formData.startTime === toWarehouseTimeString(new Date(reservation.start_datetime), tz) &&
+          formData.endDate === toWarehouseDateString(new Date(reservation.end_datetime), tz) &&
+          formData.endTime === toWarehouseTimeString(new Date(reservation.end_datetime), tz) &&
+          formData.shipperProvider === (reservation.shipper_provider || '') &&
+          formData.operationType === (reservation.operation_type || '') &&
+          isConsolidated === !!reservation.is_consolidated;
+
+        if (!isStatusOnlyChangeLocal) {
+          console.log('[QR] scheduling regeneration after update', { reservationId: saved.id });
+          regenerateReservationQRAssets(orgId, saved.id).catch((err: any) => {
+            console.error('[QR] regenerate failed silently', saved.id, err?.message);
+          });
+        }
       }
       setSavedReservationId(saved.id);
       if (removedExistingFileIds.length > 0) {
