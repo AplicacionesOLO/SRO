@@ -4,10 +4,11 @@ import { useActiveWarehouse } from '../../../contexts/ActiveWarehouseContext';
 import ProvidersTab from './components/ProvidersTab';
 import CargoTypesTab from './components/CargoTypesTab';
 import TimeProfilesTab from './components/TimeProfilesTab';
+import AsignacionesTab from './components/AsignacionesTab';
 import WarehouseSelectorDropdown from '../../../components/feature/WarehouseSelector';
 
 export default function CatalogosPage() {
-  const { orgId, can, loading } = usePermissions();
+  const { orgId, userId, can, hasRole, loading } = usePermissions();
   const {
     activeWarehouseId,
     activeWarehouse,
@@ -17,7 +18,8 @@ export default function CatalogosPage() {
     loading: whLoading,
   } = useActiveWarehouse();
 
-  const [activeTab, setActiveTab] = useState<'providers' | 'cargo_types' | 'time_profiles'>('providers');
+  const [activeTab, setActiveTab] = useState<'providers' | 'cargo_types' | 'time_profiles' | 'assignments'>('providers');
+  const isAdminOrFull = hasRole('ADMIN') || hasRole('Full Access');
   const warehouseInitDoneRef = useRef(false);
 
   // Auto-seleccionar si hay 1 solo almacén
@@ -55,10 +57,11 @@ export default function CatalogosPage() {
   }
 
   const tabs = [
-    { id: 'providers' as const, label: 'Proveedores', icon: 'ri-truck-line' },
-    { id: 'cargo_types' as const, label: 'Tipos de carga', icon: 'ri-box-3-line' },
-    { id: 'time_profiles' as const, label: 'Tiempos (Proveedor x Tipo de carga)', icon: 'ri-time-line' },
-  ];
+    { id: 'providers' as const, label: 'Proveedores', icon: 'ri-truck-line', adminOnly: false },
+    { id: 'cargo_types' as const, label: 'Tipos de carga', icon: 'ri-box-3-line', adminOnly: false },
+    { id: 'time_profiles' as const, label: 'Tiempos (Proveedor x Tipo de carga)', icon: 'ri-time-line', adminOnly: false },
+    { id: 'assignments' as const, label: 'Asignaciones', icon: 'ri-links-line', adminOnly: true },
+  ].filter((t) => !t.adminOnly || isAdminOrFull);
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -111,6 +114,7 @@ export default function CatalogosPage() {
             {activeTab === 'providers' && <ProvidersTab orgId={orgId} warehouseId={activeWarehouseId} />}
             {activeTab === 'cargo_types' && <CargoTypesTab orgId={orgId} warehouseId={activeWarehouseId} />}
             {activeTab === 'time_profiles' && <TimeProfilesTab orgId={orgId} warehouseId={activeWarehouseId} />}
+            {activeTab === 'assignments' && isAdminOrFull && <AsignacionesTab orgId={orgId} userId={userId ?? undefined} />}
           </div>
         </div>
       </div>

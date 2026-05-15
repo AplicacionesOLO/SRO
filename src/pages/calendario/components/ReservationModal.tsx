@@ -223,7 +223,7 @@ export default function ReservationModal({
       blNumber: defaults?.bl_number || '',
     });
     setFiles([]);
-    setIsImported(!!(defaults?.dua));
+    setIsImported(defaults?.is_imported != null ? !!defaults.is_imported : !!(defaults?.dua));
     setCancelReason('');
     setManualOverride(false);
     setSuggestedMinutes(null);
@@ -424,7 +424,10 @@ export default function ReservationModal({
   const hasNoProviders = allowedProviders.length === 0;
 
   useEffect(() => {
-    if (!manualOverride && formData.shipperProvider && formData.cargoType && formData.startDate && formData.startTime) {
+    const hasValidProvider = isConsolidated
+      ? consolidatedProviders.length > 0
+      : !!formData.shipperProvider;
+    if (!manualOverride && hasValidProvider && formData.cargoType && formData.startDate && formData.startTime) {
       updateSuggestedDuration();
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -476,7 +479,7 @@ export default function ReservationModal({
 
   const handleAddConsolidatedProvider = () => {
     setConsolidatedError('');
-    if (!consolidatedProviderId) { setConsolidatedError('Seleccion\u00e1 un proveedor para agregar.'); return; }
+    if (!consolidatedProviderId) { setConsolidatedError('Seleccioná un proveedor para agregar.'); return; }
     const qty = Number(consolidatedQuantity);
     if (!Number.isFinite(qty) || qty <= 0) { setConsolidatedError('La cantidad de bultos debe ser mayor a 0.'); return; }
     if (consolidatedProviders.some(cp => cp.provider_id === consolidatedProviderId)) { setConsolidatedError('Este proveedor ya fue agregado.'); return; }
@@ -558,7 +561,7 @@ export default function ReservationModal({
       return;
     }
     if (isCancelledStatus && !cancelReason.trim()) {
-      setNotifyModal({ isOpen: true, type: 'warning', title: 'Raz\u00f3n de cancelaci\u00f3n requerida', message: 'Por favor, ingres\u00e1 una raz\u00f3n para cancelar la reserva.' });
+      setNotifyModal({ isOpen: true, type: 'warning', title: 'Razón de cancelación requerida', message: 'Por favor, ingresá una razón para cancelar la reserva.' });
       return;
     }
     const showBLField = formData.operationType === 'zona_franca' && isImported;
@@ -569,11 +572,11 @@ export default function ReservationModal({
     const startDateTime = fromWarehouseLocalToUtc(formData.startDate, formData.startTime, tz);
     const endDateTime = fromWarehouseLocalToUtc(formData.endDate, formData.endTime, tz);
     if (endDateTime <= startDateTime) {
-      setNotifyModal({ isOpen: true, type: 'warning', title: 'Fecha inv\u00e1lida', message: 'La fecha/hora de fin debe ser posterior a la de inicio' });
+      setNotifyModal({ isOpen: true, type: 'warning', title: 'Fecha inválida', message: 'La fecha/hora de fin debe ser posterior a la de inicio' });
       return;
     }
     if (!user?.id) {
-      setNotifyModal({ isOpen: true, type: 'error', title: 'Error de autenticaci\u00f3n', message: 'Usuario no autenticado' });
+      setNotifyModal({ isOpen: true, type: 'error', title: 'Error de autenticación', message: 'Usuario no autenticado' });
       return;
     }
     const payload: Partial<Reservation> = {
@@ -606,9 +609,9 @@ export default function ReservationModal({
         try {
           const cutoffCheck = await sameDayCutoffService.checkCutoff(orgId, defaults.client_id, warehouseId, tz, user.id, isPrivileged);
           if (cutoffCheck.blocked) { setNotifyModal({ isOpen: true, type: 'warning', title: 'Fuera del horario de reservas', message: cutoffCheck.message }); return; }
-          if (cutoffCheck.verificationFailed) { setNotifyModal({ isOpen: true, type: 'error', title: 'No se pudo verificar el corte del mismo d\u00eda', message: `${cutoffCheck.message} Por seguridad, la reserva no fue creada.` }); return; }
+          if (cutoffCheck.verificationFailed) { setNotifyModal({ isOpen: true, type: 'error', title: 'No se pudo verificar el corte del mismo día', message: `${cutoffCheck.message} Por seguridad, la reserva no fue creada.` }); return; }
         } catch (cutoffErr) {
-          setNotifyModal({ isOpen: true, type: 'error', title: 'Error al verificar la regla de reservas', message: 'No se pudo verificar la regla de corte del mismo d\u00eda. Por seguridad, la reserva no fue creada.' });
+          setNotifyModal({ isOpen: true, type: 'error', title: 'Error al verificar la regla de reservas', message: 'No se pudo verificar la regla de corte del mismo día. Por seguridad, la reserva no fue creada.' });
           return;
         }
       }
@@ -662,6 +665,36 @@ export default function ReservationModal({
             field: 'is_consolidated',
             oldValue: prevConsolidated ? 'Sí' : 'No',
             newValue: isConsolidated ? 'Sí' : 'No',
+          }).catch(() => {});
+        }
+
+        // Log cambio de quantity_value
+        const prevQuantity = (reservation as any).quantity_value;
+        const newQuantity = payload.quantity_value;
+        if (prevQuantity !== newQuantity) {
+          activityLogService.writeLog({
+            orgId,
+            entityType: 'reservation',
+            entityId: saved.id,
+            action: 'updated',
+            field: 'quantity_value',
+            oldValue: prevQuantity != null ? String(prevQuantity) : '—',
+            newValue: newQuantity != null ? String(newQuantity) : '—',
+          }).catch(() => {});
+        }
+
+        // Log cambio de end_datetime
+        const prevEndMs = new Date(reservation.end_datetime).getTime();
+        const newEndMs = payload.end_datetime ? new Date(payload.end_datetime).getTime() : null;
+        if (newEndMs !== null && Math.abs(prevEndMs - newEndMs) >= 60000) {
+          activityLogService.writeLog({
+            orgId,
+            entityType: 'reservation',
+            entityId: saved.id,
+            action: 'updated',
+            field: 'end_datetime',
+            oldValue: reservation.end_datetime,
+            newValue: payload.end_datetime ?? '',
           }).catch(() => {});
         }
       }
@@ -719,7 +752,7 @@ export default function ReservationModal({
     try {
       setOpenFileError('');
       setOpeningFileId(file.id);
-      if (!file.isExisting || !file.url) { setNotifyModal({ isOpen: true, type: 'warning', title: 'Archivo no guardado', message: 'Este archivo todav\u00eda no est\u00e1 guardado. Guard\u00e1 la reserva primero.' }); return; }
+      if (!file.isExisting || !file.url) { setNotifyModal({ isOpen: true, type: 'warning', title: 'Archivo no guardado', message: 'Este archivo todavía no está guardado. Guardá la reserva primero.' }); return; }
       const signedUrl = await calendarService.getReservationFileSignedUrl(file.url);
       if (!signedUrl) { setNotifyModal({ isOpen: true, type: 'error', title: 'Error', message: 'No se pudo generar el enlace del archivo.' }); return; }
       window.open(signedUrl, '_blank', 'noopener,noreferrer');
@@ -745,7 +778,7 @@ export default function ReservationModal({
     if (isConsolidated) { providerLabel = 'Consolidado'; }
     else if (formData.shipperProvider) { providerLabel = providers.find(p => p.id === formData.shipperProvider)?.name || 'Pendiente'; }
     else { providerLabel = 'Pendiente'; }
-    return `Tipo de carga: ${cargoLabel} \u00b7 Proveedor: ${providerLabel}`;
+    return `Tipo de carga: ${cargoLabel} · Proveedor: ${providerLabel}`;
   };
 
   // Resumen para header del bloque de fecha/hora
@@ -765,8 +798,8 @@ export default function ReservationModal({
   const cargoTypeName = cargoTypes.find(ct => ct.id === formData.cargoType)?.name || '';
 
   const OPERATION_TYPE_LABELS: Record<string, { label: string; icon: string }> = {
-    distribucion: { label: 'Distribuci\u00f3n', icon: 'ri-truck-line' },
-    almacen: { label: 'Almac\u00e9n', icon: 'ri-store-2-line' },
+    distribucion: { label: 'Distribución', icon: 'ri-truck-line' },
+    almacen: { label: 'Almacén', icon: 'ri-store-2-line' },
     zona_franca: { label: 'Zona Franca', icon: 'ri-global-line' },
   };
   const operationTypeInfo = formData.operationType ? OPERATION_TYPE_LABELS[formData.operationType] : null;
@@ -803,8 +836,8 @@ export default function ReservationModal({
       <div className="flex items-start gap-3">
         <i className="ri-eye-off-line text-amber-700 text-xl w-5 h-5 flex items-center justify-center flex-shrink-0 mt-0.5"></i>
         <div className="min-w-0">
-          <h4 className="text-sm font-semibold text-amber-900">Solo lectura \u2014 Informaci\u00f3n limitada</h4>
-          <p className="text-xs text-amber-800 mt-1">Esta reserva pertenece a otro proveedor/usuario. Solo pod\u00e9s ver la informaci\u00f3n b\u00e1sica (and\u00e9n, horario, estado y tipo de carga). Los datos sensibles, documentos y actividad no est\u00e1n disponibles.</p>
+          <h4 className="text-sm font-semibold text-amber-900">Solo lectura — Información limitada</h4>
+          <p className="text-xs text-amber-800 mt-1">Esta reserva pertenece a otro proveedor/usuario. Solo podés ver la información básica (andén, horario, estado y tipo de carga). Los datos sensibles, documentos y actividad no están disponibles.</p>
         </div>
       </div>
     </div>
@@ -817,7 +850,7 @@ export default function ReservationModal({
           <i className="ri-lock-line text-2xl text-gray-400 w-6 h-6 flex items-center justify-center"></i>
         </div>
         <h4 className="text-sm font-semibold text-gray-700 mb-1">No disponible</h4>
-        <p className="text-xs text-gray-500 max-w-xs mx-auto">No ten\u00e9s permisos para ver {label} de esta reserva.</p>
+        <p className="text-xs text-gray-500 max-w-xs mx-auto">No tenés permisos para ver {label} de esta reserva.</p>
       </div>
     </div>
   );
@@ -853,7 +886,7 @@ export default function ReservationModal({
         {/* Tabs */}
         <div className="border-b border-gray-200 bg-white">
           <div className="flex px-6 gap-1">
-            <button type="button" onClick={() => setActiveTab('info')} className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${activeTab === 'info' ? 'border-teal-600 text-teal-700' : 'border-transparent text-gray-600 hover:text-gray-900'}`}>Informaci\u00f3n</button>
+            <button type="button" onClick={() => setActiveTab('info')} className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors whitespace-nowrap flex items-center gap-1.5 ${activeTab === 'info' ? 'border-teal-600 text-teal-700' : 'border-transparent text-gray-600 hover:text-gray-900'}`}>{'Información'}</button>
             <button type="button" onClick={() => setActiveTab('documents')} className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors whitespace-nowrap flex items-center gap-1.5 ${activeTab === 'documents' ? 'border-teal-600 text-teal-700' : 'border-transparent text-gray-600 hover:text-gray-900'}`}>
               Documentos{!canViewSensitive && (<i className="ri-lock-line text-xs w-3 h-3 inline-flex items-center justify-center opacity-50"></i>)}
             </button>
@@ -874,7 +907,7 @@ export default function ReservationModal({
                         <div className="w-5 h-5 flex items-center justify-center flex-shrink-0 mt-0.5 text-teal-600"><i className="ri-file-copy-line text-lg"></i></div>
                         <div className="flex-1 min-w-0">
                           <p className="text-sm font-semibold text-teal-900">Copia de la reserva #{copyOfId.slice(0, 8)}</p>
-                          <p className="text-xs text-teal-700 mt-0.5">Esta es una nueva reserva independiente. Pod\u00e9s cambiar el and\u00e9n, fecha, hora y cualquier otro campo antes de guardar.</p>
+                          <p className="text-xs text-teal-700 mt-0.5">Esta es una nueva reserva independiente. Podés cambiar el andén, fecha, hora y cualquier otro campo antes de guardar.</p>
                         </div>
                       </div>
                     </div>
@@ -908,7 +941,7 @@ export default function ReservationModal({
                         <i className="ri-lock-2-line text-red-600 text-xl w-5 h-5 flex items-center justify-center flex-shrink-0 mt-0.5"></i>
                         <div className="min-w-0">
                           <h4 className="text-sm font-semibold text-red-900">Esta reserva no puede modificarse en su estado actual</h4>
-                          <p className="text-xs text-red-700 mt-1">El estado "<span className="font-semibold">{reservation?.status?.name}</span>" bloquea toda edici\u00f3n.</p>
+                          <p className="text-xs text-red-700 mt-1">El estado "<span className="font-semibold">{reservation?.status?.name}</span>" bloquea toda edición.</p>
                         </div>
                       </div>
                     </div>
@@ -930,9 +963,9 @@ export default function ReservationModal({
                   <div className="mb-6">
                     <h3 className="text-sm font-semibold text-gray-900">Datos principales</h3>
                     <p className="text-xs text-gray-500 mt-1">
-                      {isReadOnly && !canViewSensitive ? 'Est\u00e1s viendo informaci\u00f3n b\u00e1sica. Los datos sensibles est\u00e1n ocultos.'
-                        : isReadOnly ? 'Est\u00e1s viendo esta reserva en modo solo lectura.'
-                        : 'Completa primero la carga y proveedor para sugerir duraci\u00f3n autom\u00e1ticamente (si aplica).'}
+                      {isReadOnly && !canViewSensitive ? 'Estás viendo información básica. Los datos sensibles están ocultos.'
+                        : isReadOnly ? 'Estás viendo esta reserva en modo solo lectura.'
+                        : 'Completa primero la carga y proveedor para sugerir duración automáticamente (si aplica).'}
                     </p>
                   </div>
 
@@ -942,8 +975,8 @@ export default function ReservationModal({
                         <div className="flex items-start gap-3">
                           <i className="ri-alert-line text-yellow-700 text-xl w-5 h-5 flex items-center justify-center flex-shrink-0 mt-0.5"></i>
                           <div className="min-w-0">
-                            <h4 className="text-sm font-semibold text-yellow-900">No ten\u00e9s proveedores asignados</h4>
-                            <p className="text-xs text-yellow-800 mt-1">Contact\u00e1 a un administrador para que te asigne proveedores antes de crear reservas.</p>
+                            <h4 className="text-sm font-semibold text-yellow-900">No tenés proveedores asignados</h4>
+                            <p className="text-xs text-yellow-800 mt-1">Contactá a un administrador para que te asigne proveedores antes de crear reservas.</p>
                           </div>
                         </div>
                       </div>
@@ -955,7 +988,7 @@ export default function ReservationModal({
                           <i className="ri-information-line text-blue-700 text-xl w-5 h-5 flex items-center justify-center flex-shrink-0 mt-0.5"></i>
                           <div className="min-w-0">
                             <h4 className="text-sm font-semibold text-blue-900">Proveedor preseleccionado</h4>
-                            <p className="text-xs text-blue-800 mt-1">Ten\u00e9s asignado un \u00fanico proveedor: <span className="font-semibold">{allowedProviders[0].name}</span></p>
+                            <p className="text-xs text-blue-800 mt-1">Tenés asignado un único proveedor: <span className="font-semibold">{allowedProviders[0].name}</span></p>
                           </div>
                         </div>
                       </div>
@@ -1250,6 +1283,9 @@ export default function ReservationModal({
                               );
                             }
 
+                            // Edición de reserva existente: campo editable
+                            const isEditableQuantity = !!reservation && !isReadOnly;
+
                             return (
                               <div className="bg-teal-50 border border-teal-200 rounded-lg p-3 space-y-2">
                                 <div className="flex items-center gap-2 mb-1">
@@ -1261,14 +1297,29 @@ export default function ReservationModal({
                                 </label>
                                 <input
                                   type="number"
+                                  min={1}
                                   value={cargoQuantity}
-                                  readOnly
-                                  className="w-full px-3 py-2.5 border border-teal-200 rounded-lg text-sm bg-teal-50/80 text-teal-900 cursor-default select-none"
+                                  readOnly={!isEditableQuantity}
+                                  onChange={isEditableQuantity ? (e) => {
+                                    setCargoQuantity(e.target.value);
+                                    setManualOverride(false);
+                                  } : undefined}
+                                  className={
+                                    isEditableQuantity
+                                      ? 'w-full px-3 py-2.5 border border-teal-300 rounded-lg text-sm bg-white text-gray-900 outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent'
+                                      : 'w-full px-3 py-2.5 border border-teal-200 rounded-lg text-sm bg-teal-50/80 text-teal-900 cursor-default select-none'
+                                  }
                                 />
-                                <p className="text-xs text-teal-600 mt-1 flex items-center gap-1">
-                                  <i className="ri-lock-line text-xs"></i>
-                                  Valor capturado en el primer paso. Para modificarlo, cerrá este modal y creá una nueva reserva.
-                                </p>
+                                {isEditableQuantity ? (
+                                  <p className="text-xs text-teal-700 mt-1">
+                                    Podés editar la cantidad. El tiempo sugerido se recalculará automáticamente.
+                                  </p>
+                                ) : (
+                                  <p className="text-xs text-teal-600 mt-1 flex items-center gap-1">
+                                    <i className="ri-lock-line text-xs"></i>
+                                    Valor capturado en el primer paso. Para modificarlo, cerrá este modal y creá una nueva reserva.
+                                  </p>
+                                )}
                               </div>
                             );
                           })()}

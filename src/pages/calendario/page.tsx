@@ -833,7 +833,43 @@ export default function CalendarioPage() {
     const srcStart = new Date(sourceReservation.start_datetime);
     const srcEnd = new Date(sourceReservation.end_datetime);
     const durationMinutes = Math.round((srcEnd.getTime() - srcStart.getTime()) / 60_000);
-    const draft = { shipper_provider: sourceReservation.shipper_provider, cargo_type: sourceReservation.cargo_type, transport_type: sourceReservation.transport_type, notes: sourceReservation.notes, purchase_order: sourceReservation.purchase_order, truck_plate: sourceReservation.truck_plate, order_request_number: sourceReservation.order_request_number, driver: sourceReservation.driver, dua: sourceReservation.dua, invoice: sourceReservation.invoice, status_id: safeStatus?.id || '', client_id: (sourceReservation as any).client_id, _copyOfId: sourceReservation.id, _durationMinutes: durationMinutes };
+
+    // Fetch consolidated providers if the source reservation is consolidated
+    let consolidatedProviders: Array<{ provider_id: string; provider_name: string; package_quantity: number }> = [];
+    if (sourceReservation.is_consolidated && sourceReservation.id && orgId) {
+      try {
+        const rows = await calendarService.getReservationConsolidatedProviders(orgId, sourceReservation.id);
+        consolidatedProviders = rows.map((r: any) => ({
+          provider_id: r.provider_id,
+          provider_name: r.provider_name || '',
+          package_quantity: r.package_quantity,
+        }));
+      } catch (_e) { /* non-blocking */ }
+    }
+
+    const draft = {
+      shipper_provider: sourceReservation.is_consolidated ? '' : (sourceReservation.shipper_provider || ''),
+      cargo_type: sourceReservation.cargo_type,
+      transport_type: sourceReservation.transport_type,
+      notes: sourceReservation.notes,
+      purchase_order: sourceReservation.purchase_order,
+      truck_plate: sourceReservation.truck_plate,
+      order_request_number: sourceReservation.order_request_number,
+      driver: sourceReservation.driver,
+      dua: sourceReservation.dua,
+      invoice: sourceReservation.invoice,
+      status_id: safeStatus?.id || '',
+      client_id: (sourceReservation as any).client_id,
+      _copyOfId: sourceReservation.id,
+      _durationMinutes: durationMinutes,
+      // Fields previously missing from copy:
+      operation_type: (sourceReservation as any).operation_type || '',
+      is_imported: (sourceReservation as any).is_imported ?? !!(sourceReservation.dua),
+      bl_number: (sourceReservation as any).bl_number || '',
+      quantity_value: (sourceReservation as any).quantity_value ?? null,
+      is_consolidated: !!sourceReservation.is_consolidated,
+      consolidated_providers: consolidatedProviders,
+    };
     setReserveModalOpen(false); setSelectedReservation(null); setReserveModalSlot(null); setCopyOfReservationId(null);
     setCopyDraft(draft);
     setAllocationLoading(true); setAllocationError(''); setAllocationRule(null);
