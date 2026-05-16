@@ -1379,13 +1379,16 @@ async getExitEligibleReservations(
         }
 
         if (filters.fechaDesde) {
-          const fechaDesde = new Date(filters.fechaDesde);
+          // Si es solo una fecha (YYYY-MM-DD) parsear como hora local
+          const raw = filters.fechaDesde;
+          const fechaDesde = raw.includes('T') ? new Date(raw) : new Date(`${raw}T00:00:00`);
           reportRows = reportRows.filter((row: any) => new Date(row.ingreso_at) >= fechaDesde);
         }
 
         if (filters.fechaHasta) {
-          const fechaHasta = new Date(filters.fechaHasta);
-          fechaHasta.setHours(23, 59, 59, 999);
+          const raw = filters.fechaHasta;
+          // Si es solo fecha (YYYY-MM-DD) usar fin del día local; si ya es ISO usar como viene
+          const fechaHasta = raw.includes('T') ? new Date(raw) : new Date(`${raw}T23:59:59.999`);
           reportRows = reportRows.filter((row: any) => new Date(row.ingreso_at) <= fechaHasta);
         }
       }

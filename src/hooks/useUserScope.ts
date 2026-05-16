@@ -57,6 +57,20 @@ const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutos
 function getScopeCacheKey(userId: string, orgId: string): string {
   return `${userId}:${orgId}`;
 }
+
+// ── Pub/Sub global para invalidación de caché ──────────────────────────────
+type ReloadListener = () => void;
+const reloadListeners = new Set<ReloadListener>();
+
+/**
+ * Invalida el caché de scope de TODOS los usuarios/orgs y notifica a todas
+ * las instancias activas de useUserScope para que recarguen inmediatamente.
+ * Llamar después de crear/actualizar/eliminar warehouses.
+ */
+export function invalidateScopeAndReload(): void {
+  scopeCache.clear();
+  reloadListeners.forEach((fn) => fn());
+}
 // ────────────────────────────────────────────────────────────────────────────
 
 /**
@@ -92,6 +106,15 @@ export function useUserScope(): UserScope {
     }
     setReloadTick((t) => t + 1);
   }, [userId, orgId]);
+
+  // Suscribirse al sistema global de invalidación de caché
+  useEffect(() => {
+    const listener: ReloadListener = () => setReloadTick((t) => t + 1);
+    reloadListeners.add(listener);
+    return () => {
+      reloadListeners.delete(listener);
+    };
+  }, []);
 
   useEffect(() => {
     if (!orgId || !userId) {

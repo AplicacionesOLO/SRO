@@ -118,6 +118,26 @@ export default function PhotoUploader({
     return [];
   });
 
+  // ── Hidratación inicial — sincronizar fotos restauradas con el padre ────────
+  // IMPORTANTE: estas refs deben declararse DESPUÉS del useState de photos
+  // para evitar el error de zona muerta temporal (TDZ).
+  const initialPhotosRef = useRef(photos); // congela el valor del primer render
+  const didHydrateRef = useRef(false);
+
+  useEffect(() => {
+    if (didHydrateRef.current) return;
+    didHydrateRef.current = true;
+    if (initialPhotosRef.current.length > 0) {
+      // Diferir un tick para que el padre ya esté listo (especialmente en StrictMode)
+      setTimeout(() => {
+        if (mountedRef.current) {
+          onChangeRef.current(initialPhotosRef.current);
+        }
+      }, 0);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // Deps vacías: intencional — solo usamos refs estables, sin reactivos
+
   const [bucketReady, setBucketReady] = useState(false);
   const mountedRef = useRef(true);
   const cameraInputRef = useRef<HTMLInputElement>(null);
@@ -137,8 +157,13 @@ export default function PhotoUploader({
   }, []);
 
   // ── Rehidratación vía custom event (Android remount tras cámara) ─────────
+  // El evento puede dispararse ANTES de que este listener se registre
+  // (race condition entre desmontaje de instancia vieja y montaje de nueva).
+  // Fallback: 350ms después del mount, re-leer sessionStorage por si el
+  // evento se perdió. Solo actúa si hay URLs nuevas no presentes en state.
   useEffect(() => {
     if (!sessionKey) return;
+
     const handler = (e: Event) => {
       const detail = (e as CustomEvent<PhotoUploadedEventDetail>).detail;
       if (detail.sessionKey !== sessionKey) return;
@@ -151,8 +176,43 @@ export default function PhotoUploader({
       setPhotos(restored);
       onChangeRef.current(restored);
     };
+
     window.addEventListener(PHOTO_UPLOADED_EVENT, handler);
-    return () => window.removeEventListener(PHOTO_UPLOADED_EVENT, handler);
+
+    // Fallback: re-verificar sessionStorage por si el evento llegó antes del listener
+    const fallbackTimer = setTimeout(() => {
+      if (!mountedRef.current) return;
+      try {
+        const raw = sessionStorage.getItem(sessionKey);
+        if (!raw) return;
+        const urls = JSON.parse(raw) as string[];
+        if (!urls.length) return;
+        setPhotos((prev) => {
+          // Solo actuar si hay URLs que el estado actual no tiene
+          const existingDoneUrls = new Set(
+            prev.filter((p) => p.status === 'done').map((p) => p.uploadedUrl).filter(Boolean)
+          );
+          const hasNew = urls.some((u) => !existingDoneUrls.has(u));
+          if (!hasNew) return prev; // ya está sincronizado, no hacer nada
+          const restored: PhotoItem[] = urls.map((url) => ({
+            id: genId(),
+            previewUrl: url,
+            uploadedUrl: url,
+            status: 'done' as const,
+          }));
+          // Notificar al padre con el array restaurado
+          setTimeout(() => {
+            if (mountedRef.current) onChangeRef.current(restored);
+          }, 0);
+          return restored;
+        });
+      } catch { /* noop */ }
+    }, 350);
+
+    return () => {
+      window.removeEventListener(PHOTO_UPLOADED_EVENT, handler);
+      clearTimeout(fallbackTimer);
+    };
   }, [sessionKey]);
 
   // ── Notificar al padre de forma segura (fuera del render cycle) ──────────

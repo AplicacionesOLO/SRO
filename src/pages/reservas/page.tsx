@@ -153,7 +153,9 @@ export default function ReservasPage() {
         r.invoice?.toLowerCase().includes(term) ||
         r.driver?.toLowerCase().includes(term) ||
         r.purchase_order?.toLowerCase().includes(term) ||
+        // Buscar tanto por ID de proveedor como por su nombre legible
         r.shipper_provider?.toLowerCase().includes(term) ||
+        getProviderName(r.shipper_provider).toLowerCase().includes(term) ||
         r.truck_plate?.toLowerCase().includes(term) ||
         r.notes?.toLowerCase().includes(term) ||
         r.order_request_number?.toLowerCase().includes(term) ||
@@ -173,14 +175,14 @@ export default function ReservasPage() {
     }
 
     if (filterDateFrom) {
-      const fromDate = new Date(filterDateFrom);
-      fromDate.setHours(0, 0, 0, 0);
+      // Parsear como hora local (agregar T00:00:00 evita que JS lo interprete como UTC midnight)
+      const fromDate = new Date(`${filterDateFrom}T00:00:00`);
       filtered = filtered.filter((r) => new Date(r.start_datetime) >= fromDate);
     }
 
     if (filterDateTo) {
-      const toDate = new Date(filterDateTo);
-      toDate.setHours(23, 59, 59, 999);
+      // Fin del día en hora local
+      const toDate = new Date(`${filterDateTo}T23:59:59.999`);
       filtered = filtered.filter((r) => new Date(r.start_datetime) <= toDate);
     }
 

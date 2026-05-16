@@ -44,9 +44,21 @@ export default function ExitForm({
   };
 
   const handleSubmitClick = () => {
+    const errorCount    = photoItems.filter((p) => p.status === 'error').length;
     const capturedCount = photoItems.filter((p) => p.status !== 'error').length;
+
+    if (errorCount > 0 && capturedCount < 3) {
+      const faltanCount = 3 - capturedCount;
+      setPhotoError(
+        `${errorCount} foto${errorCount !== 1 ? 's' : ''} no se pudo${errorCount !== 1 ? 'ron' : ''} subir correctamente. ` +
+        `${faltanCount > 0 ? `Aún faltan ${faltanCount} foto${faltanCount !== 1 ? 's' : ''} válidas. ` : ''}` +
+        'Usá el botón "Reintentar" en las fotos con error.'
+      );
+      return;
+    }
     if (capturedCount < 3) {
-      setPhotoError(`Se requieren al menos 3 fotos. Faltan ${3 - capturedCount} foto${3 - capturedCount !== 1 ? 's' : ''}.`);
+      const faltanCount = 3 - capturedCount;
+      setPhotoError(`Se requieren al menos 3 fotos. Faltan ${faltanCount} foto${faltanCount !== 1 ? 's' : ''}.`);
       return;
     }
     const doneCount = photoItems.filter((p) => p.status === 'done').length;

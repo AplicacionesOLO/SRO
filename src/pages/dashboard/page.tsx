@@ -70,10 +70,12 @@ export default function Dashboard() {
     setLoading(true);
     try {
       // ── PASO 1: Obtener docks visibles/permitidos PRIMERO ──
-      // getVisibleDockIds aplica restricción por warehouse + cliente asignado
+      // getVisibleDockIds aplica restricción por warehouse + cliente asignado.
+      // Cuando hay un almacén activo seleccionado, pasarlo para que solo
+      // retorne los docks de ESE almacén (y que el usuario pueda ver).
       const allowedDockIds = await calendarService.getVisibleDockIds(
         orgId,
-        null, // no filtrar por warehouseId individual
+        activeWarehouseId ?? null, // filtrar por almacén activo si está seleccionado
         allowedWarehouseIds,
         allowedClientIds
       );

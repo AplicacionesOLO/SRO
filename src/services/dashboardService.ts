@@ -304,10 +304,21 @@ export const dashboardService = {
     if (warehouseId) warehousesQuery = warehousesQuery.eq('id', warehouseId);
     const { data: warehouses } = await warehousesQuery;
 
-    const { data: providers } = await supabase
-      .from('providers')
-      .select('id, name')
-      .eq('org_id', orgId);
+    // ── Resolver nombres de proveedores ─────────────────────────────────────
+    // Fetch dirigido por IDs exactos de shipper_provider para evitar restricciones
+    // de RLS en user_providers (el usuario solo ve sus proveedores asignados,
+    // pero en el dashboard necesitamos nombres de TODOS los que aparecen en reservas).
+    const periodShipperIds = [
+      ...new Set(
+        (periodReservations ?? []).map(r => r.shipper_provider).filter(Boolean) as string[]
+      ),
+    ];
+    const { data: providers } = periodShipperIds.length > 0
+      ? await supabase
+          .from('providers')
+          .select('id, name')
+          .in('id', periodShipperIds)
+      : { data: [] as { id: string; name: string }[] };
 
     // ── Colaboradores ─────────────────────────────────────────────────────────
     let collaboratorsCount = 0;

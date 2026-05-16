@@ -118,13 +118,15 @@ export function LogsTab() {
     }
 
     if (dateFromFilter) {
-      filtered = filtered.filter(log => log.created_at >= dateFromFilter);
+      // Parsear como hora local para evitar offset UTC
+      const fromDate = new Date(`${dateFromFilter}T00:00:00`);
+      filtered = filtered.filter(log => new Date(log.created_at) >= fromDate);
     }
 
     if (dateToFilter) {
-      const dateTo = new Date(dateToFilter);
-      dateTo.setHours(23, 59, 59, 999);
-      filtered = filtered.filter(log => new Date(log.created_at) <= dateTo);
+      // Fin del día en hora local
+      const toDate = new Date(`${dateToFilter}T23:59:59.999`);
+      filtered = filtered.filter(log => new Date(log.created_at) <= toDate);
     }
 
     setFilteredLogs(filtered);

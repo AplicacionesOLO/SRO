@@ -66,14 +66,14 @@ export function WarehouseAnalysisModal({ isOpen, onClose, warehouses }: Warehous
 
     let filteredLogs = [...logs];
 
-    // Filtrar por rango de fechas si está definido
+    // Filtrar por rango de fechas si está definido (parseo en hora local para evitar offset UTC)
     if (dateRange.from) {
-      filteredLogs = filteredLogs.filter(log => log.created_at >= dateRange.from);
+      const fromDate = new Date(`${dateRange.from}T00:00:00`);
+      filteredLogs = filteredLogs.filter(log => new Date(log.created_at) >= fromDate);
     }
     if (dateRange.to) {
-      const dateTo = new Date(dateRange.to);
-      dateTo.setHours(23, 59, 59, 999);
-      filteredLogs = filteredLogs.filter(log => new Date(log.created_at) <= dateTo);
+      const toDate = new Date(`${dateRange.to}T23:59:59.999`);
+      filteredLogs = filteredLogs.filter(log => new Date(log.created_at) <= toDate);
     }
 
     const total = filteredLogs.length;

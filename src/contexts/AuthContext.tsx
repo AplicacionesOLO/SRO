@@ -113,14 +113,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setPermissionsLoading(false);
         setPendingAccess(false);
       }
+    }).catch((err: unknown) => {
+      const msg = (err as any)?.message || '';
+      if (
+        msg.includes('Refresh Token Not Found') ||
+        msg.includes('Invalid Refresh Token') ||
+        msg.includes('refresh_token_not_found')
+      ) {
+        clearCorruptedSession();
+      } else {
+        setLoading(false);
+        setPermissionsLoading(false);
+      }
     });
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session, error?: unknown) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       // Handle token refresh errors emitted as auth state changes
       if (_event === 'TOKEN_REFRESHED' && !session) {
         // If user was authenticated, show expired modal instead of silent redirect
         setWasAuthenticated((prev) => {
-          clearCorruptedSession(prev);
+          Promise.resolve().then(() => clearCorruptedSession(prev));
           return false;
         });
         return;
@@ -153,7 +165,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     const handleUnhandledRejection = (event: PromiseRejectionEvent) => {
       const msg = event?.reason?.message || '';
-      const code = event?.reason?.code || '';
+      const code = event?.reason?.code || (event?.reason as any)?.status || '';
       if (
         msg.includes('Refresh Token Not Found') ||
         msg.includes('Invalid Refresh Token') ||
@@ -161,8 +173,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         code === 'refresh_token_not_found'
       ) {
         event.preventDefault();
+        // Read wasAuthenticated from ref to avoid stale closure inside async call
         setWasAuthenticated((prev) => {
-          clearCorruptedSession(prev);
+          // Schedule the async cleanup outside the setState callback
+          Promise.resolve().then(() => clearCorruptedSession(prev));
           return false;
         });
       }

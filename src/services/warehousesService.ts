@@ -1,5 +1,6 @@
 import { supabase } from '../lib/supabase';
 import type { Warehouse, WarehouseFormData } from '../types/warehouse';
+import { invalidateScopeAndReload } from '@/hooks/useUserScope';
 
 const normalizeTime = (t?: string | null, fallback = '06:00:00') => {
   const value = (t || '').trim();
@@ -56,6 +57,8 @@ export const warehousesService = {
     }
 
     if (!data) throw new Error('No se pudo crear el almacén');
+    // Invalidar caché de scope para que el nuevo almacén aparezca de inmediato
+    invalidateScopeAndReload();
     return data as Warehouse;
   },
 
@@ -90,6 +93,8 @@ export const warehousesService = {
     }
 
     if (!data) throw new Error('No se pudo actualizar el almacén');
+    // Invalidar caché de scope para reflejar cambios de nombre/configuración
+    invalidateScopeAndReload();
     return data as Warehouse;
   },
 
@@ -106,6 +111,8 @@ export const warehousesService = {
       }
       throw error;
     }
+    // Invalidar caché de scope para remover el almacén eliminado
+    invalidateScopeAndReload();
   },
 
   async getWarehouseClients(orgId: string, warehouseId: string): Promise<string[]> {
