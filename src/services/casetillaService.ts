@@ -747,9 +747,9 @@ class CasetillaService {
     }
   }
 
-// ✅ REEMPLAZA getExitEligibleReservations(orgId)
-// Regla: listar reservas que tengan ingreso en casetilla_ingresos,
-// excluir: canceladas, con salida ya registrada, y status DISPATCHED.
+// Regla de negocio: listar reservas que tengan ingreso en casetilla_ingresos
+// y no tengan salida en casetilla_salidas, independientemente del status_id.
+// El status_id se muestra como información pero NO excluye la reserva.
 async getExitEligibleReservations(
   orgId: string,
   allowedWarehouseIds?: string[] | null,
@@ -758,18 +758,17 @@ async getExitEligibleReservations(
   timezone?: string | null
 ) {
   try {
-    // 1) Obtener status IDs a excluir: DISPATCHED, NO_SHOW, DONE
-    const excludedStatusCodes = ['DISPATCHED', 'NO_SHOW', 'DONE'];
-    const { data: excludedStatuses, error: excludedErr } = await supabase
-      .from("reservation_statuses")
-      .select("id, code")
-      .eq("org_id", orgId)
-      .in("code", excludedStatusCodes)
+    // 1) Cargar catálogo completo de estados (para resolver nombre en UI)
+    const { data: allStatuses } = await supabase
+      .from('reservation_statuses')
+      .select('id, name, code')
+      .eq('org_id', orgId)
       .eq('is_active', true);
 
-    if (excludedErr) throw excludedErr;
-
-    const excludedStatusIds = (excludedStatuses ?? []).map((s: any) => s.id as string);
+    const statusCatalog = new Map<string, { name: string; code: string }>();
+    (allStatuses ?? []).forEach((s: any) => {
+      statusCatalog.set(s.id, { name: s.name, code: s.code });
+    });
 
     // 2) Traer ingresos ordenados (último ingreso primero)
     let ingresosQuery = supabase
@@ -845,11 +844,11 @@ async getExitEligibleReservations(
     }
     // ─────────────────────────────────────────────────────────────────────
 
-    // 4) Traer reservas (no canceladas, no despachadas)
-    // Reservas elegibles: con ingreso, sin salida, no canceladas,
-    // y con status operativo (no DISPATCHED, NO_SHOW, DONE)
-    let q = supabase
-      .from("reservations")
+    // 4) Traer reservas elegibles (con ingreso, sin salida, no canceladas)
+    // IMPORTANTE: NO se filtra por status_id — si hay IN sin OUT, siempre aparece
+    // independientemente del estado de la reserva.
+    const { data: reservations, error: reservationsError } = await supabase
+      .from('reservations')
       .select(`
         id,
         org_id,
@@ -864,16 +863,10 @@ async getExitEligibleReservations(
         status_id,
         is_cancelled
       `)
-      .eq("org_id", orgId)
-      .eq("is_cancelled", false)
-      .in("id", eligibleReservationIds)
-      .order("created_at", { ascending: false });
-
-    for (const excludedId of excludedStatusIds) {
-      q = q.neq("status_id", excludedId);
-    }
-
-    const { data: reservations, error: reservationsError } = await q;
+      .eq('org_id', orgId)
+      .eq('is_cancelled', false)
+      .in('id', eligibleReservationIds)
+      .order('created_at', { ascending: false });
     if (reservationsError) throw reservationsError;
     if (!reservations || reservations.length === 0) return [];
 
@@ -957,26 +950,32 @@ async getExitEligibleReservations(
         shipper &&
         String(shipper).match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
 
-      const providerName = isUUID ? providersMap.get(shipper) ?? "N/A" : shipper ?? "N/A";
+      const providerName = isUUID ? providersMap.get(shipper) ?? 'N/A' : shipper ?? 'N/A';
 
       const whData = dock?.warehouse_id ? warehousesMap.get(dock.warehouse_id) : null;
+
+      // Resolver nombre y código del estado actual (solo para display, no filtra)
+      const statusInfo = r.status_id ? statusCatalog.get(r.status_id) : null;
 
       return {
         id: r.id,
         dua: r.dua ?? null,
-        matricula: r.truck_plate ?? "",
-        chofer: r.driver ?? "",
+        matricula: r.truck_plate ?? '',
+        chofer: r.driver ?? '',
         proveedor: providerName,
-        almacen: whData?.name ?? "N/A",
+        almacen: whData?.name ?? 'N/A',
         provider_name: providerName,
-        warehouse_name: whData?.name ?? "N/A",
+        warehouse_name: whData?.name ?? 'N/A',
         warehouse_id: dock?.warehouse_id ?? null,
         warehouse_timezone: whData?.timezone ?? 'America/Costa_Rica',
         provider_id: shipper ?? null,
-        orden_compra: r.purchase_order ?? "",
-        numero_pedido: r.order_request_number ?? "",
+        orden_compra: r.purchase_order ?? '',
+        numero_pedido: r.order_request_number ?? '',
         fecha_ingreso: ingresosMap.get(r.id) ?? null,
         created_at: r.created_at,
+        // Estado actual de la reserva — solo informativo, NO determina elegibilidad
+        status_name: statusInfo?.name ?? null,
+        status_code: statusInfo?.code ?? null,
       };
     });
   } catch (error) {

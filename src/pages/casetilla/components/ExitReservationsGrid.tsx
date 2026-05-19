@@ -10,6 +10,32 @@ interface ExitReservationsGridProps {
 }
 
 /**
+ * Devuelve clases y etiqueta para estados de reserva que merecen advertencia visual.
+ * Estados "normales" en OUT (ARRIVED_PENDING_UNLOAD, CONFIRMED, PENDING) no muestran badge.
+ */
+function getStatusBadge(code: string | null | undefined, name: string | null | undefined): {
+  show: boolean;
+  label: string;
+  classes: string;
+} {
+  if (!code && !name) return { show: false, label: '', classes: '' };
+
+  const warningCodes = new Set(['DONE', 'DISPATCHED', 'NO_SHOW', 'CANCELLED', 'FINALIZED', 'FINALIZADA']);
+  const normalCodes = new Set(['ARRIVED_PENDING_UNLOAD', 'CONFIRMED', 'PENDING', 'LLEGO_AL_ALMACEN']);
+
+  if (normalCodes.has(code ?? '')) return { show: false, label: '', classes: '' };
+
+  const isWarning = warningCodes.has(code ?? '');
+  return {
+    show: true,
+    label: name ?? code ?? 'Estado especial',
+    classes: isWarning
+      ? 'bg-amber-50 text-amber-700 border border-amber-200'
+      : 'bg-gray-100 text-gray-600 border border-gray-200',
+  };
+}
+
+/**
  * Formatea fecha/hora UTC usando el timezone del almacén.
  * Fallback a America/Costa_Rica si no hay timezone.
  */
@@ -140,6 +166,9 @@ export default function ExitReservationsGrid({
                   <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">
                     Fecha Ingreso
                   </th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">
+                    Estado Reserva
+                  </th>
                   <th className="px-4 py-3 text-right text-xs font-semibold text-gray-700 uppercase tracking-wider">
                     Acción
                   </th>
@@ -175,6 +204,19 @@ export default function ExitReservationsGrid({
                     </td>
                     <td className="px-4 py-3 text-sm text-gray-700">
                       {formatFechaIngreso(reservation.fecha_ingreso, reservation.warehouse_timezone)}
+                    </td>
+                    <td className="px-4 py-3 text-sm">
+                      {(() => {
+                        const badge = getStatusBadge(reservation.status_code, reservation.status_name);
+                        return badge.show ? (
+                          <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium whitespace-nowrap ${badge.classes}`}>
+                            <i className="ri-alert-line text-xs"></i>
+                            {badge.label}
+                          </span>
+                        ) : (
+                          <span className="text-gray-400 text-xs">—</span>
+                        );
+                      })()}
                     </td>
                     <td className="px-4 py-3 text-right">
                       <button
@@ -251,6 +293,19 @@ export default function ExitReservationsGrid({
                       </span>
                     </div>
                   </div>
+
+                  {/* Etiqueta de estado inusual — solo se muestra si el estado merece atención */}
+                  {(() => {
+                    const badge = getStatusBadge(reservation.status_code, reservation.status_name);
+                    return badge.show ? (
+                      <div className="flex items-center gap-2 pt-1">
+                        <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium ${badge.classes}`}>
+                          <i className="ri-alert-line"></i>
+                          Estado: {badge.label}
+                        </span>
+                      </div>
+                    ) : null;
+                  })()}
 
                   {/* Botón de acción */}
                   <button

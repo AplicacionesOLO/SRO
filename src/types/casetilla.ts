@@ -82,6 +82,9 @@ export interface ExitEligibleReservation {
   provider_id?: string | null;
   provider_name?: string | null;
   warehouse_name?: string | null;
+  /** Estado actual de la reserva — solo informativo, no determina elegibilidad */
+  status_name?: string | null;
+  status_code?: string | null;
 }
 
 // Reserva marcada como No arribó
