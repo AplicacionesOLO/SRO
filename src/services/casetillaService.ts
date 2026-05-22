@@ -777,16 +777,9 @@ async getExitEligibleReservations(
       .eq("org_id", orgId)
       .not("reservation_id", "is", null);
 
-    // ─── FILTRO POR FECHA: limitar ingresos al día seleccionado ──────────
-    if (selectedDate) {
-      const dateRange = this._buildDateFilterParams(selectedDate, timezone);
-      if (dateRange) {
-        ingresosQuery = ingresosQuery
-          .gte('created_at', dateRange.fromIso)
-          .lte('created_at', dateRange.toIso);
-      }
-    }
-    // ─────────────────────────────────────────────────────────────────────
+    // NOTE: Se eliminó el filtro por fecha sobre casetilla_ingresos.created_at.
+    // Regla operativa: toda reserva con IN y sin OUT debe aparecer como pendiente
+    // de salida, sin importar la fecha del ingreso ni el status_id.
 
     ingresosQuery = ingresosQuery.order("created_at", { ascending: false });
 

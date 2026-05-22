@@ -38,7 +38,7 @@ import { sameDayCutoffService } from '../../../services/sameDayCutoffService';
 interface ReservationModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSave: () => void;
+  onSave: () => void | Promise<void>;
   onCopy?: (reservation: Reservation) => void;
   reservation?: Reservation | null;
   docks: Dock[];
@@ -737,13 +737,23 @@ export default function ReservationModal({
         if (additionalDates.length > 0) {
           const recurringPayload: Partial<Reservation> = { ...payload, recurrence: null };
           const result = await calendarService.createRecurringReservations(recurringPayload, additionalDates);
-          clearDraft(); onSave();
+          clearDraft();
+          try { await (onSave as (...args: any[]) => any)(); } catch (_refreshErr) { /* refresco no bloqueante */ }
           setRecurringResult({ created_count: result.created_count, skipped_count: result.skipped_count, skipped_reservations: result.skipped_reservations });
           return;
         }
       }
-      clearDraft(); onSave();
+      // Reserva guardada correctamente — llamar onSave para que page.tsx refresque.
+      // onSave puede fallar (timeout del calendario) sin afectar al guardado de la reserva.
+      clearDraft();
+      try {
+        await (onSave as (...args: any[]) => any)();
+      } catch (_refreshErr) {
+        // El refresh falló (timeout u otro error), pero la reserva ya está guardada.
+        // page.tsx mostrará el banner de error de refresco por su propia cuenta.
+      }
     } catch (error: any) {
+      // Solo llega aquí si el GUARDADO falló (no el refresh)
       setNotifyModal({ isOpen: true, type: 'error', title: 'Error al guardar', message: error?.message || 'Error al guardar reserva' });
     } finally { setSaving(false); }
   };

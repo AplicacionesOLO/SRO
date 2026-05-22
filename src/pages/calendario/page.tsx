@@ -387,8 +387,7 @@ export default function CalendarioPage() {
     }
 
     const fetchPromise = (async () => {
-      try {
-        setLoading(true);
+      const attemptLoad = async () => {
         const warehouseTimezoneMap = new Map<string, string>();
         for (const w of scopeWarehousesRef.current) { if (w.timezone) warehouseTimezoneMap.set(w.id, w.timezone); }
         for (const w of warehousesRef.current) { if (w.timezone) warehouseTimezoneMap.set(w.id, w.timezone); }
@@ -410,19 +409,44 @@ export default function CalendarioPage() {
           calendarService.getDockCategories(orgId),
         ]);
 
+        // Enriquecer reservations con status desde cache (getReservations ruta rápida ya no trae el join)
+        let enrichedReservations = reservationsData;
+        if (statusesData.length > 0 && reservationsData.length > 0) {
+          const statusMap = new Map(statusesData.map((s: any) => [s.id, s]));
+          enrichedReservations = reservationsData.map((r) => {
+            const st = statusMap.get(r.status_id);
+            return st ? { ...r, status: { name: st.name, code: st.code, color: st.color } } : r;
+          });
+        }
 
         const dockIds = new Set(allowedDockIds);
-        const filteredRes = reservationsData.filter((r) => dockIds.has(r.dock_id));
+        const filteredRes = enrichedReservations.filter((r) => dockIds.has(r.dock_id));
         const filteredBlk = blocksData.filter((b) => dockIds.has(b.dock_id));
-
 
         setDocks(docksData); setReservations(filteredRes); setBlocks(filteredBlk);
         setStatuses(statusesData); setCategories(categoriesData);
         cacheRef.current.set(cacheKey, { reservations: filteredRes, blocks: filteredBlk });
         lastLoadKeyRef.current = cacheKey;
         if (cacheRef.current.size > 10) { const firstKey = cacheRef.current.keys().next().value; if (firstKey) cacheRef.current.delete(firstKey); }
+        setRefreshErrorBanner(false);
+      };
+
+      try {
+        setLoading(true);
+        await attemptLoad();
       } catch (error: any) {
-        // silently ignore
+        // Retry una vez con backoff de 1.5s para mitigar timeouts transitorios (especialmente RLS lento)
+        const isTimeout = error?.message?.toLowerCase().includes('timeout') || error?.code === '57014';
+        if (isTimeout || error?.status === 500 || error?.status === 503) {
+          try {
+            await new Promise((res) => setTimeout(res, 1500));
+            await attemptLoad();
+          } catch (retryErr: any) {
+            setRefreshErrorBanner(true);
+          }
+        } else {
+          setRefreshErrorBanner(true);
+        }
       } finally {
         setLoading(false);
         inFlightRef.current.delete(cacheKey);
@@ -736,6 +760,7 @@ export default function CalendarioPage() {
   }, [updateDateLabels]);
 
   const [notifyModal, setNotifyModal] = useState({ isOpen: false, type: 'info' as 'info' | 'warning' | 'error' | 'success', title: '', message: '' });
+  const [refreshErrorBanner, setRefreshErrorBanner] = useState(false);
 
   const handlePreReservationConfirm = useCallback(async (payload: { cargoTypeId: string; providerId: string; clientId: string; clientIds: string[]; requiredMinutes: number; quantityValue?: number | null; isConsolidated?: boolean; consolidatedProviders?: Array<{ provider_id: string; provider_name: string; package_quantity: number }> }) => {
     setPreCargoTypeId(payload.cargoTypeId); setPreProviderId(payload.providerId); setRequiredMinutes(payload.requiredMinutes); setPreQuantityValue(payload.quantityValue ?? null); setPreModalOpen(false);
@@ -942,6 +967,14 @@ export default function CalendarioPage() {
         <div className="bg-blue-50 border-b border-blue-200 px-4 py-2 flex items-center justify-between gap-3">
           <div className="flex items-center gap-2"><i className="ri-refresh-line text-blue-600 text-base w-4 h-4 flex items-center justify-center"></i><p className="text-xs text-blue-900"><span className="font-semibold">Hay actualizaciones disponibles.</span><span className="text-blue-700 ml-1">Se refrescarán al cerrar el formulario.</span></p></div>
           <button onClick={() => setPendingUpdateBanner(false)} className="text-blue-400 hover:text-blue-600 flex-shrink-0"><i className="ri-close-line w-4 h-4 flex items-center justify-center"></i></button>
+        </div>
+      )}
+
+      {refreshErrorBanner && (
+        <div className="bg-red-50 border-b border-red-200 px-4 py-2 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2"><i className="ri-refresh-line text-red-600 text-base w-4 h-4 flex items-center justify-center"></i><p className="text-xs text-red-900"><span className="font-semibold">No se pudo actualizar el calendario.</span><span className="text-red-700 ml-1">La reserva se guardó correctamente, pero el refresco automático falló. Actualizá la vista manualmente.</span></p></div>
+          <button onClick={() => { setRefreshErrorBanner(false); cacheRef.current.clear(); lastLoadKeyRef.current = null; loadData(true); }} className="text-xs font-medium text-red-700 hover:text-red-900 flex items-center gap-1 flex-shrink-0 whitespace-nowrap cursor-pointer"><i className="ri-refresh-line w-3.5 h-3.5 flex items-center justify-center"></i>Reintentar</button>
+          <button onClick={() => setRefreshErrorBanner(false)} className="text-red-400 hover:text-red-600 flex-shrink-0"><i className="ri-close-line w-4 h-4 flex items-center justify-center"></i></button>
         </div>
       )}
 
@@ -1252,7 +1285,7 @@ export default function CalendarioPage() {
             orgId={orgId!} warehouseId={warehouseId} warehouseTimezone={warehouseTimezone} copyOfId={copyOfReservationId} onCopy={handleCopyReservation}
             onClose={() => { setReserveModalOpen(false); setSelectedReservation(null); setReserveModalSlot(null); setCopyOfReservationId(null); setCopyDraft(null); setConflictBanner(false); }}
             onSave={async () => {
-              setReserveModalOpen(false); setSelectedReservation(null); setReserveModalSlot(null); setCopyOfReservationId(null); setCopyDraft(null); setConflictBanner(false); setPendingUpdateBanner(false); pendingRealtimeRefreshRef.current = false;
+              setReserveModalOpen(false); setSelectedReservation(null); setReserveModalSlot(null); setCopyOfReservationId(null); setCopyDraft(null); setConflictBanner(false); setPendingUpdateBanner(false); pendingRealtimeRefreshRef.current = false; setRefreshErrorBanner(false);
 
               cacheRef.current.clear();
               await new Promise(resolve => setTimeout(resolve, 300));

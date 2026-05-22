@@ -554,13 +554,19 @@ export const calendarService = {
     allowedDockIds?: string[] | null
   ): Promise<Reservation[]> {
     // ── RUTA RÁPIDA: dock_ids explícitos → consulta indexada por dock_id ──
+    // Usamos select ligero sin join a reservation_statuses para evitar I/O pesado
+    // y reducir la carga de evaluación RLS por fila. Los statuses se enriquecen en frontend.
     if (allowedDockIds && allowedDockIds.length > 0) {
       const { data, error } = await supabase
         .from('reservations')
-        .select(`
-          *,
-          status:reservation_statuses(name, code, color)
-        `)
+        .select(
+          `id, org_id, dock_id, start_datetime, end_datetime, status_id, is_cancelled,
+           cancel_reason, cancelled_by, cancelled_at, dua, invoice, driver, truck_plate,
+           purchase_order, order_request_number, shipper_provider, client_id,
+           operation_type, is_imported, bl_number, quantity_value, notes,
+           transport_type, cargo_type, created_by, created_at, updated_by, updated_at,
+           is_consolidated, qr_image_url, qr_card_image_url, recurrence`
+        )
         .eq('org_id', orgId)
         .eq('is_cancelled', false)
         .gte('start_datetime', startDate)
@@ -572,7 +578,7 @@ export const calendarService = {
         return [];
       }
 
-      const result = data || [];
+      const result = (data || []) as Reservation[];
 
       if (result.length > 0) {
         const creatorIds = [...new Set(result.map((r) => r.created_by).filter(Boolean))];

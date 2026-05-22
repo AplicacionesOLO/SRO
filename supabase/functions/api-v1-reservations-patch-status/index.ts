@@ -138,6 +138,7 @@ Deno.serve(async (req) => {
     const now = new Date().toISOString();
 
     // Update reservation status — ONLY status_id, never dates
+    // The trigger trigger_log_reservation_updated will auto-log the status change into activity_log
     const { data: updated, error: updateError } = await supabase
       .from('reservations')
       .update({ status_id: body.status_id, updated_by: userId, updated_at: now })
@@ -152,20 +153,6 @@ Deno.serve(async (req) => {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
-
-    // Log activity in activity_log with real user actor
-    await supabase.from('activity_log').insert({
-      org_id: orgId,
-      entity_type: 'reservation',
-      entity_id: reservationId,
-      action: 'updated',
-      field: 'status_id',
-      old_value: oldStatusId,
-      new_value: body.status_id,
-      actor_user_id: userId,
-      created_at: now,
-      metadata: { source: 'api_v1_patch_status' },
-    });
 
     return new Response(
       JSON.stringify({ data: { id: updated.id, status_id: updated.status_id, updated_by: updated.updated_by, updated_at: updated.updated_at } }),
