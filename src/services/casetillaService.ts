@@ -1333,7 +1333,48 @@ async getExitEligibleReservations(
         });
       });
 
-      // 3) Combinar ingresos con salidas y calcular duración
+      // 3) Traer datos de las reservas para enriquecer el reporte
+      const reservationIdsWithSalida = filteredIngresos
+        .filter((ing: any) => ing.reservation_id && salidasMap.has(ing.reservation_id))
+        .map((ing: any) => ing.reservation_id as string);
+
+      let reservationsMap = new Map<string, { start_datetime: string | null; end_datetime: string | null; shipper_provider: string | null }>();
+      let providersMap = new Map<string, string>();
+
+      if (reservationIdsWithSalida.length > 0) {
+        const { data: reservationsData } = await supabase
+          .from('reservations')
+          .select('id, start_datetime, end_datetime, shipper_provider')
+          .in('id', reservationIdsWithSalida)
+          .eq('org_id', orgId);
+
+        (reservationsData ?? []).forEach((r: any) => {
+          reservationsMap.set(r.id, {
+            start_datetime: r.start_datetime ?? null,
+            end_datetime: r.end_datetime ?? null,
+            shipper_provider: r.shipper_provider ?? null,
+          });
+        });
+
+        const providerIds = [
+          ...new Set(
+            (reservationsData ?? [])
+              .map((r: any) => r.shipper_provider)
+              .filter((id: any) => id && String(id).match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i))
+          ),
+        ] as string[];
+
+        if (providerIds.length > 0) {
+          const { data: providersData } = await supabase
+            .from('providers')
+            .select('id, name')
+            .in('id', providerIds);
+
+          (providersData ?? []).forEach((p: any) => providersMap.set(p.id, p.name));
+        }
+      }
+
+      // 4) Combinar ingresos con salidas y calcular duración
       let reportRows = filteredIngresos
         .filter((ing: any) => ing.reservation_id && salidasMap.has(ing.reservation_id))
         .map((ing: any) => {
@@ -1350,22 +1391,57 @@ async getExitEligibleReservations(
           const warehouseTimezone: string =
             (ing as any)?.reservations?.docks?.warehouses?.timezone || 'America/Costa_Rica';
 
+          // Enriquecer con datos de la reserva
+          const resInfo = reservationsMap.get(ing.reservation_id);
+          const shipper = resInfo?.shipper_provider ?? null;
+          const isUUID = shipper && String(shipper).match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+          const providerName = isUUID ? (providersMap.get(shipper) ?? 'N/A') : (shipper ?? 'Sin proveedor');
+
+          const startStr = resInfo?.start_datetime ?? null;
+          const endStr = resInfo?.end_datetime ?? null;
+
+          let expectedMins: number | null = null;
+          let expectedFmt: string | null = null;
+          if (startStr && endStr) {
+            const start = new Date(startStr);
+            const end = new Date(endStr);
+            expectedMins = Math.round((end.getTime() - start.getTime()) / 60000);
+            const eh = Math.floor(expectedMins / 60);
+            const em = expectedMins % 60;
+            expectedFmt = `${String(eh).padStart(2, '0')}:${String(em).padStart(2, '0')}`;
+          }
+
+          const diffMins = expectedMins != null ? duracionMinutos - expectedMins : null;
+          let diffStr: string | null = null;
+          if (diffMins !== null) {
+            if (diffMins > 0) diffStr = `+${diffMins} min`;
+            else if (diffMins < 0) diffStr = `${diffMins} min`;
+            else diffStr = '0 min';
+          }
+
           return {
             reservation_id: ing.reservation_id,
             chofer: ing.chofer ?? '',
             matricula: ing.matricula ?? '',
             dua: ing.dua ?? '',
+            provider_name: providerName,
+            start_datetime: startStr,
+            end_datetime: endStr,
             ingreso_at: ing.created_at,
             salida_at: salidaData.exit_at,
             duracion_minutos: duracionMinutos,
             duracion_formato: duracionFormato,
+            expected_duration_minutes: expectedMins,
+            expected_duration_formato: expectedFmt,
+            duration_difference_minutes: diffMins,
+            duration_difference_formato: diffStr,
             fotos_ingreso: (ing.fotos as string[] | null) ?? null,
             fotos_salida: salidaData.fotos ?? null,
             warehouse_timezone: warehouseTimezone,
           };
         });
 
-      // 4) Aplicar filtros
+      // 5) Aplicar filtros
       if (filters) {
         if (filters.searchTerm && filters.searchTerm.trim()) {
           const term = filters.searchTerm.toLowerCase();
@@ -1392,12 +1468,575 @@ async getExitEligibleReservations(
         }
       }
 
-      // 5) Ordenar por duración descendente (mayor a menor)
+      // 6) Ordenar por duración descendente (mayor a menor)
       reportRows.sort((a: any, b: any) => b.duracion_minutos - a.duracion_minutos);
 
       return reportRows;
     } catch (error) {
       // console.error('Error fetching duration report:', error);
+      throw error;
+    }
+  }
+
+  // ─── REPORTE: Distribución de tiempos por proveedor ─────────────────────
+  async getProviderDistributionReport(
+    orgId: string,
+    startDate: Date,
+    endDate: Date,
+    timezone: string,
+    allowedWarehouseIds?: string[] | null,
+    clientId?: string | null
+  ) {
+    try {
+      // 1) Rango UTC desde inicio del día startDate hasta fin del día endDate
+      const tz = timezone || DEFAULT_TIMEZONE;
+      let fromIso: string;
+      let toIso: string;
+      try {
+        fromIso = getStartOfDayInTimezone(startDate, tz).toISOString();
+        toIso = getEndOfDayInTimezone(endDate, tz).toISOString();
+      } catch {
+        return [];
+      }
+
+      // 2) SEGREGACIÓN: pre-calcular dock_ids permitidos
+      let allowedDockIds: Set<string> | null = null;
+
+      if (allowedWarehouseIds && allowedWarehouseIds.length > 0) {
+        const { data: allowedDocks } = await supabase
+          .from('docks')
+          .select('id')
+          .eq('org_id', orgId)
+          .in('warehouse_id', allowedWarehouseIds);
+        allowedDockIds = new Set((allowedDocks ?? []).map((d: any) => d.id as string));
+      }
+
+      if (clientId) {
+        const clientDockIds = await this.getDockIdsForClient(orgId, clientId);
+        const clientDockSet = new Set(clientDockIds);
+        if (allowedDockIds !== null) {
+          allowedDockIds = new Set([...allowedDockIds].filter((id) => clientDockSet.has(id)));
+        } else {
+          allowedDockIds = clientDockSet;
+        }
+      }
+
+      // 3) Cargar RESERVAS del rango (tiempo teórico)
+      let reservationsQuery = supabase
+        .from('reservations')
+        .select('id, start_datetime, end_datetime, shipper_provider, dock_id, is_cancelled')
+        .eq('org_id', orgId)
+        .eq('is_cancelled', false)
+        .gte('start_datetime', fromIso)
+        .lte('start_datetime', toIso);
+
+      const { data: reservations, error: resErr } = await reservationsQuery;
+      if (resErr) throw resErr;
+      if (!reservations || reservations.length === 0) return [];
+
+      let rows = reservations as any[];
+      if (allowedDockIds !== null) {
+        rows = rows.filter((r) => allowedDockIds!.has(r.dock_id));
+      }
+
+      // 4) Cargar INGRESOS del rango (para citas_con_in y tiempo real)
+      let ingresosQuery = supabase
+        .from('casetilla_ingresos')
+        .select('reservation_id, created_at')
+        .eq('org_id', orgId)
+        .not('reservation_id', 'is', null)
+        .gte('created_at', fromIso)
+        .lte('created_at', toIso);
+
+      const { data: ingresos, error: ingErr } = await ingresosQuery;
+      if (ingErr) throw ingErr;
+
+      // 5) Cargar SALIDAS para los ingresos encontrados
+      const ingresoReservationIds = (ingresos ?? []).map((i: any) => i.reservation_id).filter(Boolean) as string[];
+      let salidasMap = new Map<string, string>();
+      if (ingresoReservationIds.length > 0) {
+        const { data: salidas } = await supabase
+          .from('casetilla_salidas')
+          .select('reservation_id, exit_at')
+          .eq('org_id', orgId)
+          .in('reservation_id', ingresoReservationIds);
+
+        (salidas ?? []).forEach((s: any) => {
+          salidasMap.set(s.reservation_id as string, s.exit_at as string);
+        });
+      }
+
+      // 6) Resolver proveedores
+      const providerIds = [
+        ...new Set(
+          rows
+            .map((r) => r.shipper_provider)
+            .filter((id: any) =>
+              id && String(id).match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i)
+            )
+        ),
+      ] as string[];
+
+      const providersMap = new Map<string, string>();
+      if (providerIds.length > 0) {
+        const { data: provData } = await supabase
+          .from('providers')
+          .select('id, name')
+          .in('id', providerIds);
+
+        (provData ?? []).forEach((p: any) => providersMap.set(p.id as string, p.name as string));
+      }
+
+      // Helper: resolver nombre de proveedor
+      const resolveProviderName = (shipper: string | null): string => {
+        if (!shipper) return 'Sin proveedor';
+        const isUUID = String(shipper).match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+        return isUUID ? (providersMap.get(shipper) ?? 'N/A') : shipper;
+      };
+
+      // Helper: minutos a HH:mm
+      const fmtHHMM = (mins: number): string => {
+        const h = Math.floor(mins / 60);
+        const m = mins % 60;
+        return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+      };
+
+      // 7) Construir maps
+      const ingresosMap = new Map<string, string>();
+      (ingresos ?? []).forEach((i: any) => {
+        // Tomar el primer ingreso (más reciente) por reserva
+        if (!ingresosMap.has(i.reservation_id)) {
+          ingresosMap.set(i.reservation_id, i.created_at);
+        }
+      });
+
+      // 8) Agrupar por proveedor
+      const groups = new Map<string, {
+        citas_programadas: number;
+        citas_con_in: number;
+        citas_con_out: number;
+        tiempo_teorico_min: number;
+        tiempo_real_min: number;
+      }>();
+
+      for (const r of rows) {
+        const pname = resolveProviderName(r.shipper_provider ?? null);
+        let g = groups.get(pname);
+        if (!g) {
+          g = { citas_programadas: 0, citas_con_in: 0, citas_con_out: 0, tiempo_teorico_min: 0, tiempo_real_min: 0 };
+          groups.set(pname, g);
+        }
+
+        // Citas programadas + tiempo teórico
+        g.citas_programadas++;
+        if (r.start_datetime && r.end_datetime) {
+          const start = new Date(r.start_datetime);
+          const end = new Date(r.end_datetime);
+          const mins = Math.round((end.getTime() - start.getTime()) / 60000);
+          g.tiempo_teorico_min += Math.max(0, mins);
+        }
+
+        // IN registrado?
+        if (ingresosMap.has(r.id)) {
+          g.citas_con_in++;
+
+          // OUT registrado?
+          if (salidasMap.has(r.id)) {
+            g.citas_con_out++;
+            const ingAt = new Date(ingresosMap.get(r.id)!);
+            const salAt = new Date(salidasMap.get(r.id)!);
+            const realMins = Math.round((salAt.getTime() - ingAt.getTime()) / 60000);
+            g.tiempo_real_min += Math.max(0, realMins);
+          }
+        }
+      }
+
+      // 9) Calcular totales para porcentajes
+      let totalTeorico = 0;
+      let totalReal = 0;
+      for (const g of groups.values()) {
+        totalTeorico += g.tiempo_teorico_min;
+        totalReal += g.tiempo_real_min;
+      }
+
+      // 10) Construir filas finales
+      const result: {
+        provider_name: string;
+        citas_programadas: number;
+        citas_con_in: number;
+        citas_con_out: number;
+        pendientes_out: number;
+        tiempo_teorico_minutos: number;
+        tiempo_teorico_formato: string;
+        tiempo_real_minutos: number;
+        tiempo_real_formato: string;
+        diferencia_minutos: number;
+        diferencia_formato: string;
+        pct_teorico_total: number;
+        pct_real_total: number;
+        promedio_teorico_minutos: number;
+        promedio_teorico_formato: string;
+        promedio_real_minutos: number;
+        promedio_real_formato: string;
+      }[] = [];
+
+      for (const [provider_name, g] of groups) {
+        const diferencia = g.tiempo_real_min - g.tiempo_teorico_min;
+        let diferenciaFormato: string;
+        if (diferencia > 0) diferenciaFormato = `+${diferencia} min`;
+        else if (diferencia < 0) diferenciaFormato = `${diferencia} min`;
+        else diferenciaFormato = '0 min';
+
+        const pctTeorico = totalTeorico > 0 ? g.tiempo_teorico_min / totalTeorico : 0;
+        const pctReal = totalReal > 0 ? g.tiempo_real_min / totalReal : 0;
+
+        const promedioTeorico = g.citas_programadas > 0 ? Math.round(g.tiempo_teorico_min / g.citas_programadas) : 0;
+        const promedioReal = g.citas_con_out > 0 ? Math.round(g.tiempo_real_min / g.citas_con_out) : 0;
+
+        result.push({
+          provider_name,
+          citas_programadas: g.citas_programadas,
+          citas_con_in: g.citas_con_in,
+          citas_con_out: g.citas_con_out,
+          pendientes_out: g.citas_con_in - g.citas_con_out,
+          tiempo_teorico_minutos: g.tiempo_teorico_min,
+          tiempo_teorico_formato: fmtHHMM(g.tiempo_teorico_min),
+          tiempo_real_minutos: g.tiempo_real_min,
+          tiempo_real_formato: fmtHHMM(g.tiempo_real_min),
+          diferencia_minutos: diferencia,
+          diferencia_formato: diferenciaFormato,
+          pct_teorico_total: 0,
+          pct_real_total: 0,
+          promedio_teorico_minutos: promedioTeorico,
+          promedio_teorico_formato: fmtHHMM(promedioTeorico),
+          promedio_real_minutos: promedioReal,
+          promedio_real_formato: fmtHHMM(promedioReal),
+        });
+      }
+
+      // Ordenar por tiempo real descendente
+      result.sort((a, b) => b.tiempo_real_minutos - a.tiempo_real_minutos);
+
+      return result;
+    } catch (error) {
+      throw error;
+    }
+  }
+
+  // ─── Helper: obtener fecha más antigua de datos (reservations o ingresos) ─
+  async getEarliestDataDate(
+    orgId: string,
+    timezone: string,
+    allowedWarehouseIds?: string[] | null,
+    clientId?: string | null
+  ): Promise<string | null> {
+    try {
+      // SEGREGACIÓN: pre-calcular dock_ids permitidos
+      let allowedDockIds: Set<string> | null = null;
+
+      if (allowedWarehouseIds && allowedWarehouseIds.length > 0) {
+        const { data: allowedDocks } = await supabase
+          .from('docks')
+          .select('id')
+          .eq('org_id', orgId)
+          .in('warehouse_id', allowedWarehouseIds);
+        allowedDockIds = new Set((allowedDocks ?? []).map((d: any) => d.id as string));
+      }
+
+      if (clientId) {
+        const clientDockIds = await this.getDockIdsForClient(orgId, clientId);
+        const clientDockSet = new Set(clientDockIds);
+        if (allowedDockIds !== null) {
+          allowedDockIds = new Set([...allowedDockIds].filter((id) => clientDockSet.has(id)));
+        } else {
+          allowedDockIds = clientDockSet;
+        }
+      }
+
+      // Fecha mínima de reservations.start_datetime
+      let reservationsQuery = supabase
+        .from('reservations')
+        .select('start_datetime')
+        .eq('org_id', orgId)
+        .eq('is_cancelled', false)
+        .not('start_datetime', 'is', null)
+        .order('start_datetime', { ascending: true })
+        .limit(1);
+
+      if (allowedDockIds !== null && allowedDockIds.size > 0) {
+        reservationsQuery = reservationsQuery.in('dock_id', [...allowedDockIds]);
+      }
+
+      const { data: minRes } = await reservationsQuery;
+
+      // Fecha mínima de casetilla_ingresos.created_at
+      let ingresosQuery = supabase
+        .from('casetilla_ingresos')
+        .select('created_at')
+        .eq('org_id', orgId)
+        .not('reservation_id', 'is', null)
+        .order('created_at', { ascending: true })
+        .limit(1);
+
+      const { data: minIng } = await ingresosQuery;
+
+      let earliest: string | null = null;
+      if (minRes && minRes.length > 0 && minRes[0].start_datetime) {
+        earliest = minRes[0].start_datetime;
+      }
+      if (minIng && minIng.length > 0 && minIng[0].created_at) {
+        if (!earliest || new Date(minIng[0].created_at) < new Date(earliest)) {
+          earliest = minIng[0].created_at;
+        }
+      }
+
+      if (!earliest) return null;
+
+      // Convertir a YYYY-MM-DD en el timezone del almacén
+      const tz = timezone || DEFAULT_TIMEZONE;
+      try {
+        const d = new Date(earliest);
+        const formatter = new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' });
+        const parts = formatter.formatToParts(d);
+        const year = parts.find((p) => p.type === 'year')?.value;
+        const month = parts.find((p) => p.type === 'month')?.value;
+        const day = parts.find((p) => p.type === 'day')?.value;
+        return `${year}-${month}-${day}`;
+      } catch {
+        return earliest.split('T')[0];
+      }
+    } catch {
+      return null;
+    }
+  }
+
+  // ─── Helper: obtener clave YYYY-MM en un timezone ─────────────────────────
+  private _getMonthKey(dateStr: string, tz: string): string {
+    try {
+      const d = new Date(dateStr);
+      const formatter = new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit' });
+      const parts = formatter.formatToParts(d);
+      const year = parts.find((p) => p.type === 'year')?.value;
+      const month = parts.find((p) => p.type === 'month')?.value;
+      return `${year}-${month}`;
+    } catch {
+      // Fallback si timezone no es soportado por Intl
+      const d = new Date(dateStr);
+      return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
+    }
+  }
+
+  // ─── REPORTE: Distribución global mensual de tiempos ─────────────────────
+  async getMonthlyGlobalTimeDistributionReport(
+    orgId: string,
+    startDate: Date,
+    endDate: Date,
+    timezone: string,
+    allowedWarehouseIds?: string[] | null,
+    clientId?: string | null
+  ) {
+    try {
+      const tz = timezone || DEFAULT_TIMEZONE;
+      let fromIso: string;
+      let toIso: string;
+      try {
+        fromIso = getStartOfDayInTimezone(startDate, tz).toISOString();
+        toIso = getEndOfDayInTimezone(endDate, tz).toISOString();
+      } catch {
+        return [];
+      }
+
+      // 1) SEGREGACIÓN: pre-calcular dock_ids permitidos
+      let allowedDockIds: Set<string> | null = null;
+
+      if (allowedWarehouseIds && allowedWarehouseIds.length > 0) {
+        const { data: allowedDocks } = await supabase
+          .from('docks')
+          .select('id')
+          .eq('org_id', orgId)
+          .in('warehouse_id', allowedWarehouseIds);
+        allowedDockIds = new Set((allowedDocks ?? []).map((d: any) => d.id as string));
+      }
+
+      if (clientId) {
+        const clientDockIds = await this.getDockIdsForClient(orgId, clientId);
+        const clientDockSet = new Set(clientDockIds);
+        if (allowedDockIds !== null) {
+          allowedDockIds = new Set([...allowedDockIds].filter((id) => clientDockSet.has(id)));
+        } else {
+          allowedDockIds = clientDockSet;
+        }
+      }
+
+      // 2) Cargar RESERVAS del rango
+      const { data: reservations, error: resErr } = await supabase
+        .from('reservations')
+        .select('id, start_datetime, end_datetime, dock_id, is_cancelled')
+        .eq('org_id', orgId)
+        .eq('is_cancelled', false)
+        .gte('start_datetime', fromIso)
+        .lte('start_datetime', toIso);
+
+      if (resErr) throw resErr;
+      let resRows = (reservations ?? []) as any[];
+      if (allowedDockIds !== null) {
+        resRows = resRows.filter((r) => allowedDockIds!.has(r.dock_id));
+      }
+
+      // 3) Cargar INGRESOS del rango (solo con reservation_id)
+      const { data: ingresos, error: ingErr } = await supabase
+        .from('casetilla_ingresos')
+        .select('reservation_id, created_at')
+        .eq('org_id', orgId)
+        .not('reservation_id', 'is', null)
+        .gte('created_at', fromIso)
+        .lte('created_at', toIso);
+
+      if (ingErr) throw ingErr;
+
+      // 4) Cargar SALIDAS para esos ingresos
+      const ingresoReservationIds = (ingresos ?? []).map((i: any) => i.reservation_id).filter(Boolean) as string[];
+      let salidasMap = new Map<string, string>();
+      if (ingresoReservationIds.length > 0) {
+        const { data: salidas } = await supabase
+          .from('casetilla_salidas')
+          .select('reservation_id, exit_at')
+          .eq('org_id', orgId)
+          .in('reservation_id', ingresoReservationIds);
+
+        (salidas ?? []).forEach((s: any) => {
+          salidasMap.set(s.reservation_id as string, s.exit_at as string);
+        });
+      }
+
+      // 5) Construir map de ingresos (primer ingreso por reserva)
+      const ingresosMap = new Map<string, string>();
+      (ingresos ?? []).forEach((i: any) => {
+        if (!ingresosMap.has(i.reservation_id)) {
+          ingresosMap.set(i.reservation_id, i.created_at);
+        }
+      });
+
+      // Helper: minutos a HH:mm
+      const fmtHHMM = (mins: number): string => {
+        const h = Math.floor(mins / 60);
+        const m = mins % 60;
+        return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+      };
+
+      // Helper: label legible para mes
+      const monthNames = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
+      const getMonthLabel = (key: string): string => {
+        const [y, m] = key.split('-').map(Number);
+        return `${monthNames[m - 1]} ${y}`;
+      };
+
+      // 6) Agrupar por mes
+      const groups = new Map<string, {
+        citas_programadas: number;
+        citas_con_in: number;
+        citas_con_out: number;
+        tiempo_teorico_min: number;
+        tiempo_real_min: number;
+      }>();
+
+      // Procesar reservas → agrupar por mes del start_datetime
+      for (const r of resRows) {
+        if (!r.start_datetime) continue;
+        const monthKey = this._getMonthKey(r.start_datetime, tz);
+        let g = groups.get(monthKey);
+        if (!g) {
+          g = { citas_programadas: 0, citas_con_in: 0, citas_con_out: 0, tiempo_teorico_min: 0, tiempo_real_min: 0 };
+          groups.set(monthKey, g);
+        }
+
+        g.citas_programadas++;
+        if (r.start_datetime && r.end_datetime) {
+          const start = new Date(r.start_datetime);
+          const end = new Date(r.end_datetime);
+          const mins = Math.round((end.getTime() - start.getTime()) / 60000);
+          g.tiempo_teorico_min += Math.max(0, mins);
+        }
+
+        if (ingresosMap.has(r.id)) {
+          g.citas_con_in++;
+          if (salidasMap.has(r.id)) {
+            g.citas_con_out++;
+            const ingAt = new Date(ingresosMap.get(r.id)!);
+            const salAt = new Date(salidasMap.get(r.id)!);
+            const realMins = Math.round((salAt.getTime() - ingAt.getTime()) / 60000);
+            g.tiempo_real_min += Math.max(0, realMins);
+          }
+        }
+      }
+
+      // 7) Calcular totales históricos
+      let totalTeorico = 0;
+      let totalReal = 0;
+      for (const g of groups.values()) {
+        totalTeorico += g.tiempo_teorico_min;
+        totalReal += g.tiempo_real_min;
+      }
+
+      // 8) Construir filas finales ordenadas ascendentemente por mes
+      const result: {
+        month_label: string;
+        month_key: string;
+        citas_programadas: number;
+        citas_con_in: number;
+        citas_con_out: number;
+        pendientes_out: number;
+        tiempo_teorico_minutos: number;
+        tiempo_teorico_formato: string;
+        tiempo_real_minutos: number;
+        tiempo_real_formato: string;
+        diferencia_minutos: number;
+        diferencia_formato: string;
+        pct_real_vs_teorico: number;
+        promedio_teorico_minutos: number;
+        promedio_teorico_formato: string;
+        promedio_real_minutos: number;
+        promedio_real_formato: string;
+      }[] = [];
+
+      const sortedKeys = [...groups.keys()].sort();
+
+      for (const monthKey of sortedKeys) {
+        const g = groups.get(monthKey)!;
+        const diferencia = g.tiempo_real_min - g.tiempo_teorico_min;
+        let diferenciaFormato: string;
+        if (diferencia > 0) diferenciaFormato = `+${diferencia} min`;
+        else if (diferencia < 0) diferenciaFormato = `${diferencia} min`;
+        else diferenciaFormato = '0 min';
+
+        const pctRealVsTeorico = g.tiempo_teorico_min > 0 ? g.tiempo_real_min / g.tiempo_teorico_min : 0;
+
+        const promedioTeorico = g.citas_programadas > 0 ? Math.round(g.tiempo_teorico_min / g.citas_programadas) : 0;
+        const promedioReal = g.citas_con_out > 0 ? Math.round(g.tiempo_real_min / g.citas_con_out) : 0;
+
+        result.push({
+          month_label: getMonthLabel(monthKey),
+          month_key: monthKey,
+          citas_programadas: g.citas_programadas,
+          citas_con_in: g.citas_con_in,
+          citas_con_out: g.citas_con_out,
+          pendientes_out: g.citas_con_in - g.citas_con_out,
+          tiempo_teorico_minutos: g.tiempo_teorico_min,
+          tiempo_teorico_formato: fmtHHMM(g.tiempo_teorico_min),
+          tiempo_real_minutos: g.tiempo_real_min,
+          tiempo_real_formato: fmtHHMM(g.tiempo_real_min),
+          diferencia_minutos: diferencia,
+          diferencia_formato: diferenciaFormato,
+          pct_real_vs_teorico: pctRealVsTeorico,
+          promedio_teorico_minutos: promedioTeorico,
+          promedio_teorico_formato: fmtHHMM(promedioTeorico),
+          promedio_real_minutos: promedioReal,
+          promedio_real_formato: fmtHHMM(promedioReal),
+        });
+      }
+
+      return result;
+    } catch (error) {
       throw error;
     }
   }

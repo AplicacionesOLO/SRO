@@ -294,16 +294,15 @@ export default function CalendarioPage() {
     return ((endTime.getTime() - startTime.getTime()) / (1000 * 60)) * PX_PER_MINUTE_DYNAMIC;
   }, [PX_PER_MINUTE_DYNAMIC]);
 
-  const clampEventToBusinessHours = useCallback((day: Date, start: Date, end: Date): { top: number; height: number } | null => {
+  const clampEventToBusinessHours = useCallback((day: Date, start: Date, end: Date): { top: number; height: number; extendsBeyondBusinessHours: boolean } | null => {
     const dayBusinessStart = buildDateFromMinutes(day, businessStartMinutes);
     const dayBusinessEnd = buildDateFromMinutes(day, businessEndMinutes);
-    const clampedStart = start < dayBusinessStart ? dayBusinessStart : start;
-    const clampedEnd = end > dayBusinessEnd ? dayBusinessEnd : end;
-    if (clampedEnd <= clampedStart) return null;
-    const top = getTopFromBusinessStart(clampedStart);
-    const height = calculateEventHeightDynamic(clampedStart, clampedEnd);
+    if (end <= start) return null;
+    const top = getTopFromBusinessStart(start);
+    const height = calculateEventHeightDynamic(start, end);
     if (!Number.isFinite(top) || !Number.isFinite(height) || height <= 0) return null;
-    return { top, height };
+    const extendsBeyondBusinessHours = end > dayBusinessEnd || start < dayBusinessStart;
+    return { top, height, extendsBeyondBusinessHours };
   }, [buildDateFromMinutes, businessStartMinutes, businessEndMinutes, getTopFromBusinessStart, calculateEventHeightDynamic]);
 
   const isWithinBusinessHours = useCallback((day: Date, start: Date, end: Date): boolean => {
@@ -1166,7 +1165,7 @@ export default function CalendarioPage() {
                                             const end = new Date(reservation.end_datetime);
                                             const clamped = clampEventToBusinessHours(day, start, end);
                                             if (!clamped) return null;
-                                            const { top, height } = clamped;
+                                            const { top, height, extendsBeyondBusinessHours } = clamped;
                                             const isOwnerR = reservation.created_by === user?.id;
                                             const hasSameProviderR = reservation.shipper_provider ? userProviderIds.has(reservation.shipper_provider) : false;
                                             const canViewSensitiveR = isOwnerR || isPrivilegedUser || hasSameProviderR;
@@ -1176,7 +1175,8 @@ export default function CalendarioPage() {
                                                   draggable={canMove && !selectionMode}
                                                   onDragStart={(e) => { if (selectionMode) { e.preventDefault(); return; } handleDragStart(e, { type: 'reservation', id: reservation.id, dockId: dock.id, startTime: start, endTime: end, data: reservation }); }}
                                                   onClick={(e) => { e.stopPropagation(); if (selectionMode) { setNotifyModal({ isOpen: true, type: 'warning', title: 'Espacio ocupado', message: 'Ese espacio ya está reservado. Seleccioná un espacio disponible (verde).' }); return; } handleSelectSlot({ dockId: dock.id, date: day.toISOString(), time: '', eventType: 'reservation', id: reservation.id, data: reservation, startTime: start, endTime: end }); }}
-                                                  className={`absolute left-1 right-1 rounded-lg border border-l-4 shadow-sm hover:shadow transition-shadow overflow-hidden pointer-events-auto ${selectionMode ? 'cursor-not-allowed opacity-70' : 'cursor-pointer'}`}
+                                                  className={`absolute left-1 right-1 rounded-lg border border-l-4 shadow-sm hover:shadow transition-shadow overflow-hidden pointer-events-auto ${selectionMode ? 'cursor-not-allowed opacity-70' : 'cursor-pointer'} ${extendsBeyondBusinessHours ? 'ring-1 ring-amber-400' : ''}`}
+                                                  title={extendsBeyondBusinessHours ? 'Extiende fuera del horario operativo actual' : undefined}
                                                   style={{ top: `${top}px`, height: `${height}px`, borderLeftColor: reservation.status?.color || '#6B7280', borderColor: hexToTint(reservation.status?.color || '#6B7280', 0.55), borderLeftWidth: '4px', backgroundColor: hexToTint(reservation.status?.color || '#6B7280', 0.84), minHeight: '52px' }}
                                                 >
                                                   <div className="h-full flex flex-col justify-between overflow-hidden" style={{ padding: '7px 9px 7px 9px' }}>

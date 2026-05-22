@@ -30,10 +30,17 @@ interface DurationReportRow {
   chofer: string;
   matricula: string;
   dua: string | null;
+  provider_name?: string | null;
+  start_datetime?: string | null;
+  end_datetime?: string | null;
   ingreso_at: string;
   salida_at: string;
   duracion_minutos: number;
   duracion_formato: string;
+  expected_duration_minutes?: number | null;
+  expected_duration_formato?: string | null;
+  duration_difference_minutes?: number | null;
+  duration_difference_formato?: string | null;
   fotos_ingreso?: string[] | null;
   fotos_salida?: string[] | null;
   warehouse_timezone?: string;
@@ -450,12 +457,17 @@ export default function DurationReportGrid({ orgId, allowedWarehouseIds, clientI
                 <table className="w-full">
                   <thead className="bg-gray-50 border-b border-gray-200">
                     <tr>
+                      <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Proveedor</th>
                       <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Chofer</th>
                       <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Matrícula</th>
                       <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">DUA</th>
+                      <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Inicio cita</th>
+                      <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Fin cita</th>
                       <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Ingreso</th>
                       <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Salida</th>
-                      <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Duración</th>
+                      <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Duración esperada</th>
+                      <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Duración real</th>
+                      <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Diferencia</th>
                       <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Fotos</th>
                     </tr>
                   </thead>
@@ -465,16 +477,44 @@ export default function DurationReportGrid({ orgId, allowedWarehouseIds, clientI
                       const hasSalida = row.fotos_salida && row.fotos_salida.length > 0;
                       return (
                         <tr key={row.reservation_id} className="hover:bg-gray-50 transition-colors">
+                          <td className="px-4 py-3 text-sm text-gray-900">{row.provider_name ?? 'Sin proveedor'}</td>
                           <td className="px-4 py-3 text-sm text-gray-900">{row.chofer}</td>
                           <td className="px-4 py-3 text-sm font-medium text-gray-900">{row.matricula}</td>
                           <td className="px-4 py-3 text-sm text-gray-600">{row.dua || '-'}</td>
+                          <td className="px-4 py-3 text-sm text-gray-600">
+                            {row.start_datetime ? formatDateTime(row.start_datetime, row.warehouse_timezone) : '-'}
+                          </td>
+                          <td className="px-4 py-3 text-sm text-gray-600">
+                            {row.end_datetime ? formatDateTime(row.end_datetime, row.warehouse_timezone) : '-'}
+                          </td>
                           <td className="px-4 py-3 text-sm text-gray-600">{formatDateTime(row.ingreso_at, row.warehouse_timezone)}</td>
                           <td className="px-4 py-3 text-sm text-gray-600">{formatDateTime(row.salida_at, row.warehouse_timezone)}</td>
+                          <td className="px-4 py-3">
+                            <div className="flex flex-col">
+                              <span className="text-sm font-semibold text-gray-700">{row.expected_duration_formato ?? '-'}</span>
+                              {row.expected_duration_minutes != null && (
+                                <span className="text-xs text-gray-500">{row.expected_duration_minutes} min</span>
+                              )}
+                            </div>
+                          </td>
                           <td className="px-4 py-3">
                             <div className="flex flex-col">
                               <span className="text-sm font-semibold text-teal-700">{row.duracion_formato}</span>
                               <span className="text-xs text-gray-500">{row.duracion_minutos} min</span>
                             </div>
+                          </td>
+                          <td className="px-4 py-3">
+                            <span className={`text-sm font-semibold whitespace-nowrap ${
+                              row.duration_difference_minutes == null
+                                ? 'text-gray-400'
+                                : row.duration_difference_minutes > 0
+                                  ? 'text-red-600'
+                                  : row.duration_difference_minutes < 0
+                                    ? 'text-emerald-600'
+                                    : 'text-gray-700'
+                            }`}>
+                              {row.duration_difference_formato ?? '-'}
+                            </span>
                           </td>
                           <td className="px-4 py-3">
                             {!hasIngreso && !hasSalida ? (
@@ -522,21 +562,39 @@ export default function DurationReportGrid({ orgId, allowedWarehouseIds, clientI
                   className="bg-white rounded-lg border border-gray-200 p-4"
                 >
                   <div className="flex items-start justify-between mb-3">
-                    <div className="flex-1">
+                    <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 mb-1">
                         <i className="ri-user-line text-gray-400"></i>
-                        <span className="text-sm font-semibold text-gray-900">{row.chofer}</span>
+                        <span className="text-sm font-semibold text-gray-900 truncate">{row.chofer}</span>
                       </div>
                       <div className="flex items-center gap-2">
                         <i className="ri-car-line text-gray-400"></i>
                         <span className="text-sm font-medium text-gray-700">{row.matricula}</span>
                       </div>
                     </div>
-                    <div className="text-right">
+                    <div className="text-right flex flex-col items-end">
                       <div className="text-lg font-bold text-teal-700">{row.duracion_formato}</div>
                       <div className="text-xs text-gray-500">{row.duracion_minutos} min</div>
+                      {row.duration_difference_formato && (
+                        <span className={`text-xs font-semibold mt-1 ${
+                          row.duration_difference_minutes != null && row.duration_difference_minutes > 0
+                            ? 'text-red-600'
+                            : row.duration_difference_minutes != null && row.duration_difference_minutes < 0
+                              ? 'text-emerald-600'
+                              : 'text-gray-600'
+                        }`}>
+                          {row.duration_difference_formato}
+                        </span>
+                      )}
                     </div>
                   </div>
+
+                  {row.provider_name && (
+                    <div className="flex items-center gap-2 mb-2">
+                      <i className="ri-building-line text-gray-400"></i>
+                      <span className="text-sm text-gray-700 font-medium">{row.provider_name}</span>
+                    </div>
+                  )}
 
                   {row.dua && (
                     <div className="flex items-center gap-2 mb-3 pb-3 border-b border-gray-100">
@@ -546,6 +604,36 @@ export default function DurationReportGrid({ orgId, allowedWarehouseIds, clientI
                   )}
 
                   <div className="space-y-2 text-sm">
+                    {row.start_datetime && (
+                      <div className="flex items-start gap-2">
+                        <i className="ri-calendar-line text-gray-400 mt-0.5"></i>
+                        <div className="flex-1">
+                          <span className="text-gray-500">Inicio cita:</span>
+                          <span className="ml-2 text-gray-900">{formatDateTime(row.start_datetime, row.warehouse_timezone)}</span>
+                        </div>
+                      </div>
+                    )}
+                    {row.end_datetime && (
+                      <div className="flex items-start gap-2">
+                        <i className="ri-calendar-check-line text-gray-400 mt-0.5"></i>
+                        <div className="flex-1">
+                          <span className="text-gray-500">Fin cita:</span>
+                          <span className="ml-2 text-gray-900">{formatDateTime(row.end_datetime, row.warehouse_timezone)}</span>
+                        </div>
+                      </div>
+                    )}
+                    {row.expected_duration_formato && (
+                      <div className="flex items-start gap-2">
+                        <i className="ri-time-line text-gray-400 mt-0.5"></i>
+                        <div className="flex-1">
+                          <span className="text-gray-500">Duración esperada:</span>
+                          <span className="ml-2 text-gray-900">{row.expected_duration_formato}</span>
+                          {row.expected_duration_minutes != null && (
+                            <span className="text-xs text-gray-500 ml-1">({row.expected_duration_minutes} min)</span>
+                          )}
+                        </div>
+                      </div>
+                    )}
                     <div className="flex items-start gap-2">
                       <i className="ri-login-box-line text-teal-600 mt-0.5"></i>
                       <div className="flex-1">

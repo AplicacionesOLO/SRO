@@ -107,10 +107,59 @@ export interface DurationReportRow {
   chofer: string;
   matricula: string;
   dua?: string | null;
+  provider_name?: string | null;
+  start_datetime?: string | null;
+  end_datetime?: string | null;
   ingreso_at: string;
   salida_at: string;
   duracion_minutos: number;
   duracion_formato: string; // formato "hh:mm"
+  expected_duration_minutes?: number | null;
+  expected_duration_formato?: string | null; // formato "hh:mm"
+  duration_difference_minutes?: number | null;
+  duration_difference_formato?: string | null; // ej: "+35 min", "-115 min", "0 min"
   fotos_ingreso?: string[] | null;
   fotos_salida?: string[] | null;
+}
+
+// Fila del reporte de distribución por proveedor
+export interface ProviderDistributionRow {
+  provider_name: string;
+  citas_programadas: number;
+  citas_con_in: number;
+  citas_con_out: number;
+  pendientes_out: number;
+  tiempo_teorico_minutos: number;
+  tiempo_teorico_formato: string; // "hh:mm"
+  tiempo_real_minutos: number;
+  tiempo_real_formato: string; // "hh:mm"
+  diferencia_minutos: number;
+  diferencia_formato: string; // "+35 min", "-115 min", "0 min"
+  pct_teorico_total: number; // 0.0 - 1.0
+  pct_real_total: number; // 0.0 - 1.0
+  promedio_teorico_minutos: number;
+  promedio_teorico_formato: string; // "hh:mm"
+  promedio_real_minutos: number;
+  promedio_real_formato: string; // "hh:mm"
+}
+
+// Fila del reporte global mensual de tiempos
+export interface MonthlyGlobalTimeRow {
+  month_label: string; // "YYYY-MM" o "Ene 2025"
+  month_key: string; // "YYYY-MM" para ordenar
+  citas_programadas: number;
+  citas_con_in: number;
+  citas_con_out: number;
+  pendientes_out: number;
+  tiempo_teorico_minutos: number;
+  tiempo_teorico_formato: string;
+  tiempo_real_minutos: number;
+  tiempo_real_formato: string;
+  diferencia_minutos: number;
+  diferencia_formato: string;
+  pct_real_vs_teorico: number; // 0.0 - 1.0 (real / teorico)
+  promedio_teorico_minutos: number;
+  promedio_teorico_formato: string;
+  promedio_real_minutos: number;
+  promedio_real_formato: string;
 }
