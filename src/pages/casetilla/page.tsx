@@ -24,7 +24,7 @@ const FOTOS_INGRESO_KEY = 'casetilla_fotos_ingreso';
 const FOTOS_SALIDA_KEY  = 'casetilla_fotos_salida';
 const FORM_DATA_INGRESO_KEY = 'casetilla_form_ingreso';
 
-type ViewMode = 'HOME' | 'INGRESO' | 'PENDIENTES' | 'SALIDA' | 'DURACION' | 'NO_SHOW' | 'PROVIDER_DISTRIBUTION';
+type ViewMode = 'HOME' | 'INGRESO' | 'PENDIENTES' | 'SALIDA' | 'DURACION' | 'NO_SHOW' | 'PROVIDER_DISTRIBUTION' | 'REPORTES';
 
 interface PersistedUIState {
   viewMode: ViewMode;
@@ -103,6 +103,9 @@ export default function CasetillaPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [selectedClientId, setSelectedClientId] = useState<string | null>(null);
 
+  // ── Report tab state ──────────────────────────────────────────────────────
+  const [reportTab, setReportTab] = useState<'duration' | 'provider'>('duration');
+
   // ── Timezone activo: del almacén seleccionado o fallback ────────────────
   const activeTimezone = activeWarehouse?.timezone || DEFAULT_TIMEZONE;
 
@@ -121,6 +124,7 @@ export default function CasetillaPage() {
   const canView = can('casetilla.view');
   const canCreate = can('casetilla.create') || can('casetilla.manage');
   const canViewNoShow = can('casetilla.no_show.view');
+  const canViewProviderDistribution = can('casetilla.provider_distribution.view');
   void canCreate;
 
   useEffect(() => {
@@ -752,27 +756,28 @@ export default function CasetillaPage() {
             <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 hover:shadow-md transition-shadow">
               <div className="flex items-start gap-4">
                 <div className="flex-shrink-0 w-12 h-12 sm:w-14 sm:h-14 bg-blue-100 rounded-lg flex items-center justify-center">
-                  <i className="ri-time-line text-2xl sm:text-3xl text-blue-600"></i>
+                  <i className="ri-bar-chart-box-line text-2xl sm:text-3xl text-blue-600"></i>
                 </div>
                 <div className="flex-1 min-w-0">
-                  <h2 className="text-lg sm:text-xl font-bold text-gray-900 mb-2">Duración en Punto Control</h2>
-                  <p className="text-sm text-gray-600 mb-4">Reporte de tiempos de permanencia en el almacén</p>
-                  <button onClick={() => setViewMode('DURACION')} className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-5 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors whitespace-nowrap cursor-pointer">
-                    <i className="ri-bar-chart-line"></i>Ver Reporte
-                  </button>
-                </div>
-              </div>
-            </div>
-            <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 hover:shadow-md transition-shadow">
-              <div className="flex items-start gap-4">
-                <div className="flex-shrink-0 w-12 h-12 sm:w-14 sm:h-14 bg-indigo-100 rounded-lg flex items-center justify-center">
-                  <i className="ri-bar-chart-grouped-line text-2xl sm:text-3xl text-indigo-600"></i>
-                </div>
-                <div className="flex-1 min-w-0">
-                  <h2 className="text-lg sm:text-xl font-bold text-gray-900 mb-2">Distribución por Proveedor</h2>
-                  <p className="text-sm text-gray-600 mb-4">Compará el tiempo teórico vs real agrupado por proveedor</p>
-                  <button onClick={() => setViewMode('PROVIDER_DISTRIBUTION')} className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-5 py-2.5 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors whitespace-nowrap cursor-pointer">
-                    <i className="ri-pie-chart-line"></i>Ver Reporte
+                  <h2 className="text-lg sm:text-xl font-bold text-gray-900 mb-2">Reportes y Análisis</h2>
+                  <p className="text-sm text-gray-600 mb-4">
+                    {canViewProviderDistribution
+                      ? 'Duración en Punto Control y distribución de tiempos por proveedor'
+                      : 'Reporte de tiempos de permanencia en el almacén'}
+                  </p>
+                  <button
+                    onClick={() => {
+                      if (canViewProviderDistribution) {
+                        setReportTab('duration');
+                        setViewMode('REPORTES');
+                      } else {
+                        setViewMode('DURACION');
+                      }
+                    }}
+                    className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-5 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors whitespace-nowrap cursor-pointer"
+                  >
+                    <i className="ri-bar-chart-line"></i>
+                    {canViewProviderDistribution ? 'Ver Reportes' : 'Ver Reporte'}
                   </button>
                 </div>
               </div>
@@ -943,6 +948,59 @@ export default function CasetillaPage() {
               warehouseName={activeWarehouse?.name}
               clientName={selectedClientId ? scopeClients.find(c => c.id === selectedClientId)?.name : undefined}
             />
+          </div>
+        )}
+
+        {viewMode === 'REPORTES' && (
+          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-4 sm:p-6 lg:p-8">
+            <div className="mb-6">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-4">
+                <div>
+                  <h2 className="text-xl sm:text-2xl font-bold text-gray-900">Reportes y Análisis</h2>
+                  <p className="text-sm text-gray-600 mt-1">Análisis de tiempos en Punto Control</p>
+                </div>
+                <button onClick={() => { clearSession(); setViewModeRaw('HOME'); }} className="inline-flex items-center justify-center gap-2 px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors whitespace-nowrap cursor-pointer">
+                  <i className="ri-arrow-left-line"></i>Volver
+                </button>
+              </div>
+
+              {/* Tabs */}
+              <div className="flex items-center gap-2">
+                <span className="text-sm font-medium text-gray-700">Reporte:</span>
+                <div className="inline-flex bg-gray-100 rounded-lg p-1">
+                  <button
+                    onClick={() => setReportTab('duration')}
+                    className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors whitespace-nowrap cursor-pointer ${reportTab === 'duration' ? 'bg-white text-teal-700 shadow-sm' : 'text-gray-600 hover:text-gray-900'}`}
+                  >
+                    Duración en Punto Control
+                  </button>
+                  {canViewProviderDistribution && (
+                    <button
+                      onClick={() => setReportTab('provider')}
+                      className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors whitespace-nowrap cursor-pointer ${reportTab === 'provider' ? 'bg-white text-teal-700 shadow-sm' : 'text-gray-600 hover:text-gray-900'}`}
+                    >
+                      Distribución por Proveedor
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {reportTab === 'duration' && (
+              <DurationReportGrid orgId={orgId!} allowedWarehouseIds={effectiveWarehouseIds} clientId={selectedClientId} />
+            )}
+            {reportTab === 'provider' && canViewProviderDistribution && (
+              <ProviderDistributionGrid
+                orgId={orgId!}
+                allowedWarehouseIds={effectiveWarehouseIds}
+                scopeWarehouseIds={scopeWarehouseIds}
+                clientId={selectedClientId}
+                selectedDate={getSelectedDateAsDate()}
+                timezone={activeTimezone}
+                warehouseName={activeWarehouse?.name}
+                clientName={selectedClientId ? scopeClients.find(c => c.id === selectedClientId)?.name : undefined}
+              />
+            )}
           </div>
         )}
 
