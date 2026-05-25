@@ -217,27 +217,48 @@ export const providersService = {
 
     const providerSet = new Set(providerIds);
 
-    // 1. Traer TODOS los provider_warehouses de la org — sin .in() → URL fija, sin 414
-    const { data: allPwRows, error: pwErr } = await supabase
-      .from('provider_warehouses')
-      .select('provider_id, warehouse_id, warehouses(name)')
-      .eq('org_id', orgId);
+    // 1. Traer TODOS los provider_warehouses de la org — paginado (2,622+ filas, el default de 1,000 no alcanza)
+    const pageSize = 1000;
+    let from = 0;
+    let allPwRows: any[] = [];
 
-    if (pwErr) throw pwErr;
+    while (true) {
+      const { data, error: pwErr } = await supabase
+        .from('provider_warehouses')
+        .select('provider_id, warehouse_id, warehouses(name)')
+        .eq('org_id', orgId)
+        .order('created_at', { ascending: true })
+        .range(from, from + pageSize - 1);
+
+      if (pwErr) throw pwErr;
+      allPwRows = allPwRows.concat(data ?? []);
+      if ((data ?? []).length < pageSize) break;
+      from += pageSize;
+    }
 
     // Filtrar en memoria: solo los proveedores que nos importan
-    const pwRows = (allPwRows ?? []).filter((r: any) => providerSet.has(r.provider_id));
+    const pwRows = allPwRows.filter((r: any) => providerSet.has(r.provider_id));
 
-    // 2. Traer TODOS los client_providers de la org — sin .in() → URL fija, sin 414
-    const { data: allCpRows, error: cpErr } = await supabase
-      .from('client_providers')
-      .select('provider_id, client_id, clients(name)')
-      .eq('org_id', orgId);
+    // 2. Traer TODOS los client_providers de la org — paginado (5,246+ filas, el default de 1,000 no alcanza)
+    from = 0;
+    let allCpRows: any[] = [];
 
-    if (cpErr) throw cpErr;
+    while (true) {
+      const { data, error: cpErr } = await supabase
+        .from('client_providers')
+        .select('provider_id, client_id, clients(name)')
+        .eq('org_id', orgId)
+        .order('created_at', { ascending: true })
+        .range(from, from + pageSize - 1);
+
+      if (cpErr) throw cpErr;
+      allCpRows = allCpRows.concat(data ?? []);
+      if ((data ?? []).length < pageSize) break;
+      from += pageSize;
+    }
 
     // Filtrar en memoria: solo los proveedores que nos importan
-    const cpRows = (allCpRows ?? []).filter((r: any) => providerSet.has(r.provider_id));
+    const cpRows = allCpRows.filter((r: any) => providerSet.has(r.provider_id));
 
     // 3. Traer warehouse_clients para saber qué clientes pertenecen a qué almacén
     // Los almacenes son pocos (<50 típicamente) — .in(warehouseIds) es seguro aquí
