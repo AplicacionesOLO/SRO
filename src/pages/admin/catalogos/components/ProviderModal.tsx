@@ -19,7 +19,11 @@ interface WarehouseOption {
 }
 
 export default function ProviderModal({ orgId, warehouseId, provider, onClose, onSave }: ProviderModalProps) {
-  const [formData, setFormData] = useState({ name: provider?.name || '', active: provider?.active ?? true });
+  const [formData, setFormData] = useState({
+    name: provider?.name || '',
+    active: provider?.active ?? true,
+    provider_type: provider?.provider_type || 'almacenaje'
+  });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -49,7 +53,7 @@ export default function ProviderModal({ orgId, warehouseId, provider, onClose, o
   // Cargar almacenes asignados al editar
   useEffect(() => {
     if (provider) {
-      setFormData({ name: provider.name, active: provider.active });
+      setFormData({ name: provider.name, active: provider.active, provider_type: provider.provider_type || 'almacenaje' });
       setShowDraftBanner(false);
       // Cargar warehouses asignados
       providersService.getProviderWarehouses(orgId, provider.id)
@@ -62,7 +66,7 @@ export default function ProviderModal({ orgId, warehouseId, provider, onClose, o
         setDraftAgeLabel(getDraftAge(draft.savedAt));
         setShowDraftBanner(true);
       } else {
-        setFormData({ name: '', active: true });
+        setFormData({ name: '', active: true, provider_type: 'almacenaje' });
         setShowDraftBanner(false);
       }
       // Pre-seleccionar almacén activo si hay uno
@@ -115,10 +119,14 @@ export default function ProviderModal({ orgId, warehouseId, provider, onClose, o
       let savedProviderId: string;
 
       if (provider) {
-        await providersService.updateProvider(provider.id, { name: formData.name.trim(), active: formData.active });
+        await providersService.updateProvider(provider.id, {
+          name: formData.name.trim(),
+          active: formData.active,
+          provider_type: formData.provider_type
+        });
         savedProviderId = provider.id;
       } else {
-        const created = await providersService.createProvider(orgId, formData.name.trim());
+        const created = await providersService.createProvider(orgId, formData.name.trim(), formData.provider_type);
         savedProviderId = created.id;
       }
 
@@ -159,7 +167,7 @@ export default function ProviderModal({ orgId, warehouseId, provider, onClose, o
                       className="px-3 py-1 text-xs font-semibold bg-teal-600 text-white rounded-lg hover:bg-teal-700 whitespace-nowrap">
                       Continuar
                     </button>
-                    <button type="button" onClick={() => { clearDraft(); setFormData({ name: '', active: true }); setShowDraftBanner(false); }}
+                    <button type="button" onClick={() => { clearDraft(); setFormData({ name: '', active: true, provider_type: 'almacenaje' }); setShowDraftBanner(false); }}
                       className="px-3 py-1 text-xs border border-gray-300 bg-white text-gray-700 rounded-lg hover:bg-gray-50 whitespace-nowrap">
                       Descartar
                     </button>
@@ -189,6 +197,49 @@ export default function ProviderModal({ orgId, warehouseId, provider, onClose, o
               </label>
             </div>
           )}
+
+          {/* Tipo de proveedor */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-3">Tipo de proveedor</label>
+            <div className="flex flex-col gap-2">
+              <label
+                className={`flex items-center gap-3 px-4 py-2.5 rounded-lg border cursor-pointer transition-colors ${
+                  formData.provider_type === 'almacenaje'
+                    ? 'border-teal-500 bg-teal-50'
+                    : 'border-gray-200 hover:border-gray-300'
+                }`}
+              >
+                <input
+                  type="checkbox"
+                  checked={formData.provider_type === 'almacenaje'}
+                  onChange={() => setFormData({ ...formData, provider_type: 'almacenaje' })}
+                  className="w-4 h-4 text-teal-600 border-gray-300 rounded focus:ring-teal-500"
+                />
+                <div>
+                  <span className="text-sm font-medium text-gray-800">Almacenaje</span>
+                  <p className="text-xs text-gray-500">Proveedor estándar con material almacenado en racks convencionales</p>
+                </div>
+              </label>
+              <label
+                className={`flex items-center gap-3 px-4 py-2.5 rounded-lg border cursor-pointer transition-colors ${
+                  formData.provider_type === 'pesado'
+                    ? 'border-teal-500 bg-teal-50'
+                    : 'border-gray-200 hover:border-gray-300'
+                }`}
+              >
+                <input
+                  type="checkbox"
+                  checked={formData.provider_type === 'pesado'}
+                  onChange={() => setFormData({ ...formData, provider_type: 'pesado' })}
+                  className="w-4 h-4 text-teal-600 border-gray-300 rounded focus:ring-teal-500"
+                />
+                <div>
+                  <span className="text-sm font-medium text-gray-800">Pesado</span>
+                  <p className="text-xs text-gray-500">Materiales manejados en patio, cantilever o zonas especiales (tubos, varillas, láminas, etc.)</p>
+                </div>
+              </label>
+            </div>
+          </div>
 
           {/* Selector de almacenes */}
           <div>

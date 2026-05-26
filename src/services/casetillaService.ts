@@ -1571,13 +1571,17 @@ async getExitEligibleReservations(
       ] as string[];
 
       const providersMap = new Map<string, string>();
+      const providersTypeMap = new Map<string, string>();
       if (providerIds.length > 0) {
         const { data: provData } = await supabase
           .from('providers')
-          .select('id, name')
+          .select('id, name, provider_type')
           .in('id', providerIds);
 
-        (provData ?? []).forEach((p: any) => providersMap.set(p.id as string, p.name as string));
+        (provData ?? []).forEach((p: any) => {
+          providersMap.set(p.id as string, p.name as string);
+          providersTypeMap.set(p.id as string, (p.provider_type as string) || 'almacenaje');
+        });
       }
 
       // Helper: resolver nombre de proveedor
@@ -1585,6 +1589,13 @@ async getExitEligibleReservations(
         if (!shipper) return 'Sin proveedor';
         const isUUID = String(shipper).match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
         return isUUID ? (providersMap.get(shipper) ?? 'N/A') : shipper;
+      };
+
+      // Helper: resolver provider_type
+      const resolveProviderType = (shipper: string | null): string => {
+        if (!shipper) return 'almacenaje';
+        const isUUID = String(shipper).match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+        return isUUID ? (providersTypeMap.get(shipper) ?? 'almacenaje') : 'almacenaje';
       };
 
       // Helper: minutos a HH:mm
@@ -1605,6 +1616,7 @@ async getExitEligibleReservations(
 
       // 8) Agrupar por proveedor
       const groups = new Map<string, {
+        provider_type: string;
         citas_programadas: number;
         citas_con_in: number;
         citas_con_out: number;
@@ -1614,9 +1626,10 @@ async getExitEligibleReservations(
 
       for (const r of rows) {
         const pname = resolveProviderName(r.shipper_provider ?? null);
+        const ptype = resolveProviderType(r.shipper_provider ?? null);
         let g = groups.get(pname);
         if (!g) {
-          g = { citas_programadas: 0, citas_con_in: 0, citas_con_out: 0, tiempo_teorico_min: 0, tiempo_real_min: 0 };
+          g = { provider_type: ptype, citas_programadas: 0, citas_con_in: 0, citas_con_out: 0, tiempo_teorico_min: 0, tiempo_real_min: 0 };
           groups.set(pname, g);
         }
 
@@ -1655,6 +1668,7 @@ async getExitEligibleReservations(
       // 10) Construir filas finales
       const result: {
         provider_name: string;
+        provider_type: string;
         citas_programadas: number;
         citas_con_in: number;
         citas_con_out: number;
@@ -1688,6 +1702,7 @@ async getExitEligibleReservations(
 
         result.push({
           provider_name,
+          provider_type: g.provider_type || 'almacenaje',
           citas_programadas: g.citas_programadas,
           citas_con_in: g.citas_con_in,
           citas_con_out: g.citas_con_out,

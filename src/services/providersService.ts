@@ -10,7 +10,7 @@ export const providersService = {
     while (true) {
       const { data, error } = await supabase
         .from('providers')
-        .select('id, org_id, name, active, created_at')
+        .select('id, org_id, name, active, provider_type, created_at')
         .eq('org_id', orgId)
         .order('created_at', { ascending: false })
         .range(from, from + pageSize - 1);
@@ -32,7 +32,7 @@ export const providersService = {
     while (true) {
       const { data, error } = await supabase
         .from('providers')
-        .select('id, org_id, name, active, created_at')
+        .select('id, org_id, name, active, provider_type, created_at')
         .eq('org_id', orgId)
         .eq('active', true)
         .order('name', { ascending: true })
@@ -47,17 +47,18 @@ export const providersService = {
     return allProviders;
   },
 
-  async createProvider(orgId: string, name: string): Promise<Provider> {
-    //console.log('[providersService] Creating provider:', { orgId, name });
+  async createProvider(orgId: string, name: string, providerType: 'almacenaje' | 'pesado' = 'almacenaje'): Promise<Provider> {
+    //console.log('[providersService] Creating provider:', { orgId, name, providerType });
     
     const { data, error } = await supabase
       .from('providers')
       .insert({
         org_id: orgId,
         name: name.trim(),
-        active: true
+        active: true,
+        provider_type: providerType
       })
-      .select('id, org_id, name, active, created_at')
+      .select('id, org_id, name, active, provider_type, created_at')
       .single();
 
     if (error) {
@@ -75,14 +76,14 @@ export const providersService = {
     return data;
   },
 
-  async updateProvider(id: string, updates: Partial<Pick<Provider, 'name' | 'active'>>): Promise<Provider> {
+  async updateProvider(id: string, updates: Partial<Pick<Provider, 'name' | 'active' | 'provider_type'>>): Promise<Provider> {
     //console.log('[providersService] Updating provider:', { id, updates });
     
     const { data, error } = await supabase
       .from('providers')
       .update(updates)
       .eq('id', id)
-      .select('id, org_id, name, active, created_at')
+      .select('id, org_id, name, active, provider_type, created_at')
       .single();
 
     if (error) {
@@ -146,7 +147,7 @@ export const providersService = {
     while (true) {
       let query = supabase
         .from('providers')
-        .select('id, org_id, name, active, created_at, provider_warehouses!inner(warehouse_id)')
+        .select('id, org_id, name, active, provider_type, created_at, provider_warehouses!inner(warehouse_id)')
         .eq('org_id', orgId)
         .eq('provider_warehouses.warehouse_id', warehouseId)
         .order('name', { ascending: true })

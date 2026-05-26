@@ -3,6 +3,7 @@ export interface Provider {
   org_id: string;
   name: string;
   active: boolean;
+  provider_type: 'almacenaje' | 'pesado';
   created_by?: string;
   created_at?: string;
   updated_by?: string;
