@@ -1,5 +1,6 @@
 import { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import { casetillaService } from '../../../services/casetillaService';
+import { useSessionStorageState } from '../../../hooks/useSessionStorageState';
 import type { ProviderDistributionRow, MonthlyGlobalTimeRow } from '../../../types/casetilla';
 
 function toISODate(d: Date): string {
@@ -68,17 +69,17 @@ export default function ProviderDistributionGrid({
   // - Si ambos son null, sin restricción
   const reportWarehouseIds = allowedWarehouseIds ?? scopeWarehouseIds ?? null;
 
-  const [analysisMode, setAnalysisMode] = useState<AnalysisMode>('PROVIDER');
+  const [analysisMode, setAnalysisMode] = useSessionStorageState<AnalysisMode>('casetilla_provider_analysisMode', 'PROVIDER');
   const [dataProvider, setDataProvider] = useState<ProviderDistributionRow[]>([]);
   const [dataMonthly, setDataMonthly] = useState<MonthlyGlobalTimeRow[]>([]);
   const [isLoading, setIsLoading] = useState(false);
-  const [searchTerm, setSearchTerm] = useState('');
-  const [selectedProvider, setSelectedProvider] = useState('');
+  const [searchTerm, setSearchTerm] = useSessionStorageState('casetilla_provider_searchTerm', '');
+  const [selectedProvider, setSelectedProvider] = useSessionStorageState('casetilla_provider_selectedProvider', '');
   const [pageSize, setPageSize] = useState<PageSize>(10);
-  const [viewMode, setViewMode] = useState<ViewMode>('ALL');
+  const [viewMode, setViewMode] = useSessionStorageState<ViewMode>('casetilla_provider_viewMode', 'ALL');
   const [currentPage, setCurrentPage] = useState(1);
-  const [fromDate, setFromDate] = useState(() => toISODate(globalSelectedDate));
-  const [toDate, setToDate] = useState(() => toISODate(globalSelectedDate));
+  const [fromDate, setFromDate] = useSessionStorageState('casetilla_provider_fromDate', toISODate(globalSelectedDate));
+  const [toDate, setToDate] = useSessionStorageState('casetilla_provider_toDate', toISODate(globalSelectedDate));
   const [dateError, setDateError] = useState<string | null>(null);
   const [earliestDate, setEarliestDate] = useState<string | null>(null);
   const [isLoadingEarliest, setIsLoadingEarliest] = useState(false);
@@ -93,12 +94,33 @@ export default function ProviderDistributionGrid({
   useEffect(() => { viewModeRef.current = viewMode; }, [viewMode]);
   useEffect(() => { analysisModeRef.current = analysisMode; }, [analysisMode]);
 
-  // Sincronizar con fecha global del módulo
+  // Ref para evitar que el primer sync de globalSelectedDate sobrescriba
+  // los filtros persistidos al regresar de otra ruta
+  const isFirstSync = useRef(true);
+
+  // Sincronizar con fecha global del módulo y recargar automáticamente
   useEffect(() => {
     const newDate = toISODate(globalSelectedDate);
+    // En el primer montaje, si hay filtros persistidos, no sobrescribirlos
+    if (isFirstSync.current) {
+      isFirstSync.current = false;
+      // Solo actualizar refs si no hay fecha persistida (first visit ever)
+      if (!fromDate && !toDate) {
+        setFromDate(newDate);
+        setToDate(newDate);
+        fromDateRef.current = newDate;
+        toDateRef.current = newDate;
+        loadReport();
+      }
+      return;
+    }
     setFromDate(newDate);
     setToDate(newDate);
     setDateError(null);
+    fromDateRef.current = newDate;
+    toDateRef.current = newDate;
+    loadReport();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [globalSelectedDate]);
 
   // Cargar reporte

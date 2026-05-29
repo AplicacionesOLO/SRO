@@ -1,5 +1,6 @@
 import { useState, useMemo, useEffect, useCallback } from 'react';
 import { casetillaService } from '../../../services/casetillaService';
+import { useSessionStorageState } from '../../../hooks/useSessionStorageState';
 import PhotoViewer from '../../../components/base/PhotoViewer';
 import { formatInWarehouseTimezone } from '../../../utils/timezoneUtils';
 
@@ -158,9 +159,9 @@ function PhotoBadge({
 export default function DurationReportGrid({ orgId, allowedWarehouseIds, clientId }: DurationReportGridProps) {
   const [data, setData] = useState<DurationReportRow[]>([]);
   const [isLoading, setIsLoading] = useState(false);
-  const [searchTerm, setSearchTerm] = useState('');
-  const [dateFrom, setDateFrom] = useState('');
-  const [dateTo, setDateTo] = useState('');
+  const [searchTerm, setSearchTerm] = useSessionStorageState('casetilla_duration_searchTerm', '');
+  const [dateFrom, setDateFrom] = useSessionStorageState('casetilla_duration_dateFrom', '');
+  const [dateTo, setDateTo] = useSessionStorageState('casetilla_duration_dateTo', '');
   const [pageSize, setPageSize] = useState<PageSize>(10);
   const [currentPage, setCurrentPage] = useState(1);
 
@@ -206,7 +207,8 @@ export default function DurationReportGrid({ orgId, allowedWarehouseIds, clientI
         (row) =>
           row.chofer.toLowerCase().includes(term) ||
           row.matricula.toLowerCase().includes(term) ||
-          (row.dua && row.dua.toLowerCase().includes(term))
+          (row.dua && row.dua.toLowerCase().includes(term)) ||
+          (row.provider_name && row.provider_name.toLowerCase().includes(term))
       );
     }
 

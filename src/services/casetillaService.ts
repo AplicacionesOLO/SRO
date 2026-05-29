@@ -1539,7 +1539,8 @@ async getExitEligibleReservations(
         .eq('org_id', orgId)
         .not('reservation_id', 'is', null)
         .gte('created_at', fromIso)
-        .lte('created_at', toIso);
+        .lte('created_at', toIso)
+        .order('created_at', { ascending: false });
 
       const { data: ingresos, error: ingErr } = await ingresosQuery;
       if (ingErr) throw ingErr;
@@ -1552,10 +1553,15 @@ async getExitEligibleReservations(
           .from('casetilla_salidas')
           .select('reservation_id, exit_at')
           .eq('org_id', orgId)
-          .in('reservation_id', ingresoReservationIds);
+          .in('reservation_id', ingresoReservationIds)
+          .order('exit_at', { ascending: false });
 
         (salidas ?? []).forEach((s: any) => {
-          salidasMap.set(s.reservation_id as string, s.exit_at as string);
+          const rid = s.reservation_id as string;
+          const exitAt = s.exit_at as string;
+          if (!salidasMap.has(rid)) {
+            salidasMap.set(rid, exitAt);
+          }
         });
       }
 
@@ -1898,7 +1904,8 @@ async getExitEligibleReservations(
         .eq('org_id', orgId)
         .not('reservation_id', 'is', null)
         .gte('created_at', fromIso)
-        .lte('created_at', toIso);
+        .lte('created_at', toIso)
+        .order('created_at', { ascending: false });
 
       if (ingErr) throw ingErr;
 
@@ -1910,10 +1917,15 @@ async getExitEligibleReservations(
           .from('casetilla_salidas')
           .select('reservation_id, exit_at')
           .eq('org_id', orgId)
-          .in('reservation_id', ingresoReservationIds);
+          .in('reservation_id', ingresoReservationIds)
+          .order('exit_at', { ascending: false });
 
         (salidas ?? []).forEach((s: any) => {
-          salidasMap.set(s.reservation_id as string, s.exit_at as string);
+          const rid = s.reservation_id as string;
+          const exitAt = s.exit_at as string;
+          if (!salidasMap.has(rid)) {
+            salidasMap.set(rid, exitAt);
+          }
         });
       }
 
