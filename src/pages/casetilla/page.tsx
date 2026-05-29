@@ -33,6 +33,7 @@ interface PersistedUIState {
   selectedReservation: PendingReservation | null;
   selectedExitReservation: ExitEligibleReservation | null;
   selectedDate: string | null; // ISO string YYYY-MM-DD
+  reportTab: 'duration' | 'provider';
 }
 
 const readSession = (): Partial<PersistedUIState> => {
@@ -104,7 +105,7 @@ export default function CasetillaPage() {
   const [selectedClientId, setSelectedClientId] = useState<string | null>(null);
 
   // ── Report tab state ──────────────────────────────────────────────────────
-  const [reportTab, setReportTab] = useState<'duration' | 'provider'>('duration');
+  const [reportTab, setReportTab] = useState<'duration' | 'provider'>(() => readSession().reportTab || 'duration');
 
   // ── Timezone activo: del almacén seleccionado o fallback ────────────────
   const activeTimezone = activeWarehouse?.timezone || DEFAULT_TIMEZONE;
@@ -128,8 +129,8 @@ export default function CasetillaPage() {
   void canCreate;
 
   useEffect(() => {
-    writeSession({ viewMode, fotosIngreso, fotosSalida, selectedReservation, selectedExitReservation, selectedDate });
-  }, [viewMode, fotosIngreso, fotosSalida, selectedReservation, selectedExitReservation, selectedDate]);
+    writeSession({ viewMode, fotosIngreso, fotosSalida, selectedReservation, selectedExitReservation, selectedDate, reportTab });
+  }, [viewMode, fotosIngreso, fotosSalida, selectedReservation, selectedExitReservation, selectedDate, reportTab]);
 
   const setViewMode = useCallback((vm: ViewMode) => setViewModeRaw(vm), []);
   const setFotosIngreso = useCallback((urls: string[]) => {

@@ -22,6 +22,7 @@ import { dockAllocationService, type DockAllocationRule } from '../../services/d
 import { providersService } from '../../services/providersService';
 import { userProvidersService } from '../../services/userProvidersService';
 import { useClientPickupRulesContext } from '../../contexts/ClientPickupRulesContext';
+import { sameDayCutoffService } from '../../services/sameDayCutoffService';
 import BlocksManagementTab from './components/BlocksManagementTab';
 import ReservationHoverCard from './components/ReservationHoverCard';
 import BlockedStatusesConfig from './components/BlockedStatusesConfig';
@@ -149,6 +150,12 @@ export default function CalendarioPage() {
   const [preConsolidatedProviders, setPreConsolidatedProviders] = useState<
     Array<{ provider_id: string; provider_name: string; package_quantity: number }>
   >([]);
+  const [sameDayCutoffInfo, setSameDayCutoffInfo] = useState<{
+    blocked: boolean;
+    cutoffTimeStr: string | null;
+    message: string;
+    verificationFailed: boolean;
+  } | null>(null);
 
   const bodyScrollRef = useRef<HTMLDivElement | null>(null);
   const headerInnerRef = useRef<HTMLDivElement | null>(null);
@@ -613,6 +620,12 @@ export default function CalendarioPage() {
       const startOfSlotDay = getStartOfDayInTimezone(day, warehouseTimezone);
       if (startOfSlotDay < startOfToday) return false;
       if (startOfSlotDay.getTime() === startOfToday.getTime() && slotStart < nowUtc) return false;
+      // ── Same-day cutoff: si es hoy y el cutoff bloquea, no permitir ─────
+      if (sameDayCutoffInfo && startOfSlotDay.getTime() === startOfToday.getTime()) {
+        if (sameDayCutoffInfo.blocked || sameDayCutoffInfo.verificationFailed) {
+          return false;
+        }
+      }
       const { hour: slotStartH, minute: slotStartM } = getDatePartsInTimezone(slotStart, warehouseTimezone);
       const { hour: slotEndH, minute: slotEndM } = getDatePartsInTimezone(slotEnd, warehouseTimezone);
       const slotStartMin = slotStartH * 60 + slotStartM;
@@ -639,7 +652,7 @@ export default function CalendarioPage() {
       void diagnose;
       return true;
     },
-    [selectionMode, requiredMinutes, reservations, blocks, businessStartMinutes, businessEndMinutes, enabledDockIds, allocationError, allocationRule, warehouseTimezone, truncateToMinute]
+    [selectionMode, requiredMinutes, reservations, blocks, businessStartMinutes, businessEndMinutes, enabledDockIds, allocationError, allocationRule, warehouseTimezone, truncateToMinute, sameDayCutoffInfo]
   );
 
   const handleSelectSlot = useCallback((slot: any) => {
@@ -768,6 +781,31 @@ export default function CalendarioPage() {
     setPreIsConsolidated(payload.isConsolidated ?? false);
     setPreConsolidatedProviders(payload.consolidatedProviders ?? []);
     setAllocationLoading(true); setAllocationError(''); setAllocationRule(null);
+    setSameDayCutoffInfo(null);
+
+    // ─── Cargar same-day cutoff para el cliente seleccionado ────────────────
+    const effectiveClientId = payload.clientId || payload.clientIds?.[0] || null;
+    if (effectiveClientId && orgId && warehouseId) {
+      try {
+        const cutoffResult = await sameDayCutoffService.checkCutoff(
+          orgId,
+          effectiveClientId,
+          warehouseId,
+          warehouseTimezone,
+          user?.id || '',
+          false
+        );
+        setSameDayCutoffInfo(cutoffResult);
+      } catch (_e) {
+        // Si falla la carga, ser conservador: bloquear
+        setSameDayCutoffInfo({
+          blocked: true,
+          cutoffTimeStr: null,
+          message: 'No se pudo verificar la regla de corte del mismo día.',
+          verificationFailed: true,
+        });
+      }
+    }
 
     // ─── FLUJO CONSOLIDADO ────────────────────────────────────────────────────
     if (payload.isConsolidated && payload.consolidatedProviders && payload.consolidatedProviders.length > 0) {
@@ -847,7 +885,7 @@ export default function CalendarioPage() {
   }, [orgId, warehouseId]);
 
   const handleExitSelectionMode = useCallback(() => {
-    setSelectionMode(false); setRequiredMinutes(0); setPreCargoTypeId(''); setPreProviderId(''); setPreClientId(null); setPreQuantityValue(null); setPreIsConsolidated(false); setPreConsolidatedProviders([]); setAllocationRule(null); setAllocationError(''); setEnabledDockIds(new Set());
+    setSelectionMode(false); setRequiredMinutes(0); setPreCargoTypeId(''); setPreProviderId(''); setPreClientId(null); setPreQuantityValue(null); setPreIsConsolidated(false); setPreConsolidatedProviders([]); setAllocationRule(null); setAllocationError(''); setEnabledDockIds(new Set()); setSameDayCutoffInfo(null);
   }, []);
 
   useEffect(() => { if (!orgId) return; providersService.getActive(orgId).then(setProviders).catch(() => {}); }, [orgId]);
@@ -911,7 +949,48 @@ export default function CalendarioPage() {
     } else { setAllocationRule(null); }
     setAllocationLoading(false);
     setPreCargoTypeId(sourceReservation.cargo_type || ''); setPreProviderId(sourceReservation.shipper_provider || ''); setRequiredMinutes(durationMinutes > 0 ? durationMinutes : 60); setSelectionMode(true);
+    // ─── Cargar same-day cutoff para el cliente de la reserva copiada ─────
+    const copyClientId = (sourceReservation as any).client_id || null;
+    if (copyClientId && orgId && warehouseId) {
+      try {
+        const cutoffResult = await sameDayCutoffService.checkCutoff(
+          orgId, copyClientId, warehouseId, warehouseTimezone, user?.id || '', false
+        );
+        setSameDayCutoffInfo(cutoffResult);
+      } catch (_e) {
+        setSameDayCutoffInfo({
+          blocked: true, cutoffTimeStr: null,
+          message: 'No se pudo verificar la regla de corte del mismo día.',
+          verificationFailed: true,
+        });
+      }
+    }
   }, [statuses, orgId]);
+
+  useEffect(() => {
+    if (!selectionMode || !preClientId || !orgId || !warehouseId) {
+      setSameDayCutoffInfo(null);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const cutoffResult = await sameDayCutoffService.checkCutoff(
+          orgId, preClientId, warehouseId, warehouseTimezone, user?.id || '', false
+        );
+        if (!cancelled) setSameDayCutoffInfo(cutoffResult);
+      } catch (_e) {
+        if (!cancelled) {
+          setSameDayCutoffInfo({
+            blocked: true, cutoffTimeStr: null,
+            message: 'No se pudo verificar la regla de corte del mismo día.',
+            verificationFailed: true,
+          });
+        }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [selectionMode, preClientId, orgId, warehouseId, warehouseTimezone, user?.id]);
 
   if (permLoading || loading) {
     return (<div className="flex items-center justify-center h-screen"><div className="text-center"><i className="ri-loader-4-line text-4xl text-teal-600 animate-spin"></i><p className="mt-4 text-gray-600">Cargando calendario...</p></div></div>);
@@ -1036,6 +1115,24 @@ export default function CalendarioPage() {
           )}
           {selectionMode && allocationError && (<div className="bg-amber-500 text-white px-4 py-2 flex items-center gap-2"><i className="ri-alert-line text-base w-4 h-4 flex items-center justify-center"></i><div><p className="font-semibold text-xs">Reglas no disponibles</p><p className="text-[11px] text-amber-100">{allocationError}</p></div></div>)}
           {selectionMode && allocationLoading && (<div className="bg-blue-500 text-white px-4 py-2 flex items-center gap-2"><i className="ri-loader-4-line text-base w-4 h-4 flex items-center justify-center animate-spin"></i><p className="font-medium text-xs">Cargando reglas de asignación de andenes...</p></div>)}
+          {selectionMode && sameDayCutoffInfo?.blocked && (
+            <div className="bg-red-50 border-b border-red-200 px-4 py-2 flex items-center gap-2">
+              <i className="ri-time-line text-red-600 text-base w-4 h-4 flex items-center justify-center"></i>
+              <div>
+                <p className="font-semibold text-xs text-red-900">Corte del mismo día activo</p>
+                <p className="text-[11px] text-red-700">{sameDayCutoffInfo.message}</p>
+              </div>
+            </div>
+          )}
+          {selectionMode && sameDayCutoffInfo?.verificationFailed && !sameDayCutoffInfo?.blocked && (
+            <div className="bg-amber-50 border-b border-amber-200 px-4 py-2 flex items-center gap-2">
+              <i className="ri-alert-line text-amber-600 text-base w-4 h-4 flex items-center justify-center"></i>
+              <div>
+                <p className="font-semibold text-xs text-amber-900">No se pudo verificar la regla de corte</p>
+                <p className="text-[11px] text-amber-700">{sameDayCutoffInfo.message}</p>
+              </div>
+            </div>
+          )}
 
           <div className="bg-white border-b border-gray-200 py-2" style={{ paddingLeft: 'clamp(12px, 1.2vw, 20px)', paddingRight: 'clamp(12px, 1.2vw, 20px)' }}>
             <div className="flex items-center justify-between gap-2 flex-wrap">

@@ -1022,119 +1022,62 @@ export const calendarService = {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) throw new Error('Usuario no autenticado');
 
-    // ✅ PASO 1: Insertar y pedir SOLO el id
-    const { data, error } = await supabase
-      .from('reservations')
-      .insert({
+    // ✅ PASO 1: Crear mediante Edge Function (validación backend same-day cutoff)
+    const { data: edgeData, error: edgeError } = await supabase.functions.invoke('create-reservation', {
+      body: {
         ...reservation,
         created_by: user.id,
         updated_by: user.id,
-      })
-      .select('id')
-      .single();
+      },
+    });
 
-    if (error) {
-      // console.error('[Calendar] createReservationError', {
-      //   code: error.code,
-      //   message: error.message,
-      //   details: error.details,
-      //   hint: error.hint,
-      //   payload: reservation,
-      // });
-
-      // ✅ Detectar error de constraint de solape
-      const errorMsg = error.message?.toLowerCase() || '';
-      const errorDetails = error.details?.toLowerCase() || '';
-      const errorHint = error.hint?.toLowerCase() || '';
-      
+    if (edgeError) {
+      const errMsg = (edgeError as any).message || String(edgeError);
       if (
-        errorMsg.includes('reservations_no_overlap') ||
-        errorMsg.includes('exclusion constraint') ||
-        errorDetails.includes('reservations_no_overlap') ||
-        errorDetails.includes('exclusion constraint') ||
-        errorHint.includes('reservations_no_overlap') ||
-        errorHint.includes('exclusion constraint')
+        errMsg.includes('OVERLAP_CONFLICT') ||
+        errMsg.includes('ya está reservado') ||
+        errMsg.includes('exclusion constraint')
       ) {
         const customError = new Error('Ese andén ya está reservado en ese horario. Elegí otro espacio.');
         (customError as any).code = 'OVERLAP_CONFLICT';
         throw customError;
       }
-
-      throw error;
+      if (errMsg.includes('SAME_DAY_CUTOFF_BLOCKED')) {
+        const customError = new Error(errMsg);
+        (customError as any).code = 'SAME_DAY_CUTOFF_BLOCKED';
+        throw customError;
+      }
+      throw new Error(errMsg || 'Error al crear la reserva');
     }
 
-    // ✅ PASO 2: Intentar cargar el detalle completo (opcional)
-    const { data: full, error: fetchErr } = await supabase
-      .from('reservations')
-      .select(`
-        *,
-        status:reservation_statuses(name, code, color)
-      `)
-      .eq('id', data.id)
-      .single();
+    if (!edgeData?.data?.id) {
+      throw new Error('Respuesta inválida del servidor al crear la reserva');
+    }
+
+    const created = edgeData.data as Reservation;
 
     // ✅ Disparar generación de QR en background (no bloqueante)
     if (reservation.org_id) {
-      ensureReservationQR(reservation.org_id, data.id).catch(() => {
+      ensureReservationQR(reservation.org_id, created.id).catch(() => {
         // non-blocking: si falla, el QR simplemente no existe
       });
     }
 
     // ✅ Generar ficha de cita (bloqueante con catch, garantiza que exista antes del email)
     if (reservation.org_id) {
-      await ensureReservationQRCard(reservation.org_id, data.id).catch(() => {
+      await ensureReservationQRCard(reservation.org_id, created.id).catch(() => {
         // non-breaking: si falla, el correo sigue sin la ficha
       });
     }
 
-    // Si hay error 403/RLS al leer, no fallar: devolver objeto mínimo
-    if (fetchErr) {
-      // console.warn('[Calendar] createReservation.fetchDetailWarning (403/RLS esperado)', {
-      //   code: fetchErr.code,
-      //   message: fetchErr.message,
-      //   reservationId: data.id,
-      // });
-
-      // Devolver objeto mínimo con el id para que el modal pueda cerrar
-      return {
-        id: data.id,
-        org_id: reservation.org_id || '',
-        dock_id: reservation.dock_id || '',
-        start_datetime: reservation.start_datetime || '',
-        end_datetime: reservation.end_datetime || '',
-        dua: reservation.dua || '',
-        invoice: reservation.invoice?.trim() || null,
-        driver: reservation.driver?.trim() || null,
-        status_id: reservation.status_id || null,
-        notes: reservation.notes || null,
-        transport_type: reservation.transport_type || null,
-        cargo_type: reservation.cargo_type || null,
-        operation_type: reservation.operation_type || null,
-        is_cancelled: false,
-        cancel_reason: null,
-        cancelled_by: null,
-        cancelled_at: null,
-        created_by: user.id,
-        created_at: new Date().toISOString(),
-        updated_by: user.id,
-        updated_at: new Date().toISOString(),
-        purchase_order: reservation.purchase_order || null,
-        truck_plate: reservation.truck_plate || null,
-        order_request_number: reservation.order_request_number || null,
-        shipper_provider: reservation.shipper_provider || null,
-        recurrence: reservation.recurrence || null,
-        bl_number: reservation.bl_number || null,
-      } as Reservation;
-    }
-
     // ✅ Disparar evento de correspondencia
-    if (full && reservation.org_id) {
-      emailTriggerService.onReservationCreated(reservation.org_id, full).catch(err => {
+    if (created && reservation.org_id) {
+      emailTriggerService.onReservationCreated(reservation.org_id, created).catch(err => {
         // console.error('[Calendar] Error al disparar correos de creación:', err);
       });
     }
 
-    return full;
+    return created;
   },
 
   /**

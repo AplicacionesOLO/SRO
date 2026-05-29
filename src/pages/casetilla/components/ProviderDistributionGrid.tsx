@@ -13,7 +13,7 @@ function parseLocalDate(dateStr: string): Date {
 }
 
 function fmtPct(value: number): string {
-  return `${(value * 100).toFixed(1)}%`;
+  return `${(value * 100).toFixed(3)}%`;
 }
 
 function fmtHHMM(mins: number): string {
@@ -234,11 +234,27 @@ export default function ProviderDistributionGrid({
   const computedProviderData = useMemo(() => {
     const totalTeorico = filteredProviderData.reduce((s, r) => s + r.tiempo_teorico_minutos, 0);
     const totalReal = filteredProviderData.reduce((s, r) => s + r.tiempo_real_minutos, 0);
-    return filteredProviderData.map((r) => ({
+    const mapped = filteredProviderData.map((r) => ({
       ...r,
       pct_teorico_total: totalTeorico > 0 ? r.tiempo_teorico_minutos / totalTeorico : 0,
       pct_real_total: totalReal > 0 ? r.tiempo_real_minutos / totalReal : 0,
     }));
+
+    // Ordenamiento: primero proveedores con duración real válida (DESC),
+    // luego proveedores sin OUT al final
+    mapped.sort((a, b) => {
+      const aHasReal = a.tiempo_real_minutos > 0;
+      const bHasReal = b.tiempo_real_minutos > 0;
+      if (aHasReal && !bHasReal) return -1;
+      if (!aHasReal && bHasReal) return 1;
+      if (aHasReal && bHasReal) {
+        return b.tiempo_real_minutos - a.tiempo_real_minutos;
+      }
+      // Ambos sin duración real — ordenar por citas_con_in DESC
+      return b.citas_con_in - a.citas_con_in;
+    });
+
+    return mapped;
   }, [filteredProviderData]);
 
   const providerTotalRow = useMemo<ProviderDistributionRow | null>(() => {
