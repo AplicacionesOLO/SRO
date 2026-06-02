@@ -10,25 +10,25 @@ import Reservas from "../pages/reservas/page";
 import MatrizPermisos from "../pages/admin/matriz-permisos/page";
 import AccessPending from "../pages/access-pending/page";
 import HomeRedirect from "../pages/home/page";
-import { lazy } from "react";
+import { lazyWithRetry } from "../utils/lazyWithRetry";
 import RequirePermission from "./RequirePermission";
 import ProtectedRoute from "./ProtectedRoute";
 
-const AdminPage = lazy(() => import('../pages/admin/page'));
-const MatrizPermisosPage = lazy(() => import('../pages/admin/matriz-permisos/page'));
-const UsuariosPage = lazy(() => import('../pages/admin/usuarios/page'));
-const RolesPage = lazy(() => import('../pages/admin/roles/page'));
-const CatalogosPage = lazy(() => import('../pages/admin/catalogos/page'));
-const AlmacenesPage = lazy(() => import('../pages/admin/almacenes/page'));
-const ClientesPage = lazy(() => import('../pages/admin/clientes/page'));
-const CorrespondenciaPage = lazy(() => import('../pages/admin/correspondencia/page'));
-const ManpowerPage = lazy(() => import('../pages/manpower/page'));
-const CasetillaPage = lazy(() => import('../pages/casetilla/page'));
+const AdminPage = lazyWithRetry(() => import('../pages/admin/page'));
+const MatrizPermisosPage = lazyWithRetry(() => import('../pages/admin/matriz-permisos/page'));
+const UsuariosPage = lazyWithRetry(() => import('../pages/admin/usuarios/page'));
+const RolesPage = lazyWithRetry(() => import('../pages/admin/roles/page'));
+const CatalogosPage = lazyWithRetry(() => import('../pages/admin/catalogos/page'));
+const AlmacenesPage = lazyWithRetry(() => import('../pages/admin/almacenes/page'));
+const ClientesPage = lazyWithRetry(() => import('../pages/admin/clientes/page'));
+const CorrespondenciaPage = lazyWithRetry(() => import('../pages/admin/correspondencia/page'));
+const ManpowerPage = lazyWithRetry(() => import('../pages/manpower/page'));
+const CasetillaPage = lazyWithRetry(() => import('../pages/casetilla/page'));
 
-const PerfilPage = lazy(() => import('../pages/perfil/page'));
-const ConocimientoPage = lazy(() => import('../pages/conocimiento/page'));
-const ChatPage = lazy(() => import('../pages/chat/page'));
-const ChatAuditoriaPage = lazy(() => import('../pages/chat/auditoria/page'));
+const PerfilPage = lazyWithRetry(() => import('../pages/perfil/page'));
+const ConocimientoPage = lazyWithRetry(() => import('../pages/conocimiento/page'));
+const ChatPage = lazyWithRetry(() => import('../pages/chat/page'));
+const ChatAuditoriaPage = lazyWithRetry(() => import('../pages/chat/auditoria/page'));
 
 const routes: RouteObject[] = [
   { 

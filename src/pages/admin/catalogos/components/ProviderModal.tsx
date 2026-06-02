@@ -38,6 +38,7 @@ export default function ProviderModal({ orgId, warehouseId, provider, onClose, o
 
   // Clientes disponibles para vincular (IDCOMPANIA)
   const [clients, setClients] = useState<{ id: string; name: string }[]>([]);
+  const [clientsMap, setClientsMap] = useState<Record<string, string>>();
 
   // ── Draft persistence ─────────────────────────────────────────────────────
   const isNewRecord = !provider;
@@ -56,7 +57,13 @@ export default function ProviderModal({ orgId, warehouseId, provider, onClose, o
       .catch(() => setWarehouses([]))
       .finally(() => setWarehousesLoading(false));
     clientsService.listClients(orgId)
-      .then(data => setClients(data.map(c => ({ id: c.id, name: c.name }))))
+      .then(data => {
+        const list = data.map(c => ({ id: c.id, name: c.name }));
+        setClients(list);
+        const map: Record<string, string> = {};
+        list.forEach(c => { map[c.name.toUpperCase()] = c.id; });
+        setClientsMap(map);
+      })
       .catch(() => setClients([]));
   }, [orgId]);
 
@@ -94,6 +101,26 @@ export default function ProviderModal({ orgId, warehouseId, provider, onClose, o
     saveDraft(formData);
   }, [formData, isNewRecord]);
 
+  // ── Autodetectar cliente por source ──
+  const handleSourceChange = (value: string) => {
+    const sourceUpper = value.trim().toUpperCase();
+    let detectedClientId = formData.client_id;
+    
+    // Buscar cliente por source
+    for (const [clientName, clientId] of Object.entries(clientsMap)) {
+      if (sourceUpper === clientName || sourceUpper.includes(clientName) || clientName.includes(sourceUpper)) {
+        detectedClientId = clientId;
+        break;
+      }
+    }
+
+    setFormData(prev => ({
+      ...prev,
+      source: sourceUpper,
+      client_id: detectedClientId || prev.client_id,
+    }));
+  };
+
   const handleClose = useCallback(() => {
     if (isNewRecord && formData.name.trim()) {
       setShowDiscardConfirm(true);
@@ -128,18 +155,28 @@ export default function ProviderModal({ orgId, warehouseId, provider, onClose, o
       setError(null);
       let savedProviderId: string;
 
+      // Normalizar source a UPPERCASE antes de guardar
+      const normalizedSource = formData.source.trim().toUpperCase() || null;
+
       if (provider) {
         await providersService.updateProvider(provider.id, {
           name: formData.name.trim(),
           active: formData.active,
           provider_type: formData.provider_type,
           provider_code: formData.provider_code.trim() || null,
-          source: formData.source.trim() || null,
+          source: normalizedSource,
           client_id: formData.client_id || null,
         });
         savedProviderId = provider.id;
       } else {
-        const created = await providersService.createProvider(orgId, formData.name.trim(), formData.provider_type, formData.provider_code.trim() || null, formData.source.trim() || null, formData.client_id || null);
+        const created = await providersService.createProvider(
+          orgId,
+          formData.name.trim(),
+          formData.provider_type,
+          formData.provider_code.trim() || null,
+          normalizedSource,
+          formData.client_id || null,
+        );
         savedProviderId = created.id;
       }
 
@@ -211,15 +248,24 @@ export default function ProviderModal({ orgId, warehouseId, provider, onClose, o
           {/* Origen */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">Origen</label>
-            <input type="text" value={formData.source} onChange={(e) => setFormData({ ...formData, source: e.target.value })}
+            <input
+              type="text"
+              value={formData.source}
+              onChange={(e) => handleSourceChange(e.target.value)}
               className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent text-sm"
-              placeholder="Ej: EPA, Cofersa, API..." />
+              placeholder="Ej: EPA, COFERSA, API..."
+            />
+            {formData.client_id && formData.source && (
+              <p className="text-xs text-teal-600 mt-1">
+                <i className="ri-check-line"></i> Cliente detectado automáticamente
+              </p>
+            )}
           </div>
 
           {/* Cliente asociado (IDCOMPANIA) */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">Cliente asociado</label>
-            <p className="text-xs text-gray-500 mb-2">Vincula este proveedor al cliente que lo gestiona (equivalente al IDCOMPANIA del sistema externo)</p>
+            <p className="text-xs text-gray-500 mb-2">Vincula este proveedor al cliente que lo gestiona. Se detecta automáticamente por el origen.</p>
             <select
               value={formData.client_id}
               onChange={(e) => setFormData({ ...formData, client_id: e.target.value })}

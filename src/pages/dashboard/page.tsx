@@ -1,43 +1,79 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { format } from 'date-fns';
+import { format, startOfMonth, endOfMonth, startOfWeek, endOfWeek, startOfDay, endOfDay, startOfYear, endOfYear } from 'date-fns';
 import { es } from 'date-fns/locale';
 import { useAuth } from '../../contexts/AuthContext';
 import { usePermissions } from '../../hooks/usePermissions';
 import { useActiveWarehouse } from '../../contexts/ActiveWarehouseContext';
 import { useUserScope } from '../../hooks/useUserScope';
-import { dashboardService, DashboardStats, DashboardPeriod } from '../../services/dashboardService';
+import { dashboardService, DashboardStats } from '../../services/dashboardService';
 import { calendarService } from '../../services/calendarService';
 import WarehousePageHeader from '../../components/feature/WarehousePageHeader';
 
-const PERIOD_OPTIONS: { value: DashboardPeriod; label: string; icon: string }[] = [
-  { value: 'day',   label: 'Hoy',    icon: 'ri-sun-line' },
-  { value: 'week',  label: 'Semana', icon: 'ri-calendar-check-line' },
-  { value: 'month', label: 'Mes',    icon: 'ri-calendar-2-line' },
-  { value: 'year',  label: 'Año',    icon: 'ri-calendar-line' },
-  { value: 'all',   label: 'Todo',   icon: 'ri-history-line' },
-];
+type QuickPeriod = 'day' | 'week' | 'month' | 'year' | 'all';
 
-function getPeriodLabel(period: DashboardPeriod): string {
-  const map: Record<DashboardPeriod, string> = {
-    day: 'hoy',
-    week: 'esta semana',
-    month: 'este mes',
-    year: 'este año',
-    all: 'en total',
-  };
-  return map[period];
+interface DateRange {
+  start: string;
+  end: string;
 }
 
-function getPeriodCompareLabel(period: DashboardPeriod): string {
-  const map: Record<DashboardPeriod, string> = {
-    day: 'vs ayer',
-    week: 'vs sem. ant.',
-    month: 'vs mes ant.',
-    year: 'vs año ant.',
-    all: '',
+const PRESETS: { label: string; value: QuickPeriod; icon: string }[] = [
+  { label: 'Hoy', value: 'day', icon: 'ri-sun-line' },
+  { label: 'Semana', value: 'week', icon: 'ri-calendar-schedule-line' },
+  { label: 'Mes', value: 'month', icon: 'ri-calendar-2-line' },
+  { label: 'Año', value: 'year', icon: 'ri-calendar-event-line' },
+  { label: 'Todo', value: 'all', icon: 'ri-infinity-line' },
+];
+
+function getTodayRange(): DateRange {
+  const today = format(new Date(), 'yyyy-MM-dd');
+  return { start: today, end: today };
+}
+
+function getWeekRange(): DateRange {
+  const now = new Date();
+  return {
+    start: format(startOfWeek(now, { weekStartsOn: 1 }), 'yyyy-MM-dd'),
+    end: format(endOfWeek(now, { weekStartsOn: 1 }), 'yyyy-MM-dd'),
   };
-  return map[period];
+}
+
+function getMonthRange(): DateRange {
+  const now = new Date();
+  return {
+    start: format(startOfMonth(now), 'yyyy-MM-dd'),
+    end: format(endOfMonth(now), 'yyyy-MM-dd'),
+  };
+}
+
+function getYearRange(): DateRange {
+  const now = new Date();
+  return {
+    start: format(startOfYear(now), 'yyyy-MM-dd'),
+    end: format(endOfYear(now), 'yyyy-MM-dd'),
+  };
+}
+
+function getAllRange(): DateRange {
+  return {
+    start: '2020-01-01',
+    end: format(new Date(), 'yyyy-MM-dd'),
+  };
+}
+
+function getPresetRange(preset: QuickPeriod): DateRange {
+  switch (preset) {
+    case 'day': return getTodayRange();
+    case 'week': return getWeekRange();
+    case 'month': return getMonthRange();
+    case 'year': return getYearRange();
+    case 'all': return getAllRange();
+  }
+}
+
+function isPresetActive(preset: QuickPeriod, range: DateRange): boolean {
+  const presetRange = getPresetRange(preset);
+  return range.start === presetRange.start && range.end === presetRange.end;
 }
 
 export default function Dashboard() {
@@ -55,7 +91,9 @@ export default function Dashboard() {
   const { allowedWarehouseIds, allowedClientIds, scopeLoading } = useUserScope();
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [loading, setLoading] = useState(true);
-  const [period, setPeriod] = useState<DashboardPeriod>('month');
+  const [activePreset, setActivePreset] = useState<QuickPeriod>('month');
+  const [dateRange, setDateRange] = useState<DateRange>(getMonthRange());
+  const [isCustom, setIsCustom] = useState(false);
 
   useEffect(() => {
     if (!authLoading && !user) navigate('/login');
@@ -69,45 +107,71 @@ export default function Dashboard() {
     if (!orgId) return;
     setLoading(true);
     try {
-      // ── PASO 1: Obtener docks visibles/permitidos PRIMERO ──
-      // getVisibleDockIds aplica restricción por warehouse + cliente asignado.
-      // Cuando hay un almacén activo seleccionado, pasarlo para que solo
-      // retorne los docks de ESE almacén (y que el usuario pueda ver).
       const allowedDockIds = await calendarService.getVisibleDockIds(
         orgId,
-        activeWarehouseId ?? null, // filtrar por almacén activo si está seleccionado
+        activeWarehouseId ?? null,
         allowedWarehouseIds,
         allowedClientIds
       );
 
-      // Si no hay docks visibles, no hay reservas posibles -> early return
       if (allowedDockIds.length === 0) {
-        console.log('[RES-FAST-CALLER]', 'dashboard.page', 'NO docks visible -> empty stats', { allowedWarehouseIds, allowedClientIds });
         setStats(null);
         setLoading(false);
         return;
       }
 
-      // ── PASO 2: Cargar stats con dock_ids indexados ──
-      const data = await dashboardService.getStats(
-        orgId,
-        activeWarehouseId,
-        period,
-        allowedDockIds
-      );
-      setStats(data);
+      if (isCustom) {
+        const data = await dashboardService.getStats(
+          orgId,
+          activeWarehouseId,
+          'custom',
+          allowedDockIds,
+          { start: new Date(dateRange.start), end: new Date(dateRange.end) }
+        );
+        setStats(data);
+      } else {
+        const data = await dashboardService.getStats(
+          orgId,
+          activeWarehouseId,
+          activePreset,
+          allowedDockIds
+        );
+        setStats(data);
+      }
     } catch {
       // silenced
     } finally {
       setLoading(false);
     }
-  }, [orgId, activeWarehouseId, period, allowedWarehouseIds, allowedClientIds]);
+  }, [orgId, activeWarehouseId, activePreset, isCustom, dateRange, allowedWarehouseIds, allowedClientIds]);
 
   useEffect(() => {
     if (orgId && !warehouseLoading && !scopeLoading) {
       loadDashboardData();
     }
-  }, [orgId, activeWarehouseId, warehouseLoading, scopeLoading, period]);
+  }, [orgId, activeWarehouseId, warehouseLoading, scopeLoading, activePreset, isCustom, dateRange]);
+
+  const handlePresetClick = (preset: QuickPeriod) => {
+    setActivePreset(preset);
+    setIsCustom(false);
+    setDateRange(getPresetRange(preset));
+  };
+
+  const handleRangeChange = (field: 'start' | 'end', value: string) => {
+    const newRange = { ...dateRange, [field]: value };
+    if (newRange.start && newRange.end && newRange.start > newRange.end) {
+      // Si el inicio es mayor que el fin, ajustar el fin al inicio
+      newRange.end = newRange.start;
+    }
+    setDateRange(newRange);
+    setIsCustom(true);
+    // Verificar si coincide con algún preset
+    const matchingPreset = PRESETS.find(p => isPresetActive(p.value, newRange));
+    if (matchingPreset) {
+      setIsCustom(false);
+      setActivePreset(matchingPreset.value);
+    }
+  };
 
   if (authLoading || permissionsLoading) {
     return (
@@ -162,15 +226,14 @@ export default function Dashboard() {
   }
 
   const maxTrend = Math.max(...(stats?.trendData.map(d => d.count) || [1]), 1);
-  const periodLabel = getPeriodLabel(period);
-  const compareLabel = getPeriodCompareLabel(period);
+  const periodLabel = stats ? stats.selectedPeriodLabel : 'Este mes';
+  const compareLabel = stats ? (stats.period === 'all' ? '' : 'vs per. ant.') : 'vs per. ant.';
 
   return (
     <div className="min-h-screen bg-gray-50">
       <div className="px-6 py-6">
         <div className="max-w-7xl mx-auto">
 
-          {/* Header */}
           <WarehousePageHeader
             title="Dashboard"
             subtitle={format(new Date(), "EEEE, d 'de' MMMM yyyy", { locale: es })}
@@ -181,33 +244,70 @@ export default function Dashboard() {
             loading={warehouseLoading}
           />
 
-          {/* Filtros maestros de período */}
-          <div className="mb-6 flex items-center justify-between gap-4 flex-wrap">
-            <div className="flex items-center gap-1 bg-white border border-gray-200 rounded-xl p-1">
-              {PERIOD_OPTIONS.map(opt => (
-                <button
-                  key={opt.value}
-                  onClick={() => setPeriod(opt.value)}
-                  className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all whitespace-nowrap cursor-pointer ${
-                    period === opt.value
-                      ? 'bg-teal-600 text-white shadow-sm'
-                      : 'text-gray-600 hover:bg-gray-50'
-                  }`}
-                >
-                  <i className={opt.icon}></i>
-                  {opt.label}
-                </button>
-              ))}
+          {/* Filtros: Presets + Rango de fechas */}
+          <div className="mb-6 flex flex-col gap-4">
+            <div className="flex items-center gap-4 flex-wrap">
+              {/* Presets */}
+              <div className="flex items-center gap-1 bg-white border border-gray-200 rounded-xl p-1">
+                {PRESETS.map(p => (
+                  <button
+                    key={p.value}
+                    onClick={() => handlePresetClick(p.value)}
+                    className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors whitespace-nowrap cursor-pointer ${
+                      !isCustom && activePreset === p.value
+                        ? 'bg-teal-500 text-white'
+                        : 'text-gray-600 hover:bg-gray-100'
+                    }`}
+                  >
+                    <i className={`${p.icon} w-4 h-4 flex items-center justify-center`}></i>
+                    {p.label}
+                  </button>
+                ))}
+              </div>
+
+              {/* Rango de fechas */}
+              <div className="flex items-center gap-2 bg-white border border-gray-200 rounded-xl p-1.5">
+                <div className="relative">
+                  <i className="ri-calendar-line absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 w-4 h-4 flex items-center justify-center"></i>
+                  <input
+                    type="date"
+                    value={dateRange.start}
+                    onChange={e => handleRangeChange('start', e.target.value)}
+                    className="pl-9 pr-3 py-2 bg-white border border-gray-200 rounded-lg text-sm text-gray-700 focus:ring-2 focus:ring-teal-500 focus:border-transparent cursor-pointer min-w-[140px]"
+                  />
+                </div>
+                <span className="text-gray-400 text-sm">–</span>
+                <div className="relative">
+                  <i className="ri-calendar-check-line absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 w-4 h-4 flex items-center justify-center"></i>
+                  <input
+                    type="date"
+                    value={dateRange.end}
+                    onChange={e => handleRangeChange('end', e.target.value)}
+                    className="pl-9 pr-3 py-2 bg-white border border-gray-200 rounded-lg text-sm text-gray-700 focus:ring-2 focus:ring-teal-500 focus:border-transparent cursor-pointer min-w-[140px]"
+                  />
+                </div>
+              </div>
+
+              <button
+                onClick={loadDashboardData}
+                disabled={loading}
+                className="flex items-center gap-2 px-4 py-2 bg-white border border-gray-200 rounded-lg text-sm text-gray-700 hover:bg-gray-50 transition-colors whitespace-nowrap cursor-pointer disabled:opacity-50 ml-auto"
+              >
+                <i className={`ri-refresh-line ${loading ? 'animate-spin' : ''}`}></i>
+                Actualizar
+              </button>
             </div>
 
-            <button
-              onClick={loadDashboardData}
-              disabled={loading}
-              className="flex items-center gap-2 px-4 py-2 bg-white border border-gray-200 rounded-lg text-sm text-gray-700 hover:bg-gray-50 transition-colors whitespace-nowrap cursor-pointer disabled:opacity-50"
-            >
-              <i className={`ri-refresh-line ${loading ? 'animate-spin' : ''}`}></i>
-              Actualizar
-            </button>
+            {/* Label del período activo */}
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-gray-500">
+                Período:
+                <span className="font-semibold text-gray-900 ml-1">{periodLabel}</span>
+              </span>
+              {isCustom && (
+                <span className="text-xs bg-teal-50 text-teal-700 px-2 py-0.5 rounded-full font-medium">Rango personalizado</span>
+              )}
+            </div>
           </div>
 
           {loading && !stats ? (
@@ -218,13 +318,12 @@ export default function Dashboard() {
             <>
               {/* KPIs Principales */}
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-                {/* Reservas del período */}
                 <div className="bg-white rounded-xl p-5 border border-gray-100">
                   <div className="flex items-center justify-between mb-3">
                     <div className="w-10 h-10 bg-teal-50 rounded-lg flex items-center justify-center">
                       <i className="ri-calendar-todo-line text-teal-600 text-lg"></i>
                     </div>
-                    {period !== 'all' && (
+                    {compareLabel && (
                       <div className={`flex items-center gap-1 text-xs font-medium ${stats.vsLastPeriod >= 0 ? 'text-green-600' : 'text-red-600'}`}>
                         <i className={stats.vsLastPeriod >= 0 ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'}></i>
                         {Math.abs(stats.vsLastPeriod)}%
@@ -233,10 +332,9 @@ export default function Dashboard() {
                     )}
                   </div>
                   <p className="text-2xl font-bold text-gray-900">{stats.periodCount}</p>
-                  <p className="text-xs text-gray-500 mt-1 capitalize">Reservas {periodLabel}</p>
+                  <p className="text-xs text-gray-500 mt-1">Reservas en período</p>
                 </div>
 
-                {/* Pendientes */}
                 <div className="bg-white rounded-xl p-5 border border-gray-100">
                   <div className="flex items-center justify-between mb-3">
                     <div className="w-10 h-10 bg-amber-50 rounded-lg flex items-center justify-center">
@@ -248,7 +346,6 @@ export default function Dashboard() {
                   <p className="text-xs text-gray-500 mt-1">Por confirmar</p>
                 </div>
 
-                {/* Confirmadas */}
                 <div className="bg-white rounded-xl p-5 border border-gray-100">
                   <div className="flex items-center justify-between mb-3">
                     <div className="w-10 h-10 bg-green-50 rounded-lg flex items-center justify-center">
@@ -260,7 +357,6 @@ export default function Dashboard() {
                   <p className="text-xs text-gray-500 mt-1">Confirmadas</p>
                 </div>
 
-                {/* En proceso */}
                 <div className="bg-white rounded-xl p-5 border border-gray-100">
                   <div className="flex items-center justify-between mb-3">
                     <div className="w-10 h-10 bg-indigo-50 rounded-lg flex items-center justify-center">
@@ -275,27 +371,27 @@ export default function Dashboard() {
 
               {/* Resumen rápido de períodos fijos */}
               <div className="grid grid-cols-3 gap-4 mb-6">
-                <div className={`rounded-xl p-4 border flex items-center gap-4 ${period === 'day' ? 'bg-teal-50 border-teal-200' : 'bg-white border-gray-100'}`}>
-                  <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${period === 'day' ? 'bg-teal-100' : 'bg-gray-100'}`}>
-                    <i className={`ri-sun-line ${period === 'day' ? 'text-teal-600' : 'text-gray-500'}`}></i>
+                <div className={`rounded-xl p-4 border flex items-center gap-4 ${activePreset === 'day' ? 'bg-teal-50 border-teal-200' : 'bg-white border-gray-100'}`}>
+                  <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${activePreset === 'day' ? 'bg-teal-100' : 'bg-gray-100'}`}>
+                    <i className={`ri-sun-line ${activePreset === 'day' ? 'text-teal-600' : 'text-gray-500'}`}></i>
                   </div>
                   <div>
                     <p className="text-xl font-bold text-gray-900">{stats.todayCount}</p>
                     <p className="text-xs text-gray-500">Hoy</p>
                   </div>
                 </div>
-                <div className={`rounded-xl p-4 border flex items-center gap-4 ${period === 'week' ? 'bg-teal-50 border-teal-200' : 'bg-white border-gray-100'}`}>
-                  <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${period === 'week' ? 'bg-teal-100' : 'bg-gray-100'}`} >
-                    <i className={`ri-calendar-check-line ${period === 'week' ? 'text-teal-600' : 'text-gray-500'}`}></i>
+                <div className={`rounded-xl p-4 border flex items-center gap-4 ${activePreset === 'week' ? 'bg-teal-50 border-teal-200' : 'bg-white border-gray-100'}`}>
+                  <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${activePreset === 'week' ? 'bg-teal-100' : 'bg-gray-100'}`}>
+                    <i className={`ri-calendar-check-line ${activePreset === 'week' ? 'text-teal-600' : 'text-gray-500'}`}></i>
                   </div>
                   <div>
                     <p className="text-xl font-bold text-gray-900">{stats.weekCount}</p>
                     <p className="text-xs text-gray-500">Esta semana</p>
                   </div>
                 </div>
-                <div className={`rounded-xl p-4 border flex items-center gap-4 ${period === 'month' ? 'bg-teal-50 border-teal-200' : 'bg-white border-gray-100'}`}>
-                  <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${period === 'month' ? 'bg-teal-100' : 'bg-gray-100'}`}>
-                    <i className={`ri-calendar-2-line ${period === 'month' ? 'text-teal-600' : 'text-gray-500'}`}></i>
+                <div className={`rounded-xl p-4 border flex items-center gap-4 ${activePreset === 'month' ? 'bg-teal-50 border-teal-200' : 'bg-white border-gray-100'}`}>
+                  <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${activePreset === 'month' ? 'bg-teal-100' : 'bg-gray-100'}`}>
+                    <i className={`ri-calendar-2-line ${activePreset === 'month' ? 'text-teal-600' : 'text-gray-500'}`}></i>
                   </div>
                   <div>
                     <p className="text-xl font-bold text-gray-900">{stats.monthCount}</p>
@@ -308,7 +404,7 @@ export default function Dashboard() {
               <div className="bg-white rounded-xl p-5 border border-gray-100 mb-6">
                 <div className="flex items-center justify-between mb-4">
                   <h3 className="text-sm font-semibold text-gray-900">Reservas por Tipo de Proveedor</h3>
-                  <span className="text-xs text-gray-400 capitalize">{periodLabel} · {stats.providerTypeStats.total} total</span>
+                  <span className="text-xs text-gray-400">{periodLabel} · {stats.providerTypeStats.total} total</span>
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div className="flex items-center gap-4 bg-emerald-50 rounded-xl p-4">
@@ -344,16 +440,14 @@ export default function Dashboard() {
                 </div>
               </div>
 
-              {/* Tendencia del período */}
+              {/* Tendencia */}
               <div className="bg-white rounded-xl p-5 border border-gray-100 mb-6">
                 <div className="flex items-center justify-between mb-4">
                   <h3 className="text-sm font-semibold text-gray-900">
                     Tendencia de reservas
-                    <span className="ml-2 text-xs font-normal text-gray-400 capitalize">— {periodLabel}</span>
+                    <span className="ml-2 text-xs font-normal text-gray-400">— {periodLabel}</span>
                   </h3>
-                  <span className="text-xs text-gray-500">
-                    {period === 'day' ? 'Por hora' : period === 'week' ? 'Por día' : period === 'month' ? 'Por día' : 'Por mes'}
-                  </span>
+                  <span className="text-xs text-gray-500">{isCustom ? 'Por día/semana/mes' : 'Por día'}</span>
                 </div>
                 {stats.trendData.length === 0 ? (
                   <p className="text-sm text-gray-400 text-center py-8">Sin datos para este período</p>
@@ -464,7 +558,7 @@ export default function Dashboard() {
                 <div className="bg-white rounded-xl p-5 border border-gray-100">
                   <div className="flex items-center justify-between mb-4">
                     <h3 className="text-sm font-semibold text-gray-900">Top Proveedores</h3>
-                    <span className="text-xs text-gray-400 capitalize">{periodLabel}</span>
+                    <span className="text-xs text-gray-400">{periodLabel}</span>
                   </div>
                   {stats.topProviders.length === 0 ? (
                     <p className="text-sm text-gray-400 text-center py-4">Sin datos</p>
@@ -491,7 +585,7 @@ export default function Dashboard() {
                 <div className="bg-white rounded-xl p-5 border border-gray-100">
                   <div className="flex items-center justify-between mb-4">
                     <h3 className="text-sm font-semibold text-gray-900">Horas Pico</h3>
-                    <span className="text-xs text-gray-400 capitalize">{periodLabel}</span>
+                    <span className="text-xs text-gray-400">{periodLabel}</span>
                   </div>
                   {stats.peakHours.length === 0 ? (
                     <p className="text-sm text-gray-400 text-center py-4">Sin datos</p>
@@ -523,7 +617,7 @@ export default function Dashboard() {
                 <div className="bg-white rounded-xl p-5 border border-gray-100">
                   <div className="flex items-center justify-between mb-4">
                     <h3 className="text-sm font-semibold text-gray-900">Andenes más Usados</h3>
-                    <span className="text-xs text-gray-400 capitalize">{periodLabel}</span>
+                    <span className="text-xs text-gray-400">{periodLabel}</span>
                   </div>
                   {stats.topDocks.length === 0 ? (
                     <p className="text-sm text-gray-400 text-center py-4">Sin datos</p>
@@ -550,7 +644,7 @@ export default function Dashboard() {
                 <div className="bg-white rounded-xl p-5 border border-gray-100 mb-6">
                   <div className="flex items-center justify-between mb-4">
                     <h3 className="text-sm font-semibold text-gray-900">Rendimiento por Almacén</h3>
-                    <span className="text-xs text-gray-400 capitalize">{periodLabel}</span>
+                    <span className="text-xs text-gray-400">{periodLabel}</span>
                   </div>
                   <div className="overflow-x-auto">
                     <table className="w-full">

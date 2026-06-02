@@ -1,172 +1,139 @@
-import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
-interface ProviderData {
-  id_compania: number;
-  origen: string;
-  id_proveedor: number;
-  nombre: string;
+interface ExcelPayload {
+  org_id: string;
+  source: string;
+  providers: Array<{
+    name: string;
+    provider_code?: string;
+    provider_type?: 'almacenaje' | 'pesado';
+  }>;
 }
 
-interface RequestBody {
-  providers: ProviderData[];
+const SOURCE_TO_CLIENT_MAP: Record<string, { id: string }> = {
+  '029': { id: 'ae488aaf-706a-46fa-9251-d00a35e78384' },
+  '0029': { id: 'ae488aaf-706a-46fa-9251-d00a35e78384' },
+  'COFERSA': { id: 'ae488aaf-706a-46fa-9251-d00a35e78384' },
+  '0109': { id: 'f897b0e2-721f-498d-a5d2-800dd3755139' },
+  'EPA': { id: 'f897b0e2-721f-498d-a5d2-800dd3755139' },
+};
+
+function resolveClientBySource(source: string | null | undefined): string | null {
+  if (!source) return null;
+  const normalized = source.trim().toUpperCase();
+  return SOURCE_TO_CLIENT_MAP[normalized]?.id ?? null;
 }
 
-serve(async (req) => {
+Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
-    return new Response(null, {
-      status: 204,
+    return new Response('ok', {
       headers: {
         'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Methods': 'POST, OPTIONS',
+        'Access-Control-Allow-Methods': 'POST',
         'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
       },
     });
   }
 
   try {
-    const body: RequestBody = await req.json();
-    const { providers } = body;
+    const body = (await req.json()) as ExcelPayload;
+    const { org_id, source, providers } = body;
+    const normalizedSource = source?.trim().toUpperCase() || null;
+    const autoClientId = resolveClientBySource(normalizedSource);
 
-    if (!providers || !Array.isArray(providers) || providers.length === 0) {
-      return new Response(
-        JSON.stringify({ error: 'Se requiere un array de proveedores' }),
-        { status: 400, headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' } }
-      );
-    }
+    const supabase = createClient(
+      Deno.env.get('SUPABASE_URL')!,
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
+      { auth: { persistSession: false } }
+    );
 
-    const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-    const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-    const supabase = createClient(supabaseUrl, supabaseKey);
-
-    const CLIENT_COFERSA = 'ae488aaf-706a-46fa-9251-d00a35e78384';
-    const CLIENT_EPA = 'f897b0e2-721f-498d-a5d2-800dd3755139';
-    const ORG_ID = '946ddabf-3874-4c57-85c2-ea7d4b5937f8';
-    const CREATED_BY = '00d16810-2a84-417b-ad19-20241ed64b3e';
-
-    const getClientId = (idCompania: number): string | null => {
-      if (idCompania === 29) return CLIENT_COFERSA;
-      if (idCompania === 109) return CLIENT_EPA;
-      return null;
-    };
-
-    const { data: existingProviders, error: fetchError } = await supabase
+    // 1. Traer todos los proveedores de la org
+    const { data: existingProviders, error: fetchErr } = await supabase
       .from('providers')
-      .select('id, name');
+      .select('id, name, provider_code, active, provider_type, source, client_id')
+      .eq('org_id', org_id);
 
-    if (fetchError) {
-      return new Response(
-        JSON.stringify({ error: 'Error fetching existing providers', details: fetchError }),
-        { status: 500, headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' } }
-      );
-    }
+    if (fetchErr) throw fetchErr;
 
-    const existingMap = new Map<string, string>();
-    for (const p of existingProviders || []) {
-      if (p.name) {
-        existingMap.set(p.name.trim().toLowerCase(), p.id);
-      }
-    }
+    const existingMap = new Map((existingProviders || []).map(p => [p.provider_code?.toUpperCase(), p]));
+    const created: any[] = [];
+    const updated: any[] = [];
+    const preserved: any[] = [];
+    const errors: any[] = [];
 
-    const matched: { id: string; code: string; source: string; client_id: string | null }[] = [];
-    const toInsert: { name: string; provider_code: string; source: string; client_id: string | null }[] = [];
+    // 2. Procesar cada proveedor del Excel
+    for (const excelProvider of providers) {
+      try {
+        const excelCode = excelProvider.provider_code?.trim().toUpperCase();
+        const excelName = excelProvider.name?.trim().toUpperCase();
+        const excelType = excelProvider.provider_type || 'almacenaje';
+        const existing = excelCode ? existingMap.get(excelCode) : null;
 
-    const processedNames = new Set<string>();
-    const duplicateNames: string[] = [];
-    const unmatchedNames: string[] = [];
-
-    for (const p of providers) {
-      const name = p.nombre?.trim() || '';
-      if (!name) continue;
-      if (processedNames.has(name.toLowerCase())) {
-        duplicateNames.push(name);
-        continue;
-      }
-      processedNames.add(name.toLowerCase());
-
-      const nameLower = name.toLowerCase();
-      const existingId = existingMap.get(nameLower);
-      const clientId = getClientId(p.id_compania);
-      const source = p.origen?.trim() || '';
-      const code = p.id_proveedor?.toString() || '';
-
-      if (existingId) {
-        matched.push({ id: existingId, code, source, client_id: clientId });
-      } else {
-        toInsert.push({ name, provider_code: code, source, client_id: clientId });
-        unmatchedNames.push(name);
-      }
-    }
-
-    // Batch update existing providers — individualmente para no bloquear todo el batch
-    let updated = 0;
-    const updateErrors: string[] = [];
-    for (const m of matched) {
-      const { error: updateError } = await supabase
-        .from('providers')
-        .update({
-          provider_code: m.code,
-          source: m.source,
-          client_id: m.client_id,
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', m.id);
-      if (updateError) {
-        console.error('Update error:', updateError);
-        updateErrors.push(String(updateError.message || updateError));
-      } else {
-        updated += 1;
-      }
-    }
-
-    // Batch insert new providers
-    let inserted = 0;
-    const insertErrors: string[] = [];
-    const BATCH_SIZE = 50;
-    for (let i = 0; i < toInsert.length; i += BATCH_SIZE) {
-      const batch = toInsert.slice(i, i + BATCH_SIZE);
-      const { error: insertError } = await supabase
-        .from('providers')
-        .insert(
-          batch.map(p => ({
-            name: p.name,
-            provider_code: p.provider_code,
-            source: p.source,
-            client_id: p.client_id,
-            org_id: ORG_ID,
-            active: true,
-            created_by: CREATED_BY,
-            provider_type: 'almacenaje',
-          }))
-        );
-      if (insertError) {
-        console.error('Insert error:', insertError);
-        insertErrors.push(String(insertError.message || insertError));
-      } else {
-        inserted += batch.length;
+        if (existing) {
+          const needsUpdate = existing.name !== excelName || existing.provider_type !== excelType;
+          if (needsUpdate) {
+            const { error: updErr } = await supabase
+              .from('providers')
+              .update({
+                name: excelName,
+                provider_type: excelType,
+                source: normalizedSource,
+                client_id: autoClientId || existing.client_id,
+              })
+              .eq('id', existing.id);
+            if (updErr) throw updErr;
+            updated.push({ id: existing.id, name: excelName, code: excelCode });
+          } else {
+            preserved.push({ id: existing.id, name: excelName, code: excelCode });
+          }
+        } else {
+          const { data: newProv, error: insErr } = await supabase
+            .from('providers')
+            .insert({
+              org_id,
+              name: excelName,
+              provider_code: excelCode,
+              provider_type: excelType,
+              active: true,
+              source: normalizedSource,
+              client_id: autoClientId,
+            })
+            .select('id')
+            .single();
+          if (insErr) throw insErr;
+          created.push({ id: newProv.id, name: excelName, code: excelCode });
+        }
+      } catch (err: any) {
+        errors.push({ code: excelProvider.provider_code, name: excelProvider.name, error: err.message });
       }
     }
 
     return new Response(
       JSON.stringify({
-        success: true,
-        total: providers.length,
-        uniqueNames: processedNames.size,
-        duplicatesInFile: duplicateNames.length,
-        matched: updated,
-        inserted: inserted,
-        skipped: providers.length - updated - inserted,
-        updateErrors: updateErrors.length > 0 ? updateErrors : undefined,
-        insertErrors: insertErrors.length > 0 ? insertErrors : undefined,
-        sampleUnmatched: unmatchedNames.slice(0, 10),
-        sampleExisting: (existingProviders || []).slice(0, 5).map(p => p.name),
+        summary: {
+          total: providers.length,
+          created: created.length,
+          updated: updated.length,
+          preserved: preserved.length,
+          errors: errors.length,
+        },
+        details: { created, updated, preserved, errors },
       }),
-      { status: 200, headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' } }
+      {
+        status: 200,
+        headers: {
+          'Content-Type': 'application/json',
+          'Access-Control-Allow-Origin': '*',
+        },
+      }
     );
-  } catch (error) {
-    return new Response(
-      JSON.stringify({ error: error.message || 'Internal error' }),
-      { status: 500, headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' } }
-    );
+  } catch (err: any) {
+    return new Response(JSON.stringify({ error: err.message }), {
+      status: 500,
+      headers: {
+        'Content-Type': 'application/json',
+        'Access-Control-Allow-Origin': '*',
+      },
+    });
   }
 });

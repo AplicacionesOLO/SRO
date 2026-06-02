@@ -28,6 +28,21 @@ export interface SyncProviderResult {
   };
 }
 
+// ── Mapeo source → client_id (usado como fallback en UI y para autodetectar) ──
+const SOURCE_TO_CLIENT_MAP: Record<string, { id: string; name: string }> = {
+  '029': { id: 'ae488aaf-706a-46fa-9251-d00a35e78384', name: 'COFERSA' },
+  '0029': { id: 'ae488aaf-706a-46fa-9251-d00a35e78384', name: 'COFERSA' },
+  'COFERSA': { id: 'ae488aaf-706a-46fa-9251-d00a35e78384', name: 'COFERSA' },
+  '0109': { id: 'f897b0e2-721f-498d-a5d2-800dd3755139', name: 'EPA' },
+  'EPA': { id: 'f897b0e2-721f-498d-a5d2-800dd3755139', name: 'EPA' },
+};
+
+function resolveClientBySource(source: string | null | undefined): { id: string; name: string } | null {
+  if (!source) return null;
+  const normalized = source.trim().toUpperCase();
+  return SOURCE_TO_CLIENT_MAP[normalized] ?? null;
+}
+
 export const providersService = {
   /**
    * Contar reservas de un proveedor (shipper_provider + reservation_consolidated_providers).
@@ -46,6 +61,12 @@ export const providersService = {
 
     return (resCount || 0) + (consCount || 0);
   },
+
+  /**
+   * Resolver cliente automáticamente por source.
+   * Exportado para uso en componentes UI.
+   */
+  resolveClientBySource,
 
   /**
    * Sincronizar proveedores desde API externa.
@@ -115,83 +136,128 @@ export const providersService = {
     return allProviders;
   },
 
+  /**
+   * Paginación server-side: obtener proveedores de la org con count total.
+   * Si searchTerm se proporciona, filtra por nombre, código o origen (ilike).
+   */
+  async getAllPaginated(
+    orgId: string,
+    page: number,
+    pageSize: number,
+    searchTerm?: string
+  ): Promise<{ data: Provider[]; total: number; totalPages: number }> {
+    const from = (page - 1) * pageSize;
+    const to = from + pageSize - 1;
+
+    let query = supabase
+      .from('providers')
+      .select('id, org_id, name, active, provider_type, provider_code, source, client_id, created_at', { count: 'exact' })
+      .eq('org_id', orgId);
+
+    if (searchTerm && searchTerm.trim()) {
+      const term = `%${searchTerm.trim()}%`;
+      query = query.or(`name.ilike.${term},provider_code.ilike.${term},source.ilike.${term}`);
+    }
+
+    const { data, error, count } = await query
+      .order('created_at', { ascending: false })
+      .range(from, to);
+
+    if (error) throw error;
+    const total = count ?? 0;
+    return { data: data ?? [], total, totalPages: Math.ceil(total / pageSize) };
+  },
+
+  /**
+   * Paginación server-side: obtener proveedores activos de la org con count total.
+   * Si searchTerm se proporciona, filtra por nombre, código o origen (ilike).
+   */
+  async getActivePaginated(
+    orgId: string,
+    page: number,
+    pageSize: number,
+    searchTerm?: string
+  ): Promise<{ data: Provider[]; total: number; totalPages: number }> {
+    const from = (page - 1) * pageSize;
+    const to = from + pageSize - 1;
+
+    let query = supabase
+      .from('providers')
+      .select('id, org_id, name, active, provider_type, provider_code, source, client_id, created_at', { count: 'exact' })
+      .eq('org_id', orgId)
+      .eq('active', true);
+
+    if (searchTerm && searchTerm.trim()) {
+      const term = `%${searchTerm.trim()}%`;
+      query = query.or(`name.ilike.${term},provider_code.ilike.${term},source.ilike.${term}`);
+    }
+
+    const { data, error, count } = await query
+      .order('name', { ascending: true })
+      .range(from, to);
+
+    if (error) throw error;
+    const total = count ?? 0;
+    return { data: data ?? [], total, totalPages: Math.ceil(total / pageSize) };
+  },
+
   async createProvider(orgId: string, name: string, providerType: 'almacenaje' | 'pesado' = 'almacenaje', providerCode?: string | null, source?: string | null, clientId?: string | null): Promise<Provider> {
-    //console.log('[providersService] Creating provider:', { orgId, name, providerType });
+    const normalizedName = name.trim().toUpperCase();
+    const normalizedCode = providerCode?.trim().toUpperCase() || null;
+    const normalizedSource = source?.trim().toUpperCase() || null;
+    // Auto-detectar cliente por source si no se proporcionó clientId
+    const autoClient = clientId ? null : resolveClientBySource(normalizedSource);
+    const finalClientId = clientId || autoClient?.id || null;
     
     const { data, error } = await supabase
       .from('providers')
       .insert({
         org_id: orgId,
-        name: name.trim(),
+        name: normalizedName,
         active: true,
         provider_type: providerType,
-        provider_code: providerCode?.trim() || null,
-        source: source?.trim() || null,
-        client_id: clientId || null,
+        provider_code: normalizedCode,
+        source: normalizedSource,
+        client_id: finalClientId,
       })
       .select('id, org_id, name, active, provider_type, provider_code, source, client_id, created_at')
       .single();
 
-    if (error) {
-      // console.error('[providersService] ❌ ERROR creating provider', { 
-      //   error, 
-      //   message: error.message, 
-      //   details: error.details, 
-      //   hint: error.hint,
-      //   code: error.code
-      // });
-      throw error;
-    }
-
-    //console.log('[providersService] ✅ Provider created:', { id: data.id, name: data.name });
+    if (error) throw error;
     return data;
   },
 
   async updateProvider(id: string, updates: Partial<Pick<Provider, 'name' | 'active' | 'provider_type' | 'provider_code' | 'source' | 'client_id'>>): Promise<Provider> {
-    //console.log('[providersService] Updating provider:', { id, updates });
+    const normalized: any = { ...updates };
+    if (updates.name !== undefined) normalized.name = updates.name.trim().toUpperCase();
+    if (updates.provider_code !== undefined) normalized.provider_code = updates.provider_code?.trim().toUpperCase() || null;
+    if (updates.source !== undefined) {
+      normalized.source = updates.source?.trim().toUpperCase() || null;
+      // Si cambió el source y no hay client_id, autodetectar
+      if (normalized.source && !normalized.client_id) {
+        const autoClient = resolveClientBySource(normalized.source);
+        if (autoClient) normalized.client_id = autoClient.id;
+      }
+    }
     
     const { data, error } = await supabase
       .from('providers')
-      .update(updates)
+      .update(normalized)
       .eq('id', id)
       .select('id, org_id, name, active, provider_type, provider_code, source, client_id, created_at')
       .single();
 
-    if (error) {
-      // console.error('[providersService] ❌ ERROR updating provider', { 
-      //   error, 
-      //   message: error.message, 
-      //   details: error.details, 
-      //   hint: error.hint,
-      //   code: error.code
-      // });
-      throw error;
-    }
-
-    //console.log('[providersService] ✅ Provider updated:', { id: data.id });
+    if (error) throw error;
     return data;
   },
 
   async deleteProvider(id: string): Promise<void> {
-    //console.log('[providersService] Soft deleting provider:', { id });
-    
     const { error } = await supabase
       .from('providers')
       .update({ active: false })
       .eq('id', id);
 
-    if (error) {
-      // console.error('[providersService] ❌ ERROR soft deleting provider', { 
-      //   error, 
-      //   message: error.message, 
-      //   details: error.details, 
-      //   hint: error.hint,
-      //   code: error.code
-      // });
-      throw error;
-    }
-
-    //console.log('[providersService] ✅ Provider soft deleted:', { id });
+    if (error) throw error;
   },
 
   /**
@@ -375,7 +441,14 @@ export const providersService = {
       const warehouses = (pwRows ?? []).filter((r: any) => r.provider_id === pid);
 
       if (warehouses.length === 0) {
-        result[pid] = 'Sin asignación';
+        // Fallback: buscar cliente por source del provider (traído desde la BD)
+        const { data: providerSources } = await supabase
+          .from('providers')
+          .select('source')
+          .eq('id', pid)
+          .maybeSingle();
+        const autoClient = providerSources?.source ? resolveClientBySource(providerSources.source) : null;
+        result[pid] = autoClient ? `Cliente: ${autoClient.name}` : 'Sin asignación';
         continue;
       }
 
@@ -473,5 +546,136 @@ export const providersService = {
         onConflict: 'org_id,provider_id,warehouse_id'
       });
     if (error) throw error;
+  },
+
+  /**
+   * Obtener las asignaciones almacén→clientes de una lista de proveedores (OPTIMIZADO).
+   * Versión optimizada: recibe los providers ya cargados para usar su source como fallback
+   * sin hacer N+1 queries a la BD.
+   */
+  async getProviderAssignmentsOptimized(
+    orgId: string,
+    providers: Provider[]
+  ): Promise<Record<string, string>> {
+    const providerIds = providers.map(p => p.id);
+    if (providerIds.length === 0) return {};
+    const providerSet = new Set(providerIds);
+    // Índice rápido: providerId → source
+    const providerSourceMap: Record<string, string | null> = {};
+    for (const p of providers) {
+      providerSourceMap[p.id] = p.source || null;
+    }
+
+    // 1. Traer TODOS los provider_warehouses de la org — paginado
+    const pageSize = 1000;
+    let from = 0;
+    let allPwRows: any[] = [];
+
+    while (true) {
+      const { data, error: pwErr } = await supabase
+        .from('provider_warehouses')
+        .select('provider_id, warehouse_id, warehouses(name)')
+        .eq('org_id', orgId)
+        .order('created_at', { ascending: true })
+        .range(from, from + pageSize - 1);
+
+      if (pwErr) throw pwErr;
+      allPwRows = allPwRows.concat(data ?? []);
+      if ((data ?? []).length < pageSize) break;
+      from += pageSize;
+    }
+
+    const pwRows = allPwRows.filter((r: any) => providerSet.has(r.provider_id));
+
+    // 2. Traer TODOS los client_providers de la org — paginado
+    from = 0;
+    let allCpRows: any[] = [];
+
+    while (true) {
+      const { data, error: cpErr } = await supabase
+        .from('client_providers')
+        .select('provider_id, client_id, clients(name)')
+        .eq('org_id', orgId)
+        .order('created_at', { ascending: true })
+        .range(from, from + pageSize - 1);
+
+      if (cpErr) throw cpErr;
+      allCpRows = allCpRows.concat(data ?? []);
+      if ((data ?? []).length < pageSize) break;
+      from += pageSize;
+    }
+
+    const cpRows = allCpRows.filter((r: any) => providerSet.has(r.provider_id));
+
+    // 3. Traer warehouse_clients
+    const warehouseIds = [...new Set(pwRows.map((r: any) => r.warehouse_id as string))];
+    let wcRows: any[] = [];
+    if (warehouseIds.length > 0) {
+      const { data, error: wcErr } = await supabase
+        .from('warehouse_clients')
+        .select('warehouse_id, client_id')
+        .eq('org_id', orgId)
+        .in('warehouse_id', warehouseIds);
+      if (wcErr) throw wcErr;
+      wcRows = data ?? [];
+    }
+
+    // Índice: warehouse_id → Set<client_id>
+    const warehouseToClients: Record<string, Set<string>> = {};
+    for (const wc of wcRows) {
+      if (!warehouseToClients[wc.warehouse_id]) warehouseToClients[wc.warehouse_id] = new Set();
+      warehouseToClients[wc.warehouse_id].add(wc.client_id);
+    }
+
+    // Índice: client_id → client name
+    const clientNames: Record<string, string> = {};
+    for (const cp of (cpRows ?? [])) {
+      if (cp.clients && cp.client_id) {
+        clientNames[cp.client_id] = (cp.clients as any).name ?? cp.client_id;
+      }
+    }
+
+    // Índice: provider_id → Set<client_id>
+    const providerToClients: Record<string, Set<string>> = {};
+    for (const cp of (cpRows ?? [])) {
+      if (!providerToClients[cp.provider_id]) providerToClients[cp.provider_id] = new Set();
+      providerToClients[cp.provider_id].add(cp.client_id);
+    }
+
+    // Construir texto final por proveedor
+    const result: Record<string, string> = {};
+
+    for (const pid of providerIds) {
+      const warehouses = (pwRows ?? []).filter((r: any) => r.provider_id === pid);
+
+      if (warehouses.length === 0) {
+        // Fallback: usar source del provider del mapa (ya cargado, sin query N+1)
+        const source = providerSourceMap[pid];
+        const autoClient = source ? resolveClientBySource(source) : null;
+        result[pid] = autoClient ? `Cliente: ${autoClient.name}` : 'Sin asignación';
+        continue;
+      }
+
+      const providerClientIds = providerToClients[pid] ?? new Set();
+
+      const parts: string[] = warehouses.map((pw: any) => {
+        const warehouseName: string = (pw.warehouses as any)?.name ?? pw.warehouse_id;
+        const wcClients = warehouseToClients[pw.warehouse_id] ?? new Set();
+
+        const matchingClients = [...providerClientIds]
+          .filter(cid => wcClients.has(cid))
+          .map(cid => clientNames[cid] ?? cid)
+          .sort();
+
+        if (matchingClients.length > 0) {
+          return `${warehouseName}: (${matchingClients.join(', ')})`;
+        }
+        return warehouseName;
+      });
+
+      result[pid] = parts.join(' / ');
+    }
+
+    return result;
   },
 };

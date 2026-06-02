@@ -9,8 +9,9 @@ import {
   startOfYear, endOfYear, subYears,
   eachWeekOfInterval, eachMonthOfInterval,
 } from 'date-fns';
+import { es } from 'date-fns/locale';
 
-export type DashboardPeriod = 'day' | 'week' | 'month' | 'year' | 'all';
+export type DashboardPeriod = 'day' | 'week' | 'month' | 'year' | 'all' | 'custom';
 
 export interface ProviderTypeStats {
   nacional: number;
@@ -46,9 +47,28 @@ export interface DashboardStats {
   warehouseStats: { name: string; reservations: number; docks: number }[];
   providerTypeStats: ProviderTypeStats;
   period: DashboardPeriod;
+  selectedPeriodLabel: string;
 }
 
-function getPeriodRange(period: DashboardPeriod, now: Date): { start: Date; end: Date; prevStart: Date; prevEnd: Date } {
+export interface DateRange {
+  start: Date;
+  end: Date;
+}
+
+function getPeriodRange(
+  period: DashboardPeriod,
+  now: Date,
+  customRange?: DateRange
+): { start: Date; end: Date; prevStart: Date; prevEnd: Date } {
+  if (customRange && period === 'custom') {
+    return {
+      start: startOfDay(customRange.start),
+      end: endOfDay(customRange.end),
+      prevStart: startOfDay(subDays(customRange.start, 1)),
+      prevEnd: endOfDay(subDays(customRange.end, 1)),
+    };
+  }
+
   switch (period) {
     case 'day': {
       const start = startOfDay(now);
@@ -93,10 +113,66 @@ function buildTrendData(
   period: DashboardPeriod,
   reservations: { start_datetime: string }[],
   rangeStart: Date,
-  rangeEnd: Date
+  rangeEnd: Date,
+  customRange?: DateRange
 ): { label: string; count: number }[] {
+  const daysDiff = Math.ceil((rangeEnd.getTime() - rangeStart.getTime()) / (1000 * 60 * 60 * 24));
+
+  // Si es un rango personalizado de <= 1 mes (31 días), agrupar por día
+  if (period === 'custom' && daysDiff <= 31) {
+    const days = eachDayOfInterval({ start: rangeStart, end: rangeEnd });
+    return days.map(day => {
+      const dayStart = startOfDay(day);
+      const dayEnd = endOfDay(day);
+      const count = reservations.filter(r => {
+        const d = new Date(r.start_datetime);
+        return d >= dayStart && d <= dayEnd;
+      }).length;
+      return { label: format(day, 'dd/MM'), count };
+    });
+  }
+
+  // Si es un rango personalizado de > 1 mes y <= 6 meses, agrupar por semana
+  if (period === 'custom' && daysDiff <= 180) {
+    const weeks = eachWeekOfInterval({ start: rangeStart, end: rangeEnd }, { weekStartsOn: 1 });
+    return weeks.map(weekStart => {
+      const weekEnd = endOfWeek(weekStart, { weekStartsOn: 1 });
+      const count = reservations.filter(r => {
+        const d = new Date(r.start_datetime);
+        return d >= weekStart && d <= weekEnd;
+      }).length;
+      return { label: format(weekStart, 'dd/MM'), count };
+    });
+  }
+
+  // Si es un rango muy grande, agrupar por mes
+  if (period === 'custom') {
+    const months = eachMonthOfInterval({ start: rangeStart, end: rangeEnd });
+    return months.map(month => {
+      const mStart = startOfMonth(month);
+      const mEnd = endOfMonth(month);
+      const count = reservations.filter(r => {
+        const d = new Date(r.start_datetime);
+        return d >= mStart && d <= mEnd;
+      }).length;
+      return { label: format(month, 'MMM yy'), count };
+    });
+  }
+
+  if (period === 'month') {
+    const days = eachDayOfInterval({ start: rangeStart, end: rangeEnd });
+    return days.map(day => {
+      const dayStart = startOfDay(day);
+      const dayEnd = endOfDay(day);
+      const count = reservations.filter(r => {
+        const d = new Date(r.start_datetime);
+        return d >= dayStart && d <= dayEnd;
+      }).length;
+      return { label: format(day, 'dd'), count };
+    });
+  }
+
   if (period === 'day') {
-    // Agrupar por hora
     const hours: Record<string, number> = {};
     for (let h = 0; h < 24; h++) {
       const key = `${String(h).padStart(2, '0')}:00`;
@@ -111,7 +187,6 @@ function buildTrendData(
   }
 
   if (period === 'week') {
-    // Agrupar por día de la semana
     const days = eachDayOfInterval({ start: rangeStart, end: rangeEnd });
     return days.map(day => {
       const dayStart = startOfDay(day);
@@ -124,22 +199,7 @@ function buildTrendData(
     });
   }
 
-  if (period === 'month') {
-    // Agrupar por día del mes
-    const days = eachDayOfInterval({ start: rangeStart, end: rangeEnd });
-    return days.map(day => {
-      const dayStart = startOfDay(day);
-      const dayEnd = endOfDay(day);
-      const count = reservations.filter(r => {
-        const d = new Date(r.start_datetime);
-        return d >= dayStart && d <= dayEnd;
-      }).length;
-      return { label: format(day, 'dd'), count };
-    });
-  }
-
   if (period === 'year') {
-    // Agrupar por mes
     const months = eachMonthOfInterval({ start: rangeStart, end: rangeEnd });
     return months.map(month => {
       const mStart = startOfMonth(month);
@@ -186,10 +246,11 @@ export const dashboardService = {
     orgId: string,
     warehouseId?: string | null,
     period: DashboardPeriod = 'month',
-    allowedDockIds?: string[] | null
+    allowedDockIds?: string[] | null,
+    customRange?: DateRange
   ): Promise<DashboardStats> {
     const now = new Date();
-    const { start: periodStart, end: periodEnd, prevStart, prevEnd } = getPeriodRange(period, now);
+    const { start: periodStart, end: periodEnd, prevStart, prevEnd } = getPeriodRange(period, now, customRange);
 
     const todayStart = startOfDay(now);
     const todayEnd = endOfDay(now);
@@ -198,8 +259,6 @@ export const dashboardService = {
     const thisMonthStart = startOfMonth(now);
     const thisMonthEnd = endOfMonth(now);
 
-    // Obtener dock IDs una sola vez
-    // Prioridad: allowedDockIds del caller (fast path) > getDockIds legacy
     let dockIds: string[] | null = null;
     if (allowedDockIds && allowedDockIds.length > 0) {
       dockIds = allowedDockIds;
@@ -237,9 +296,7 @@ export const dashboardService = {
     prevQuery = applyDockFilter(prevQuery, dockIds);
     const { data: prevReservations } = await prevQuery;
 
-    // ── Query 3: Reservas del período para distribución por estado ──────────
-    // Nota: usamos periodData para que la distribución respete el filtro de período.
-    // allReservations se mantiene solo para totalReservations (conteo global sin filtro de fecha).
+    // ── Query 3: All reservations (sin filtro de fecha) ──────────────────────
     let allQuery = supabase
       .from('reservations')
       .select('id, status_id, dock_id')
@@ -305,9 +362,6 @@ export const dashboardService = {
     const { data: warehouses } = await warehousesQuery;
 
     // ── Resolver nombres de proveedores ─────────────────────────────────────
-    // Fetch dirigido por IDs exactos de shipper_provider para evitar restricciones
-    // de RLS en user_providers (el usuario solo ve sus proveedores asignados,
-    // pero en el dashboard necesitamos nombres de TODOS los que aparecen en reservas).
     const periodShipperIds = [
       ...new Set(
         (periodReservations ?? []).map(r => r.shipper_provider).filter(Boolean) as string[]
@@ -352,7 +406,6 @@ export const dashboardService = {
     const allData = allReservations || [];
     const providerMap = new Map(providers?.map(p => [p.id, p.name]) || []);
 
-    // Distribución por estado (sobre las reservas del período seleccionado)
     const statusCounts: Record<string, number> = {};
     periodData.forEach(r => {
       if (r.status_id) {
@@ -376,7 +429,7 @@ export const dashboardService = {
     const inProgressCount = findByCode('IN_PROGRESS');
     const completedCount = findByCode('DONE');
 
-    // ── Top proveedores (del período) ─────────────────────────────────────────
+    // ── Top proveedores ─────────────────────────────────────────
     const providerCounts: Record<string, number> = {};
     periodData.forEach(r => {
       if (r.shipper_provider) {
@@ -389,7 +442,7 @@ export const dashboardService = {
       .slice(0, 5)
       .map(([name, count]) => ({ name, count }));
 
-    // ── Top andenes (del período) ─────────────────────────────────────────────
+    // ── Top andenes ─────────────────────────────────────────────
     const dockCounts: Record<string, number> = {};
     periodData.forEach(r => {
       if (r.dock_id) dockCounts[r.dock_id] = (dockCounts[r.dock_id] || 0) + 1;
@@ -400,7 +453,7 @@ export const dashboardService = {
       .slice(0, 5)
       .map(([id, count]) => ({ name: dockMap.get(id) || 'Desconocido', count }));
 
-    // ── Horas pico (del período) ──────────────────────────────────────────────
+    // ── Horas pico ──────────────────────────────────────────────
     const hourCounts: Record<string, number> = {};
     periodData.forEach(r => {
       const hour = format(new Date(r.start_datetime), 'HH:00');
@@ -411,10 +464,10 @@ export const dashboardService = {
       .slice(0, 5)
       .map(([hour, count]) => ({ hour, count }));
 
-    // ── Tendencia (del período) ───────────────────────────────────────────────
-    const trendData = buildTrendData(period, periodData, periodStart, periodEnd);
+    // ── Tendencia ─────────────────────────────────────────────
+    const trendData = buildTrendData(period, periodData, periodStart, periodEnd, customRange);
 
-    // ── Stats por almacén (del período) ──────────────────────────────────────
+    // ── Stats por almacén ─────────────────────────────────────
     const warehouseStats = (warehouses || [])
       .map(w => {
         const warehouseDocks = docks?.filter(d => d.warehouse_id === w.id) || [];
@@ -430,7 +483,7 @@ export const dashboardService = {
       })
       .sort((a, b) => b.reservations - a.reservations);
 
-    // ── Comparativa vs período anterior ──────────────────────────────────────
+    // ── Comparativa vs período anterior ──────────────────────
     const prevCount = prevReservations?.length || 0;
     const vsLastPeriod = period === 'all'
       ? 0
@@ -438,10 +491,10 @@ export const dashboardService = {
         ? Math.round(((periodData.length - prevCount) / prevCount) * 100)
         : periodData.length > 0 ? 100 : 0;
 
-    const lastWeekCount = 0; // legacy, no usado
-    const vsLastWeek = 0;    // legacy, no usado
+    const lastWeekCount = 0;
+    const vsLastWeek = 0;
 
-    // ── Tasas ─────────────────────────────────────────────────────────────────
+    // ── Tasas ─────────────────────────────────────────────────
     const completionRate = totalWithStatus > 0
       ? Math.round((completedCount / totalWithStatus) * 100)
       : 0;
@@ -449,7 +502,7 @@ export const dashboardService = {
       ? Math.round((confirmedCount / totalWithStatus) * 100)
       : 0;
 
-    // ── Nacional vs Importado (del período) ──────────────────────────────────
+    // ── Nacional vs Importado ────────────────────────────────
     const importadoCount = periodData.filter(r => r.is_imported === true).length;
     const nacionalCount = periodData.filter(r => r.is_imported === false || r.is_imported === null).length;
     const providerTypeTotal = importadoCount + nacionalCount;
@@ -460,6 +513,18 @@ export const dashboardService = {
       nacionalPct: providerTypeTotal > 0 ? Math.round((nacionalCount / providerTypeTotal) * 100) : 0,
       importadoPct: providerTypeTotal > 0 ? Math.round((importadoCount / providerTypeTotal) * 100) : 0,
     };
+
+    const selectedPeriodLabel = customRange
+      ? `${format(periodStart, 'dd/MM/yyyy')} – ${format(periodEnd, 'dd/MM/yyyy')}`
+      : period === 'month'
+        ? format(now, 'MMMM yyyy', { locale: es })
+        : period === 'day'
+          ? 'Hoy'
+          : period === 'week'
+            ? 'Esta semana'
+            : period === 'year'
+              ? format(now, 'yyyy')
+              : 'Todo';
 
     return {
       totalReservations: periodData.length,
@@ -487,6 +552,7 @@ export const dashboardService = {
       warehouseStats,
       providerTypeStats,
       period,
+      selectedPeriodLabel,
     };
   }
 };

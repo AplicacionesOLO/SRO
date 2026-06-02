@@ -29,6 +29,20 @@ export default function ProviderSyncModal({ orgId, onClose, onSyncDone }: Provid
       .catch(() => setClients([]));
   }, [orgId]);
 
+  // Autodetectar cliente cuando cambia el source
+  useEffect(() => {
+    const sourceUpper = source.trim().toUpperCase();
+    if (!sourceUpper) return;
+    const found = clients.find(c => 
+      c.name.toUpperCase() === sourceUpper || 
+      sourceUpper.includes(c.name.toUpperCase()) ||
+      c.name.toUpperCase().includes(sourceUpper)
+    );
+    if (found) {
+      setClientId(found.id);
+    }
+  }, [source, clients]);
+
   const handleParse = useCallback(() => {
     setParseError('');
     if (!jsonText.trim()) {
@@ -37,10 +51,6 @@ export default function ProviderSyncModal({ orgId, onClose, onSyncDone }: Provid
     }
     if (!source.trim()) {
       setParseError('Seleccioná el origen (EPA, Cofersa, etc.)');
-      return;
-    }
-    if (!clientId) {
-      setParseError('Seleccioná el cliente asociado');
       return;
     }
 
@@ -77,7 +87,7 @@ export default function ProviderSyncModal({ orgId, onClose, onSyncDone }: Provid
     } catch (err: any) {
       setParseError('Error al parsear JSON: ' + (err?.message || 'JSON inválido'));
     }
-  }, [jsonText, source, clientId]);
+  }, [jsonText, source]);
 
   const handleSync = async () => {
     setSyncing(true);
@@ -87,7 +97,7 @@ export default function ProviderSyncModal({ orgId, onClose, onSyncDone }: Provid
     try {
       const result = await providersService.syncProviders(
         orgId,
-        source.trim(),
+        source.trim().toUpperCase(),
         clientId,
         parsedProviders
       );
@@ -184,25 +194,30 @@ export default function ProviderSyncModal({ orgId, onClose, onSyncDone }: Provid
                   type="text"
                   value={source}
                   onChange={(e) => setSource(e.target.value)}
-                  placeholder="Ej: EPA, Cofersa, OLO Operativo"
+                  placeholder="Ej: EPA, COFERSA, OLO Operativo"
                   className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent text-sm"
                 />
-                <p className="text-xs text-gray-500 mt-1">Este valor se guarda en el campo "Origen" de cada proveedor</p>
+                <p className="text-xs text-gray-500 mt-1">Se guarda en UPPERCASE. El cliente se detecta automáticamente si coincide con el nombre.</p>
               </div>
 
               {/* Cliente */}
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Cliente asociado (IDCOMPANIA) <span className="text-red-500">*</span></label>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Cliente asociado (opcional, autodetectado)</label>
                 <select
                   value={clientId}
                   onChange={(e) => setClientId(e.target.value)}
                   className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent text-sm bg-white cursor-pointer"
                 >
-                  <option value="">Seleccionar cliente...</option>
+                  <option value="">Autodetectar por origen...</option>
                   {clients.map(c => (
                     <option key={c.id} value={c.id}>{c.name}</option>
                   ))}
                 </select>
+                {clientId && (
+                  <p className="text-xs text-teal-600 mt-1">
+                    <i className="ri-check-line"></i> Cliente seleccionado: {clients.find(c => c.id === clientId)?.name}
+                  </p>
+                )}
               </div>
 
               {/* JSON Input */}
@@ -242,6 +257,7 @@ export default function ProviderSyncModal({ orgId, onClose, onSyncDone }: Provid
                   <li><strong>Crear nuevos:</strong> Los que no existen se crean automáticamente</li>
                   <li><strong>Desactivar obsoletos:</strong> Proveedores SRO que no están en la API y <strong>no tienen reservas</strong> se desactivan</li>
                   <li><strong>Conservar usados:</strong> Proveedores con al menos 1 reserva se mantienen activos</li>
+                  <li><strong>Origen:</strong> Se guarda siempre en UPPERCASE</li>
                 </ul>
               </div>
             </div>
@@ -256,7 +272,7 @@ export default function ProviderSyncModal({ orgId, onClose, onSyncDone }: Provid
                   <p className="text-xs text-teal-600 mt-0.5">Proveedores de la API</p>
                 </div>
                 <div className="bg-gray-50 rounded-xl p-3 text-center">
-                  <p className="text-2xl font-bold text-gray-800">{source}</p>
+                  <p className="text-2xl font-bold text-gray-800">{source.trim().toUpperCase()}</p>
                   <p className="text-xs text-gray-500 mt-0.5">Origen</p>
                 </div>
                 <div className="bg-gray-50 rounded-xl p-3 text-center">
@@ -446,7 +462,7 @@ export default function ProviderSyncModal({ orgId, onClose, onSyncDone }: Provid
                 <button
                   type="button"
                   onClick={handleParse}
-                  disabled={!jsonText.trim() || !source.trim() || !clientId}
+                  disabled={!jsonText.trim() || !source.trim()}
                   className="flex items-center gap-2 px-5 py-2 bg-teal-600 text-white rounded-lg hover:bg-teal-700 transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap cursor-pointer"
                 >
                   <i className="ri-eye-line w-4 h-4 flex items-center justify-center"></i>
