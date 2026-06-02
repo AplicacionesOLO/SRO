@@ -5,6 +5,7 @@ import { calendarService, type DockTimeBlock, type Dock } from '../../../service
 import { ConfirmModal } from '../../../components/base/ConfirmModal';
 import BlockModal from './BlockModal';
 import { formatInWarehouseTimezone } from '../../../utils/timezoneUtils';
+import { supabase } from '../../../lib/supabase';
 
 type FilterType = 'all' | 'manual' | 'client';
 type FilterStatus = 'all' | 'active' | 'past';
@@ -31,12 +32,69 @@ const formatDateShort = (dt: string, timezone?: string) => {
   });
 };
 
+// ─── QR Regeneration Tool ────────────────────────────────────────────────────
+interface QRRebuildState {
+  status: 'idle' | 'running' | 'done' | 'error';
+  processed: number;
+  succeeded: number;
+  failed: number;
+  remaining: number;
+  message: string;
+}
+
 export default function BlocksManagementTab() {
   const { can, orgId } = usePermissions();
   const { allowedWarehouseIds, loading: scopeLoading } = useUserScope();
 
   const [blocks, setBlocks] = useState<DockTimeBlock[]>([]);
   const [docks, setDocks] = useState<Dock[]>([]);
+
+  // ── QR Rebuild tool state ──────────────────────────────────────────────────
+  const [qrRebuildState, setQrRebuildState] = useState<QRRebuildState>({
+    status: 'idle',
+    processed: 0,
+    succeeded: 0,
+    failed: 0,
+    remaining: 0,
+    message: '',
+  });
+  const [showQrTool, setShowQrTool] = useState(false);
+
+  const handleRunQRRebuild = async () => {
+    setQrRebuildState({ status: 'running', processed: 0, succeeded: 0, failed: 0, remaining: 0, message: 'Generando QRs faltantes...' });
+    try {
+      const { data, error } = await supabase.functions.invoke('generate-missing-qrs', {
+        body: { batch_size: 50, days_back: 180 },
+      });
+
+      if (error) throw new Error(error.message || 'Error al ejecutar la función');
+
+      const result = data as {
+        processed: number;
+        succeeded: number;
+        failed: number;
+        remaining: number;
+        message: string;
+      };
+
+      setQrRebuildState({
+        status: 'done',
+        processed: result.processed || 0,
+        succeeded: result.succeeded || 0,
+        failed: result.failed || 0,
+        remaining: result.remaining || 0,
+        message: result.remaining > 0
+          ? `Quedan ${result.remaining} reservas sin QR. Ejecutá nuevamente para continuar.`
+          : 'Todas las reservas ya tienen QR generado.',
+      });
+    } catch (err: any) {
+      setQrRebuildState(prev => ({
+        ...prev,
+        status: 'error',
+        message: err?.message || 'Error desconocido al generar QRs.',
+      }));
+    }
+  };
   const [loading, setLoading] = useState(true);
 
   // Filtros
@@ -253,16 +311,125 @@ export default function BlocksManagementTab() {
             {filteredBlocks.length} bloqueo{filteredBlocks.length !== 1 ? 's' : ''} encontrado{filteredBlocks.length !== 1 ? 's' : ''}
           </p>
         </div>
-        {canCreate && (
-          <button
-            onClick={handleCreate}
-            className="px-4 py-2 bg-gray-800 text-white rounded-lg hover:bg-gray-900 font-medium whitespace-nowrap cursor-pointer"
-          >
-            <i className="ri-add-line mr-2 w-4 h-4 inline-flex items-center justify-center"></i>
-            Nuevo Bloqueo
-          </button>
-        )}
+        <div className="flex items-center gap-2">
+          {/* Herramienta de regeneración de QRs */}
+          {can('admin.matrix.update') && (
+            <button
+              onClick={() => setShowQrTool(v => !v)}
+              className="px-3 py-2 bg-amber-50 border border-amber-200 text-amber-700 rounded-lg hover:bg-amber-100 text-sm font-medium whitespace-nowrap cursor-pointer flex items-center gap-2"
+              title="Herramienta para generar QRs en reservas recurrentes que no los tienen"
+            >
+              <i className="ri-qr-code-line w-4 h-4 flex items-center justify-center"></i>
+              Generar QRs faltantes
+            </button>
+          )}
+          {canCreate && (
+            <button
+              onClick={handleCreate}
+              className="px-4 py-2 bg-gray-800 text-white rounded-lg hover:bg-gray-900 font-medium whitespace-nowrap cursor-pointer"
+            >
+              <i className="ri-add-line mr-2 w-4 h-4 inline-flex items-center justify-center"></i>
+              Nuevo Bloqueo
+            </button>
+          )}
+        </div>
       </div>
+
+      {/* Panel de herramienta QR */}
+      {showQrTool && can('admin.matrix.update') && (
+        <div className="bg-amber-50 border border-amber-200 rounded-xl p-5 space-y-4">
+          <div className="flex items-start gap-3">
+            <div className="w-10 h-10 flex items-center justify-center bg-amber-100 rounded-lg flex-shrink-0">
+              <i className="ri-qr-code-line text-amber-700 text-xl"></i>
+            </div>
+            <div className="flex-1 min-w-0">
+              <h3 className="text-sm font-bold text-amber-900">Generar QRs para reservas recurrentes</h3>
+              <p className="text-xs text-amber-700 mt-1">
+                Las reservas creadas por recurrencia no tenían QR propio: todas usaban el QR de la reserva original,
+                lo que causaba que el módulo IN/OUT registrara todo contra la misma reserva.
+                Esta herramienta genera un QR único para cada reserva que no tiene uno todavía (los últimos 180 días).
+              </p>
+            </div>
+          </div>
+
+          {qrRebuildState.status === 'idle' && (
+            <div className="flex items-center justify-between">
+              <p className="text-xs text-amber-700">Procesa hasta 50 reservas por lote. Si quedan pendientes, ejecutá nuevamente.</p>
+              <button
+                onClick={handleRunQRRebuild}
+                className="px-4 py-2 bg-amber-600 text-white rounded-lg hover:bg-amber-700 text-sm font-medium whitespace-nowrap cursor-pointer flex items-center gap-2"
+              >
+                <i className="ri-refresh-line w-4 h-4 flex items-center justify-center"></i>
+                Generar QRs ahora
+              </button>
+            </div>
+          )}
+
+          {qrRebuildState.status === 'running' && (
+            <div className="flex items-center gap-3 py-2">
+              <i className="ri-loader-4-line animate-spin text-amber-700 text-xl w-5 h-5 flex items-center justify-center"></i>
+              <p className="text-sm text-amber-800 font-medium">Generando QRs... esto puede tomar unos segundos.</p>
+            </div>
+          )}
+
+          {qrRebuildState.status === 'done' && (
+            <div className="space-y-3">
+              <div className="flex items-center gap-4 bg-white border border-amber-200 rounded-lg p-3">
+                <div className="text-center">
+                  <p className="text-2xl font-bold text-teal-700">{qrRebuildState.succeeded}</p>
+                  <p className="text-xs text-gray-500">QRs generados</p>
+                </div>
+                {qrRebuildState.failed > 0 && (
+                  <div className="text-center">
+                    <p className="text-2xl font-bold text-red-600">{qrRebuildState.failed}</p>
+                    <p className="text-xs text-gray-500">Con error</p>
+                  </div>
+                )}
+                {qrRebuildState.remaining > 0 && (
+                  <div className="text-center">
+                    <p className="text-2xl font-bold text-amber-600">{qrRebuildState.remaining}</p>
+                    <p className="text-xs text-gray-500">Pendientes</p>
+                  </div>
+                )}
+              </div>
+              <p className="text-xs text-amber-700">{qrRebuildState.message}</p>
+              <div className="flex items-center gap-2">
+                {qrRebuildState.remaining > 0 && (
+                  <button
+                    onClick={handleRunQRRebuild}
+                    className="px-3 py-1.5 bg-amber-600 text-white rounded-lg hover:bg-amber-700 text-sm font-medium whitespace-nowrap cursor-pointer flex items-center gap-2"
+                  >
+                    <i className="ri-refresh-line w-4 h-4 flex items-center justify-center"></i>
+                    Continuar generando
+                  </button>
+                )}
+                <button
+                  onClick={() => setQrRebuildState({ status: 'idle', processed: 0, succeeded: 0, failed: 0, remaining: 0, message: '' })}
+                  className="px-3 py-1.5 border border-amber-300 text-amber-700 rounded-lg hover:bg-amber-100 text-sm font-medium whitespace-nowrap cursor-pointer"
+                >
+                  Reiniciar
+                </button>
+              </div>
+            </div>
+          )}
+
+          {qrRebuildState.status === 'error' && (
+            <div className="space-y-2">
+              <div className="flex items-center gap-2 p-3 bg-red-50 border border-red-200 rounded-lg">
+                <i className="ri-error-warning-line text-red-600 flex-shrink-0"></i>
+                <p className="text-sm text-red-700">{qrRebuildState.message}</p>
+              </div>
+              <button
+                onClick={handleRunQRRebuild}
+                className="px-3 py-1.5 bg-amber-600 text-white rounded-lg hover:bg-amber-700 text-sm font-medium whitespace-nowrap cursor-pointer flex items-center gap-2"
+              >
+                <i className="ri-refresh-line w-4 h-4 flex items-center justify-center"></i>
+                Reintentar
+              </button>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Filtros */}
       <div className="bg-white border border-gray-200 rounded-lg p-4">

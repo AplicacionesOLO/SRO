@@ -3,6 +3,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { supabase } from '../../../lib/supabase';
 import { usePermissions } from '../../../hooks/usePermissions';
 import { useActiveWarehouse } from '../../../contexts/ActiveWarehouseContext';
+import { useUserScope } from '../../../hooks/useUserScope';
 import { countriesService } from '../../../services/countriesService';
 import { warehousesService } from '../../../services/warehousesService';
 import { userAccessService } from '../../../services/userAccessService';
@@ -10,6 +11,7 @@ import { providersService } from '../../../services/providersService';
 import { userProvidersService } from '../../../services/userProvidersService';
 import { userClientsService } from '../../../services/userClientsService';
 import { ConfirmModal } from '../../../components/base/ConfirmModal';
+import { Pagination } from '../../../components/base/Pagination';
 import WarehousePageHeader from '../../../components/feature/WarehousePageHeader';
 import { useFormDraft, saveGenericDraft } from '../../../hooks/useReservationDraft';
 import type { Provider } from '../../../types/catalog';
@@ -63,6 +65,7 @@ export default function UsuariosPage() {
     setActiveWarehouseId,
     loading: warehouseLoading,
   } = useActiveWarehouse();
+  const { isGlobalAccess, allowedWarehouseIds } = useUserScope();
 
   const [users, setUsers] = useState<User[]>([]);
   const [allUsers, setAllUsers] = useState<User[]>([]);
@@ -111,6 +114,10 @@ export default function UsuariosPage() {
   const [selectedClientIds, setSelectedClientIds] = useState<string[]>([]);
   const [clientSearchTerm, setClientSearchTerm] = useState('');
   const [clientsLoading, setClientsLoading] = useState(false);
+
+  // Conteo sutil de usuarios por cliente (visible solo para admin/full access del almacén activo)
+  const [clientUserCounts, setClientUserCounts] = useState<{ id: string; name: string; count: number }[]>([]);
+  const [clientCountsLoading, setClientCountsLoading] = useState(false);
 
   // ✅ NUEVO: Estados para popups y confirmaciones
   const [popup, setPopup] = useState<{
@@ -390,6 +397,59 @@ export default function UsuariosPage() {
     }
   }, [orgId, ensureSession]);
 
+  // Guard de visibilidad para conteos por cliente: solo admin/full access con acceso al almacén activo
+  const canSeeClientCounts = isGlobalAccess || (
+    activeWarehouseId !== null &&
+    allowedWarehouseIds !== null &&
+    allowedWarehouseIds.includes(activeWarehouseId)
+  );
+
+  // Carga conteo de usuarios por cliente para los usuarios visibles actualmente
+  const loadClientUserCounts = useCallback(async () => {
+    if (!canSeeClientCounts || !orgId || users.length === 0) {
+      setClientUserCounts([]);
+      return;
+    }
+    setClientCountsLoading(true);
+    try {
+      const userIds = users.map(u => u.id);
+      const { data: rows, error } = await supabase
+        .from('user_clients')
+        .select('client_id, clients!inner(id, name)')
+        .eq('org_id', orgId)
+        .in('user_id', userIds);
+
+      if (error) {
+        setClientUserCounts([]);
+        return;
+      }
+
+      const counts = new Map<string, { id: string; name: string; count: number }>();
+      for (const row of (rows ?? []) as any[]) {
+        const client = row.clients;
+        if (!client) continue;
+        const existing = counts.get(client.id);
+        if (existing) {
+          existing.count += 1;
+        } else {
+          counts.set(client.id, { id: client.id, name: client.name, count: 1 });
+        }
+      }
+
+      const sorted = Array.from(counts.values()).sort((a, b) => b.count - a.count);
+      setClientUserCounts(sorted);
+    } catch {
+      setClientUserCounts([]);
+    } finally {
+      setClientCountsLoading(false);
+    }
+  }, [orgId, users, canSeeClientCounts]);
+
+  // Recargar conteos cada vez que cambian los usuarios visibles
+  useEffect(() => {
+    loadClientUserCounts();
+  }, [loadClientUserCounts]);
+
   useEffect(() => {
     const run = async () => {
       if (permissionsLoading || !orgId) {
@@ -484,6 +544,15 @@ export default function UsuariosPage() {
   // ─── Búsqueda en la lista de usuarios ────────────────────────────────────
   const [searchTerm, setSearchTerm] = useState('');
   const [searchFocused, setSearchFocused] = useState(false);
+
+  // ─── Paginación ──────────────────────────────────────────────────────────
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
+
+  // Resetear a página 1 cuando cambian filtros o tamaño de página
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchTerm, activeWarehouseId, warehouseUserIds, pageSize]);
 
   // ✅ NUEVO: Estado para manejar el userId recién creado
   const [newlyCreatedUserId, setNewlyCreatedUserId] = useState<string | null>(null);
@@ -1041,6 +1110,10 @@ export default function UsuariosPage() {
       )
     : users;
 
+  const totalPages = Math.max(1, Math.ceil(displayedUsers.length / pageSize));
+  const startIndex = (currentPage - 1) * pageSize;
+  const paginatedUsers = displayedUsers.slice(startIndex, startIndex + pageSize);
+
   return (
     <div className="p-6">
       {/* Popups */}
@@ -1192,6 +1265,30 @@ export default function UsuariosPage() {
         </div>
       )}
 
+      {/* Conteo sutil de usuarios por cliente — solo visible para admin/full access del almacén */}
+      {canSeeClientCounts && clientUserCounts.length > 0 && (
+        <div className="mb-4 flex items-center gap-2 flex-wrap">
+          <span className="text-xs text-gray-400 mr-1">Usuarios por cliente:</span>
+          {clientUserCounts.map((c) => (
+            <span
+              key={c.id}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-gray-100 border border-gray-200 rounded-md text-xs text-gray-600"
+              title={`${c.name}: ${c.count} usuario${c.count !== 1 ? 's' : ''}`}
+            >
+              <span className="text-gray-500">{c.name}</span>
+              <span className="w-px h-3 bg-gray-300"></span>
+              <span className="font-medium text-gray-700">{c.count}</span>
+            </span>
+          ))}
+        </div>
+      )}
+      {canSeeClientCounts && clientCountsLoading && clientUserCounts.length === 0 && (
+        <div className="mb-4 flex items-center gap-2">
+          <div className="w-3 h-3 rounded-full border-b border-gray-400 animate-spin"></div>
+          <span className="text-xs text-gray-400">Cargando conteos por cliente...</span>
+        </div>
+      )}
+
       <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full">
@@ -1212,7 +1309,7 @@ export default function UsuariosPage() {
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
-              {displayedUsers.map((user) => (
+              {paginatedUsers.map((user) => (
                 <tr key={user.id} className="hover:bg-gray-50">
                   <td className="px-6 py-4 whitespace-nowrap">
                     <div className="flex items-center gap-3">
@@ -1328,6 +1425,18 @@ export default function UsuariosPage() {
             <p className="text-gray-500">No se pudieron cargar los usuarios</p>
             <p className="text-sm text-gray-400 mt-1">Podés crear nuevos usuarios usando el botón de arriba</p>
           </div>
+        )}
+
+        {/* Pagination */}
+        {displayedUsers.length > 0 && (
+          <Pagination
+            currentPage={currentPage}
+            totalPages={totalPages}
+            pageSize={pageSize}
+            totalItems={displayedUsers.length}
+            onPageChange={setCurrentPage}
+            onPageSizeChange={setPageSize}
+          />
         )}
       </div>
 

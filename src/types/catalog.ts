@@ -4,6 +4,10 @@ export interface Provider {
   name: string;
   active: boolean;
   provider_type: 'almacenaje' | 'pesado';
+  provider_code?: string | null;
+  source?: string | null;
+  /** UUID del cliente SRO que corresponde al IDCOMPANIA del sistema externo */
+  client_id?: string | null;
   created_by?: string;
   created_at?: string;
   updated_by?: string;

@@ -158,7 +158,7 @@ Deno.serve(async (req) => {
     // --- DATA query ---
     let dataQuery = supabase
       .from('providers')
-      .select('id, org_id, name, active')
+      .select('id, org_id, name, active, provider_type, provider_code, source, client_id')
       .eq('org_id', orgId!)
       .order('name', { ascending: true })
       .range(offset, offset + pageSize - 1);

@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { providersService } from '../../../../services/providersService';
 import { warehousesService } from '../../../../services/warehousesService';
+import { clientsService } from '../../../../services/clientsService';
 import type { Provider } from '../../../../types/catalog';
 import { useFormDraft, getDraftAge } from '../../../../hooks/useReservationDraft';
 import { ConfirmModal } from '../../../../components/base/ConfirmModal';
@@ -22,7 +23,10 @@ export default function ProviderModal({ orgId, warehouseId, provider, onClose, o
   const [formData, setFormData] = useState({
     name: provider?.name || '',
     active: provider?.active ?? true,
-    provider_type: provider?.provider_type || 'almacenaje'
+    provider_type: provider?.provider_type || 'almacenaje',
+    provider_code: provider?.provider_code || '',
+    source: provider?.source || '',
+    client_id: provider?.client_id || '',
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -32,6 +36,9 @@ export default function ProviderModal({ orgId, warehouseId, provider, onClose, o
   const [selectedWarehouseIds, setSelectedWarehouseIds] = useState<string[]>([]);
   const [warehousesLoading, setWarehousesLoading] = useState(false);
 
+  // Clientes disponibles para vincular (IDCOMPANIA)
+  const [clients, setClients] = useState<{ id: string; name: string }[]>([]);
+
   // ── Draft persistence ─────────────────────────────────────────────────────
   const isNewRecord = !provider;
   const DRAFT_KEY = `draft_provider_${orgId}_new`;
@@ -40,7 +47,7 @@ export default function ProviderModal({ orgId, warehouseId, provider, onClose, o
   const [draftAgeLabel, setDraftAgeLabel] = useState('');
   const { saveDraft, clearDraft, readDraft } = useFormDraft<typeof formData>({ storageKey: DRAFT_KEY, isNewRecord });
 
-  // Cargar almacenes disponibles
+  // Cargar almacenes y clientes disponibles
   useEffect(() => {
     if (!orgId) return;
     setWarehousesLoading(true);
@@ -48,12 +55,15 @@ export default function ProviderModal({ orgId, warehouseId, provider, onClose, o
       .then(data => setWarehouses(data.map(w => ({ id: w.id, name: w.name }))))
       .catch(() => setWarehouses([]))
       .finally(() => setWarehousesLoading(false));
+    clientsService.listClients(orgId)
+      .then(data => setClients(data.map(c => ({ id: c.id, name: c.name }))))
+      .catch(() => setClients([]));
   }, [orgId]);
 
   // Cargar almacenes asignados al editar
   useEffect(() => {
     if (provider) {
-      setFormData({ name: provider.name, active: provider.active, provider_type: provider.provider_type || 'almacenaje' });
+      setFormData({ name: provider.name, active: provider.active, provider_type: provider.provider_type || 'almacenaje', provider_code: provider.provider_code || '', source: provider.source || '', client_id: provider.client_id || '' });
       setShowDraftBanner(false);
       // Cargar warehouses asignados
       providersService.getProviderWarehouses(orgId, provider.id)
@@ -66,7 +76,7 @@ export default function ProviderModal({ orgId, warehouseId, provider, onClose, o
         setDraftAgeLabel(getDraftAge(draft.savedAt));
         setShowDraftBanner(true);
       } else {
-        setFormData({ name: '', active: true, provider_type: 'almacenaje' });
+        setFormData({ name: '', active: true, provider_type: 'almacenaje', provider_code: '', source: '', client_id: '' });
         setShowDraftBanner(false);
       }
       // Pre-seleccionar almacén activo si hay uno
@@ -122,11 +132,14 @@ export default function ProviderModal({ orgId, warehouseId, provider, onClose, o
         await providersService.updateProvider(provider.id, {
           name: formData.name.trim(),
           active: formData.active,
-          provider_type: formData.provider_type
+          provider_type: formData.provider_type,
+          provider_code: formData.provider_code.trim() || null,
+          source: formData.source.trim() || null,
+          client_id: formData.client_id || null,
         });
         savedProviderId = provider.id;
       } else {
-        const created = await providersService.createProvider(orgId, formData.name.trim(), formData.provider_type);
+        const created = await providersService.createProvider(orgId, formData.name.trim(), formData.provider_type, formData.provider_code.trim() || null, formData.source.trim() || null, formData.client_id || null);
         savedProviderId = created.id;
       }
 
@@ -167,7 +180,7 @@ export default function ProviderModal({ orgId, warehouseId, provider, onClose, o
                       className="px-3 py-1 text-xs font-semibold bg-teal-600 text-white rounded-lg hover:bg-teal-700 whitespace-nowrap">
                       Continuar
                     </button>
-                    <button type="button" onClick={() => { clearDraft(); setFormData({ name: '', active: true, provider_type: 'almacenaje' }); setShowDraftBanner(false); }}
+                    <button type="button" onClick={() => { clearDraft(); setFormData({ name: '', active: true, provider_type: 'almacenaje', provider_code: '', source: '', client_id: '' }); setShowDraftBanner(false); }}
                       className="px-3 py-1 text-xs border border-gray-300 bg-white text-gray-700 rounded-lg hover:bg-gray-50 whitespace-nowrap">
                       Descartar
                     </button>
@@ -185,6 +198,38 @@ export default function ProviderModal({ orgId, warehouseId, provider, onClose, o
             <input type="text" value={formData.name} onChange={(e) => setFormData({ ...formData, name: e.target.value })}
               className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent text-sm"
               placeholder="Nombre del proveedor" required />
+          </div>
+
+          {/* Código de proveedor */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">Código</label>
+            <input type="text" value={formData.provider_code} onChange={(e) => setFormData({ ...formData, provider_code: e.target.value })}
+              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent text-sm"
+              placeholder="Ej: PROV-001" />
+          </div>
+
+          {/* Origen */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">Origen</label>
+            <input type="text" value={formData.source} onChange={(e) => setFormData({ ...formData, source: e.target.value })}
+              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent text-sm"
+              placeholder="Ej: EPA, Cofersa, API..." />
+          </div>
+
+          {/* Cliente asociado (IDCOMPANIA) */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">Cliente asociado</label>
+            <p className="text-xs text-gray-500 mb-2">Vincula este proveedor al cliente que lo gestiona (equivalente al IDCOMPANIA del sistema externo)</p>
+            <select
+              value={formData.client_id}
+              onChange={(e) => setFormData({ ...formData, client_id: e.target.value })}
+              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent text-sm bg-white cursor-pointer"
+            >
+              <option value="">Sin cliente asociado</option>
+              {clients.map(c => (
+                <option key={c.id} value={c.id}>{c.name}</option>
+              ))}
+            </select>
           </div>
 
           {/* Estado (solo al editar) */}

@@ -132,8 +132,21 @@ Deno.serve(async (req) => {
       });
     }
 
+    // ── RESOLVE CLIENT_ID FROM DOCK IF NOT PROVIDED ───────────────────────
+    let effectiveClientId: string | null = client_id || null;
+    if (!effectiveClientId && dock_id) {
+      const { data: clientDock } = await supabase
+        .from('client_docks')
+        .select('client_id')
+        .eq('dock_id', dock_id)
+        .maybeSingle();
+      if (clientDock?.client_id) {
+        effectiveClientId = clientDock.client_id;
+      }
+    }
+
     // ── SAME-DAY CUTOFF VALIDATION ────────────────────────────────────────
-    if (client_id && UUID_REGEX.test(client_id)) {
+    if (effectiveClientId && UUID_REGEX.test(effectiveClientId)) {
       const startDate = new Date(start_datetime);
 
       // Get warehouse info from dock
@@ -162,7 +175,7 @@ Deno.serve(async (req) => {
             .from('client_rules')
             .select('same_day_cutoff_enabled, same_day_cutoff_hours')
             .eq('org_id', org_id)
-            .eq('client_id', client_id)
+            .eq('client_id', effectiveClientId)
             .maybeSingle();
 
           const enabled = ruleData?.same_day_cutoff_enabled ?? false;
@@ -174,7 +187,7 @@ Deno.serve(async (req) => {
               .from('client_same_day_bypass_users')
               .select('user_id')
               .eq('org_id', org_id)
-              .eq('client_id', client_id);
+              .eq('client_id', effectiveClientId);
 
             const bypassList = (bypassUsers || []).map((r: any) => r.user_id);
             const hasBypass = bypassList.includes(userId);

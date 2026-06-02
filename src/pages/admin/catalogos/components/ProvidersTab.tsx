@@ -1,9 +1,12 @@
 import { useState, useEffect } from 'react';
 import { usePermissions } from '../../../../hooks/usePermissions';
 import { providersService } from '../../../../services/providersService';
+import { clientsService } from '../../../../services/clientsService';
 import type { Provider } from '../../../../types/catalog';
 import ProviderModal from './ProviderModal';
 import ProviderBulkImportModal from './ProviderBulkImportModal';
+import ProviderSyncModal from './ProviderSyncModal';
+import ProviderExcelSyncModal from './ProviderExcelSyncModal';
 
 interface ProvidersTabProps {
   orgId: string;
@@ -18,9 +21,12 @@ export default function ProvidersTab({ orgId, warehouseId }: ProvidersTabProps) 
   const [searchTerm, setSearchTerm] = useState('');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isBulkImportOpen, setIsBulkImportOpen] = useState(false);
+  const [isSyncOpen, setIsSyncOpen] = useState(false);
+  const [isExcelSyncOpen, setIsExcelSyncOpen] = useState(false);
   const [editingProvider, setEditingProvider] = useState<Provider | undefined>();
   const [error, setError] = useState<string | undefined>();
   const [assignments, setAssignments] = useState<Record<string, string>>({});
+  const [clientsMap, setClientsMap] = useState<Record<string, string>>({});
 
   const canRead = can('providers.view');
   const canCreate = can('providers.create');
@@ -28,8 +34,16 @@ export default function ProvidersTab({ orgId, warehouseId }: ProvidersTabProps) 
   const canDelete = can('providers.delete');
 
   useEffect(() => {
-    if (canRead) loadProviders();
-    else setLoading(false);
+    if (canRead) {
+      loadProviders();
+      clientsService.listClients(orgId)
+        .then(data => {
+          const map: Record<string, string> = {};
+          data.forEach(c => { map[c.id] = c.name; });
+          setClientsMap(map);
+        })
+        .catch(() => setClientsMap({}));
+    } else setLoading(false);
   }, [orgId, warehouseId, showOnlyActive, canRead]);
 
   const loadProviders = async () => {
@@ -124,6 +138,20 @@ export default function ProvidersTab({ orgId, warehouseId }: ProvidersTabProps) 
         {canCreate && (
           <div className="flex items-center gap-2">
             <button
+              onClick={() => setIsExcelSyncOpen(true)}
+              className="flex items-center gap-2 px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors whitespace-nowrap cursor-pointer text-sm"
+            >
+              <i className="ri-file-excel-2-line w-5 h-5 flex items-center justify-center"></i>
+              Sincronizar Excel
+            </button>
+            <button
+              onClick={() => setIsSyncOpen(true)}
+              className="flex items-center gap-2 px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors whitespace-nowrap cursor-pointer text-sm"
+            >
+              <i className="ri-refresh-line w-5 h-5 flex items-center justify-center"></i>
+              Sincronizar API
+            </button>
+            <button
               onClick={() => setIsBulkImportOpen(true)}
               className="flex items-center gap-2 px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors whitespace-nowrap cursor-pointer text-sm"
             >
@@ -155,6 +183,9 @@ export default function ProvidersTab({ orgId, warehouseId }: ProvidersTabProps) 
           <table className="w-full">
             <thead>
               <tr className="border-b border-gray-200">
+                <th className="text-left py-3 px-4 text-sm font-semibold text-gray-700">Origen</th>
+                <th className="text-left py-3 px-4 text-sm font-semibold text-gray-700">Código</th>
+                <th className="text-left py-3 px-4 text-sm font-semibold text-gray-700">Cliente</th>
                 <th className="text-left py-3 px-4 text-sm font-semibold text-gray-700">Nombre</th>
                 <th className="text-left py-3 px-4 text-sm font-semibold text-gray-700">Asignado a</th>
                 <th className="text-left py-3 px-4 text-sm font-semibold text-gray-700">Estado</th>
@@ -168,6 +199,17 @@ export default function ProvidersTab({ orgId, warehouseId }: ProvidersTabProps) 
                 const isUnassigned = !assignmentText || assignmentText === 'Sin asignación';
                 return (
                 <tr key={provider.id} className="border-b border-gray-100 hover:bg-gray-50">
+                  <td className="py-3 px-4 text-sm text-gray-600 whitespace-nowrap">{provider.source || <span className="text-gray-300">—</span>}</td>
+                  <td className="py-3 px-4 text-sm text-gray-600 whitespace-nowrap">{provider.provider_code || <span className="text-gray-300">—</span>}</td>
+                  <td className="py-3 px-4 text-sm whitespace-nowrap">
+                    {provider.client_id && clientsMap[provider.client_id] ? (
+                      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-teal-50 text-teal-700 border border-teal-200">
+                        {clientsMap[provider.client_id]}
+                      </span>
+                    ) : (
+                      <span className="text-gray-300">—</span>
+                    )}
+                  </td>
                   <td className="py-3 px-4 text-sm text-gray-900 font-medium whitespace-nowrap">{provider.name}</td>
                   <td className="py-3 px-4 text-sm max-w-xs">
                     {assignmentText === undefined ? (
@@ -223,6 +265,19 @@ export default function ProvidersTab({ orgId, warehouseId }: ProvidersTabProps) 
           orgId={orgId}
           onClose={() => setIsBulkImportOpen(false)}
           onImportDone={loadProviders}
+        />
+      )}
+      {isSyncOpen && (
+        <ProviderSyncModal
+          orgId={orgId}
+          onClose={() => setIsSyncOpen(false)}
+          onSyncDone={loadProviders}
+        />
+      )}
+      {isExcelSyncOpen && (
+        <ProviderExcelSyncModal
+          onClose={() => { setIsExcelSyncOpen(false); loadProviders(); }}
+          onDone={() => {}}
         />
       )}
     </div>

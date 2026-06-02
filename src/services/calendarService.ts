@@ -1115,6 +1115,20 @@ export const calendarService = {
       try {
         const created = await this.createReservation(payload);
         created_reservations.push(created);
+
+        // ✅ Generar QR ÚNICO para cada ocurrencia recurrente.
+        // Cada reserva necesita su propio QR con su propio reservation_id.
+        // Si no se hace, el QR de la primera reserva se usa para todas las fechas
+        // y el módulo IN/OUT registra todo contra la misma reserva.
+        if (baseReservation.org_id && created.id) {
+          // Lanzar en paralelo — no bloquear la creación de siguientes ocurrencias
+          Promise.all([
+            ensureReservationQR(baseReservation.org_id, created.id).catch(() => null),
+            ensureReservationQRCard(baseReservation.org_id, created.id).catch(() => null),
+          ]).catch(() => {
+            // no-op: fallo silencioso, el QR se puede regenerar manualmente
+          });
+        }
       } catch (err: any) {
         const code = err?.code as string | undefined;
         const msg = (err?.message || '').toLowerCase();

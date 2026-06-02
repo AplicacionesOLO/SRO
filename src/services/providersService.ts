@@ -1,7 +1,75 @@
 import { supabase } from '../lib/supabase';
 import type { Provider, ProviderWithClients } from '../types/catalog';
 
+export interface SyncProviderPayload {
+  code: string;
+  name: string;
+  short_name?: string;
+  provider_type?: 'almacenaje' | 'pesado';
+}
+
+export interface SyncProviderResult {
+  summary: {
+    total_api: number;
+    matched: number;
+    updated: number;
+    created: number;
+    deactivated: number;
+    preserved: number;
+    errors: number;
+  };
+  details: {
+    matched: any[];
+    created: any[];
+    updated: any[];
+    deactivated: any[];
+    preserved: any[];
+    errors: any[];
+  };
+}
+
 export const providersService = {
+  /**
+   * Contar reservas de un proveedor (shipper_provider + reservation_consolidated_providers).
+   */
+  async getReservationCount(orgId: string, providerId: string): Promise<number> {
+    const { count: resCount } = await supabase
+      .from('reservations')
+      .select('id', { count: 'exact', head: true })
+      .eq('org_id', orgId)
+      .eq('shipper_provider', providerId);
+
+    const { count: consCount } = await supabase
+      .from('reservation_consolidated_providers')
+      .select('id', { count: 'exact', head: true })
+      .eq('provider_id', providerId);
+
+    return (resCount || 0) + (consCount || 0);
+  },
+
+  /**
+   * Sincronizar proveedores desde API externa.
+   * Invoca la Edge Function sync-providers.
+   */
+  async syncProviders(
+    orgId: string,
+    source: string,
+    clientId: string,
+    providers: SyncProviderPayload[]
+  ): Promise<SyncProviderResult> {
+    const { data, error } = await supabase.functions.invoke('sync-providers', {
+      body: {
+        org_id: orgId,
+        source: source,
+        client_id: clientId,
+        providers: providers,
+      },
+    });
+
+    if (error) throw error;
+    return data as SyncProviderResult;
+  },
+
   async getAll(orgId: string): Promise<Provider[]> {
     const pageSize = 1000;
     let from = 0;
@@ -10,7 +78,7 @@ export const providersService = {
     while (true) {
       const { data, error } = await supabase
         .from('providers')
-        .select('id, org_id, name, active, provider_type, created_at')
+        .select('id, org_id, name, active, provider_type, provider_code, source, client_id, created_at')
         .eq('org_id', orgId)
         .order('created_at', { ascending: false })
         .range(from, from + pageSize - 1);
@@ -32,7 +100,7 @@ export const providersService = {
     while (true) {
       const { data, error } = await supabase
         .from('providers')
-        .select('id, org_id, name, active, provider_type, created_at')
+        .select('id, org_id, name, active, provider_type, provider_code, source, client_id, created_at')
         .eq('org_id', orgId)
         .eq('active', true)
         .order('name', { ascending: true })
@@ -47,7 +115,7 @@ export const providersService = {
     return allProviders;
   },
 
-  async createProvider(orgId: string, name: string, providerType: 'almacenaje' | 'pesado' = 'almacenaje'): Promise<Provider> {
+  async createProvider(orgId: string, name: string, providerType: 'almacenaje' | 'pesado' = 'almacenaje', providerCode?: string | null, source?: string | null, clientId?: string | null): Promise<Provider> {
     //console.log('[providersService] Creating provider:', { orgId, name, providerType });
     
     const { data, error } = await supabase
@@ -56,9 +124,12 @@ export const providersService = {
         org_id: orgId,
         name: name.trim(),
         active: true,
-        provider_type: providerType
+        provider_type: providerType,
+        provider_code: providerCode?.trim() || null,
+        source: source?.trim() || null,
+        client_id: clientId || null,
       })
-      .select('id, org_id, name, active, provider_type, created_at')
+      .select('id, org_id, name, active, provider_type, provider_code, source, client_id, created_at')
       .single();
 
     if (error) {
@@ -76,14 +147,14 @@ export const providersService = {
     return data;
   },
 
-  async updateProvider(id: string, updates: Partial<Pick<Provider, 'name' | 'active' | 'provider_type'>>): Promise<Provider> {
+  async updateProvider(id: string, updates: Partial<Pick<Provider, 'name' | 'active' | 'provider_type' | 'provider_code' | 'source' | 'client_id'>>): Promise<Provider> {
     //console.log('[providersService] Updating provider:', { id, updates });
     
     const { data, error } = await supabase
       .from('providers')
       .update(updates)
       .eq('id', id)
-      .select('id, org_id, name, active, provider_type, created_at')
+      .select('id, org_id, name, active, provider_type, provider_code, source, client_id, created_at')
       .single();
 
     if (error) {
@@ -147,7 +218,7 @@ export const providersService = {
     while (true) {
       let query = supabase
         .from('providers')
-        .select('id, org_id, name, active, provider_type, created_at, provider_warehouses!inner(warehouse_id)')
+        .select('id, org_id, name, active, provider_type, provider_code, source, client_id, created_at, provider_warehouses!inner(warehouse_id)')
         .eq('org_id', orgId)
         .eq('provider_warehouses.warehouse_id', warehouseId)
         .order('name', { ascending: true })
