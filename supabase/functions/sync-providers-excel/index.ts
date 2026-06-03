@@ -10,18 +10,36 @@ interface ExcelPayload {
   }>;
 }
 
-const SOURCE_TO_CLIENT_MAP: Record<string, { id: string }> = {
-  '029': { id: 'ae488aaf-706a-46fa-9251-d00a35e78384' },
-  '0029': { id: 'ae488aaf-706a-46fa-9251-d00a35e78384' },
-  'COFERSA': { id: 'ae488aaf-706a-46fa-9251-d00a35e78384' },
-  '0109': { id: 'f897b0e2-721f-498d-a5d2-800dd3755139' },
-  'EPA': { id: 'f897b0e2-721f-498d-a5d2-800dd3755139' },
-};
-
-function resolveClientBySource(source: string | null | undefined): string | null {
+async function resolveClientBySource(supabase: any, orgId: string, source: string | null | undefined): Promise<string | null> {
   if (!source) return null;
   const normalized = source.trim().toUpperCase();
-  return SOURCE_TO_CLIENT_MAP[normalized]?.id ?? null;
+  
+  // 1. Primero buscar en origen_proveedores (fuente de verdad)
+  const { data } = await supabase
+    .from('origen_proveedores')
+    .select('client_id')
+    .eq('org_id', orgId)
+    .eq('source_code', normalized)
+    .eq('is_active', true)
+    .maybeSingle();
+  
+  if (data?.client_id) return data.client_id;
+  
+  // 2. Fallback legacy para nombres de compañía
+  // El campo 'source' indica el sistema de origen de los datos:
+  //   - 'EPA'      = datos provenientes del sistema EPA (IDCOMPANIA=109, código 0109)
+  //   - 'COFERSA'  = datos provenientes del sistema COFERSA (IDCOMPANIA=29, código 029)
+  // El cliente al que pertenecen los proveedores es el opuesto al origen:
+  //   - origen EPA     → cliente Cofersa
+  //   - origen COFERSA → cliente EPA
+  const legacyMap: Record<string, string> = {
+    'COFERSA': 'f897b0e2-721f-498d-a5d2-800dd3755139',
+    'EPA':     'ae488aaf-706a-46fa-9251-d00a35e78384',
+    '0109':    'ae488aaf-706a-46fa-9251-d00a35e78384',
+    '029':     'f897b0e2-721f-498d-a5d2-800dd3755139',
+    '0029':    'f897b0e2-721f-498d-a5d2-800dd3755139',
+  };
+  return legacyMap[normalized] ?? null;
 }
 
 Deno.serve(async (req) => {
@@ -39,7 +57,6 @@ Deno.serve(async (req) => {
     const body = (await req.json()) as ExcelPayload;
     const { org_id, source, providers } = body;
     const normalizedSource = source?.trim().toUpperCase() || null;
-    const autoClientId = resolveClientBySource(normalizedSource);
 
     const supabase = createClient(
       Deno.env.get('SUPABASE_URL')!,
@@ -47,15 +64,17 @@ Deno.serve(async (req) => {
       { auth: { persistSession: false } }
     );
 
+    const autoClientId = await resolveClientBySource(supabase, org_id, normalizedSource);
+
     // 1. Traer todos los proveedores de la org
     const { data: existingProviders, error: fetchErr } = await supabase
       .from('providers')
-      .select('id, name, provider_code, active, provider_type, source, client_id')
+      .select('id, name, provider_code, active, provider_type, source, source_code, client_id')
       .eq('org_id', org_id);
 
     if (fetchErr) throw fetchErr;
 
-    const existingMap = new Map((existingProviders || []).map(p => [p.provider_code?.toUpperCase(), p]));
+    const existingMap = new Map((existingProviders || []).map((p: any) => [p.provider_code?.toUpperCase(), p]));
     const created: any[] = [];
     const updated: any[] = [];
     const preserved: any[] = [];
@@ -78,6 +97,7 @@ Deno.serve(async (req) => {
                 name: excelName,
                 provider_type: excelType,
                 source: normalizedSource,
+                source_code: normalizedSource,
                 client_id: autoClientId || existing.client_id,
               })
               .eq('id', existing.id);
@@ -96,6 +116,7 @@ Deno.serve(async (req) => {
               provider_type: excelType,
               active: true,
               source: normalizedSource,
+              source_code: normalizedSource,
               client_id: autoClientId,
             })
             .select('id')

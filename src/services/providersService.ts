@@ -28,19 +28,62 @@ export interface SyncProviderResult {
   };
 }
 
-// ── Mapeo source → client_id (usado como fallback en UI y para autodetectar) ──
-const SOURCE_TO_CLIENT_MAP: Record<string, { id: string; name: string }> = {
-  '029': { id: 'ae488aaf-706a-46fa-9251-d00a35e78384', name: 'COFERSA' },
-  '0029': { id: 'ae488aaf-706a-46fa-9251-d00a35e78384', name: 'COFERSA' },
-  'COFERSA': { id: 'ae488aaf-706a-46fa-9251-d00a35e78384', name: 'COFERSA' },
-  '0109': { id: 'f897b0e2-721f-498d-a5d2-800dd3755139', name: 'EPA' },
-  'EPA': { id: 'f897b0e2-721f-498d-a5d2-800dd3755139', name: 'EPA' },
-};
+// ── Cache en memoria de origen_proveedores para evitar N+1 queries ──
+let origenCache: Record<string, { clientId: string; name: string }> | null = null;
+let origenCacheTs = 0;
+const ORIGEN_CACHE_TTL = 60_000; // 1 minuto
 
-function resolveClientBySource(source: string | null | undefined): { id: string; name: string } | null {
+async function getOrigenProveedoresMap(orgId: string): Promise<Record<string, { clientId: string; name: string }>> {
+  const now = Date.now();
+  if (origenCache && origenCacheTs + ORIGEN_CACHE_TTL > now && (origenCache as any)._orgId === orgId) {
+    return origenCache;
+  }
+
+  const { data, error } = await supabase
+    .from('origen_proveedores')
+    .select('source_code, client_id, description')
+    .eq('org_id', orgId)
+    .eq('is_active', true);
+
+  if (error) {
+    console.error('[providersService] Error cargando origen_proveedores:', error);
+    return {};
+  }
+
+  const map: Record<string, { clientId: string; name: string }> = { _orgId: orgId } as any;
+  for (const row of (data ?? [])) {
+    const key = row.source_code?.toUpperCase().trim();
+    if (key) {
+      map[key] = { clientId: row.client_id, name: row.description || row.client_id };
+    }
+  }
+
+  origenCache = map;
+  origenCacheTs = now;
+  return map;
+}
+
+function resolveClientBySource(source: string | null | undefined, orgMap: Record<string, { clientId: string; name: string }> = {}): { id: string; name: string } | null {
   if (!source) return null;
   const normalized = source.trim().toUpperCase();
-  return SOURCE_TO_CLIENT_MAP[normalized] ?? null;
+  // Primero buscar en la tabla de origen_proveedores
+  const fromTable = orgMap[normalized];
+  if (fromTable) return { id: fromTable.clientId, name: fromTable.name };
+  // Fallback legacy para nombres de compañía
+  // El campo 'source' indica el sistema de origen de los datos:
+  //   - 'EPA'      = datos provenientes del sistema EPA (IDCOMPANIA=109, código 0109)
+  //   - 'COFERSA'  = datos provenientes del sistema COFERSA (IDCOMPANIA=29, código 029)
+  // El cliente al que pertenecen los proveedores es el opuesto al origen:
+  //   - origen EPA     → cliente Cofersa
+  //   - origen COFERSA → cliente EPA
+  const legacyMap: Record<string, { id: string; name: string }> = {
+    'COFERSA':  { id: 'f897b0e2-721f-498d-a5d2-800dd3755139', name: 'EPA' },
+    'EPA':      { id: 'ae488aaf-706a-46fa-9251-d00a35e78384', name: 'Cofersa' },
+    '0109':     { id: 'ae488aaf-706a-46fa-9251-d00a35e78384', name: 'Cofersa' },
+    '029':      { id: 'f897b0e2-721f-498d-a5d2-800dd3755139', name: 'EPA' },
+    '0029':     { id: 'f897b0e2-721f-498d-a5d2-800dd3755139', name: 'EPA' },
+  };
+  return legacyMap[normalized] ?? null;
 }
 
 export const providersService = {
@@ -63,7 +106,7 @@ export const providersService = {
   },
 
   /**
-   * Resolver cliente automáticamente por source.
+   * Resolver cliente automáticamente por source_code vía tabla origen_proveedores.
    * Exportado para uso en componentes UI.
    */
   resolveClientBySource,
@@ -99,7 +142,7 @@ export const providersService = {
     while (true) {
       const { data, error } = await supabase
         .from('providers')
-        .select('id, org_id, name, active, provider_type, provider_code, source, client_id, created_at')
+        .select('id, org_id, name, active, provider_type, provider_code, source, source_code, client_id, created_at')
         .eq('org_id', orgId)
         .order('created_at', { ascending: false })
         .range(from, from + pageSize - 1);
@@ -121,7 +164,7 @@ export const providersService = {
     while (true) {
       const { data, error } = await supabase
         .from('providers')
-        .select('id, org_id, name, active, provider_type, provider_code, source, client_id, created_at')
+        .select('id, org_id, name, active, provider_type, provider_code, source, source_code, client_id, created_at')
         .eq('org_id', orgId)
         .eq('active', true)
         .order('name', { ascending: true })
@@ -144,19 +187,24 @@ export const providersService = {
     orgId: string,
     page: number,
     pageSize: number,
-    searchTerm?: string
+    searchTerm?: string,
+    clientId?: string | null,
   ): Promise<{ data: Provider[]; total: number; totalPages: number }> {
     const from = (page - 1) * pageSize;
     const to = from + pageSize - 1;
 
     let query = supabase
       .from('providers')
-      .select('id, org_id, name, active, provider_type, provider_code, source, client_id, created_at', { count: 'exact' })
+      .select('id, org_id, name, active, provider_type, provider_code, source, source_code, client_id, created_at', { count: 'exact' })
       .eq('org_id', orgId);
+
+    if (clientId) {
+      query = query.eq('client_id', clientId);
+    }
 
     if (searchTerm && searchTerm.trim()) {
       const term = `%${searchTerm.trim()}%`;
-      query = query.or(`name.ilike.${term},provider_code.ilike.${term},source.ilike.${term}`);
+      query = query.or(`name.ilike.${term},provider_code.ilike.${term},source.ilike.${term},source_code.ilike.${term}`);
     }
 
     const { data, error, count } = await query
@@ -176,20 +224,25 @@ export const providersService = {
     orgId: string,
     page: number,
     pageSize: number,
-    searchTerm?: string
+    searchTerm?: string,
+    clientId?: string | null,
   ): Promise<{ data: Provider[]; total: number; totalPages: number }> {
     const from = (page - 1) * pageSize;
     const to = from + pageSize - 1;
 
     let query = supabase
       .from('providers')
-      .select('id, org_id, name, active, provider_type, provider_code, source, client_id, created_at', { count: 'exact' })
+      .select('id, org_id, name, active, provider_type, provider_code, source, source_code, client_id, created_at', { count: 'exact' })
       .eq('org_id', orgId)
       .eq('active', true);
 
+    if (clientId) {
+      query = query.eq('client_id', clientId);
+    }
+
     if (searchTerm && searchTerm.trim()) {
       const term = `%${searchTerm.trim()}%`;
-      query = query.or(`name.ilike.${term},provider_code.ilike.${term},source.ilike.${term}`);
+      query = query.or(`name.ilike.${term},provider_code.ilike.${term},source.ilike.${term},source_code.ilike.${term}`);
     }
 
     const { data, error, count } = await query
@@ -201,12 +254,14 @@ export const providersService = {
     return { data: data ?? [], total, totalPages: Math.ceil(total / pageSize) };
   },
 
-  async createProvider(orgId: string, name: string, providerType: 'almacenaje' | 'pesado' = 'almacenaje', providerCode?: string | null, source?: string | null, clientId?: string | null): Promise<Provider> {
+  async createProvider(orgId: string, name: string, providerType: 'almacenaje' | 'pesado' = 'almacenaje', providerCode?: string | null, source?: string | null, clientId?: string | null, sourceCode?: string | null): Promise<Provider> {
     const normalizedName = name.trim().toUpperCase();
     const normalizedCode = providerCode?.trim().toUpperCase() || null;
     const normalizedSource = source?.trim().toUpperCase() || null;
-    // Auto-detectar cliente por source si no se proporcionó clientId
-    const autoClient = clientId ? null : resolveClientBySource(normalizedSource);
+    const normalizedSourceCode = sourceCode?.trim().toUpperCase() || null;
+    // Auto-detectar cliente por source_code si no se proporcionó clientId
+    const orgMap = await getOrigenProveedoresMap(orgId);
+    const autoClient = clientId ? null : resolveClientBySource(normalizedSourceCode, orgMap);
     const finalClientId = clientId || autoClient?.id || null;
     
     const { data, error } = await supabase
@@ -218,33 +273,28 @@ export const providersService = {
         provider_type: providerType,
         provider_code: normalizedCode,
         source: normalizedSource,
+        source_code: normalizedSourceCode,
         client_id: finalClientId,
       })
-      .select('id, org_id, name, active, provider_type, provider_code, source, client_id, created_at')
+      .select('id, org_id, name, active, provider_type, provider_code, source, source_code, client_id, created_at')
       .single();
 
     if (error) throw error;
     return data;
   },
 
-  async updateProvider(id: string, updates: Partial<Pick<Provider, 'name' | 'active' | 'provider_type' | 'provider_code' | 'source' | 'client_id'>>): Promise<Provider> {
+  async updateProvider(id: string, updates: Partial<Pick<Provider, 'name' | 'active' | 'provider_type' | 'provider_code' | 'source' | 'source_code' | 'client_id'>>): Promise<Provider> {
     const normalized: any = { ...updates };
     if (updates.name !== undefined) normalized.name = updates.name.trim().toUpperCase();
     if (updates.provider_code !== undefined) normalized.provider_code = updates.provider_code?.trim().toUpperCase() || null;
-    if (updates.source !== undefined) {
-      normalized.source = updates.source?.trim().toUpperCase() || null;
-      // Si cambió el source y no hay client_id, autodetectar
-      if (normalized.source && !normalized.client_id) {
-        const autoClient = resolveClientBySource(normalized.source);
-        if (autoClient) normalized.client_id = autoClient.id;
-      }
-    }
+    if (updates.source !== undefined) normalized.source = updates.source?.trim().toUpperCase() || null;
+    if (updates.source_code !== undefined) normalized.source_code = updates.source_code?.trim().toUpperCase() || null;
     
     const { data, error } = await supabase
       .from('providers')
       .update(normalized)
       .eq('id', id)
-      .select('id, org_id, name, active, provider_type, provider_code, source, client_id, created_at')
+      .select('id, org_id, name, active, provider_type, provider_code, source, source_code, client_id, created_at')
       .single();
 
     if (error) throw error;
@@ -280,11 +330,12 @@ export const providersService = {
     const pageSize = 1000;
     let from = 0;
     let allProviders: Provider[] = [];
+    const seen = new Set<string>(); // Deduplicar por provider_id
 
     while (true) {
       let query = supabase
         .from('providers')
-        .select('id, org_id, name, active, provider_type, provider_code, source, client_id, created_at, provider_warehouses!inner(warehouse_id)')
+        .select('id, org_id, name, active, provider_type, provider_code, source, source_code, client_id, created_at, provider_warehouses!inner(warehouse_id)')
         .eq('org_id', orgId)
         .eq('provider_warehouses.warehouse_id', warehouseId)
         .order('name', { ascending: true })
@@ -297,13 +348,60 @@ export const providersService = {
       const { data, error } = await query;
       if (error) throw error;
 
-      const page = (data ?? []).map(({ provider_warehouses: _pw, ...p }: any) => p as Provider);
+      const rawPage = data ?? [];
+      const page = rawPage.map(({ provider_warehouses: _pw, ...p }: any) => p as Provider)
+        .filter((p: Provider) => {
+          if (seen.has(p.id)) return false;
+          seen.add(p.id);
+          return true;
+        });
       allProviders = allProviders.concat(page);
-      if (page.length < pageSize) break;
+      if (rawPage.length < pageSize) break;
       from += pageSize;
     }
 
     return allProviders;
+  },
+
+  /**
+   * Paginación con filtro por almacén.
+   * Trae todos los proveedores del almacén, filtra en memoria por búsqueda/cliente,
+   * y pagina en memoria. Esto evita el problema de duplicados en provider_warehouses
+   * y del 414 URI Too Long con .in() de miles de IDs.
+   */
+  async getByWarehousePaginated(
+    orgId: string,
+    warehouseId: string,
+    page: number,
+    pageSize: number,
+    searchTerm?: string,
+    clientId?: string | null,
+    activeOnly = true,
+  ): Promise<{ data: Provider[]; total: number; totalPages: number }> {
+    const allProviders = await this.getByWarehouse(orgId, warehouseId, activeOnly);
+
+    let filtered = allProviders;
+
+    if (searchTerm && searchTerm.trim()) {
+      const term = searchTerm.trim().toLowerCase();
+      filtered = filtered.filter((p) =>
+        p.name.toLowerCase().includes(term) ||
+        (p.provider_code || '').toLowerCase().includes(term) ||
+        (p.source || '').toLowerCase().includes(term) ||
+        (p.source_code || '').toLowerCase().includes(term)
+      );
+    }
+
+    if (clientId) {
+      filtered = filtered.filter((p) => p.client_id === clientId);
+    }
+
+    const total = filtered.length;
+    const totalPages = Math.ceil(total / pageSize);
+    const offset = (page - 1) * pageSize;
+    const data = filtered.slice(offset, offset + pageSize);
+
+    return { data, total, totalPages };
   },
 
   /**
@@ -375,7 +473,15 @@ export const providersService = {
     }
 
     // Filtrar en memoria: solo los proveedores que nos importan
-    const pwRows = allPwRows.filter((r: any) => providerSet.has(r.provider_id));
+    // Deduplicar por provider_id + warehouse_id para evitar duplicados en la UI
+    const pwSeen = new Set<string>();
+    const pwRows = allPwRows.filter((r: any) => {
+      if (!providerSet.has(r.provider_id)) return false;
+      const key = `${r.provider_id}|${r.warehouse_id}`;
+      if (pwSeen.has(key)) return false;
+      pwSeen.add(key);
+      return true;
+    });
 
     // 2. Traer TODOS los client_providers de la org — paginado (5,246+ filas, el default de 1,000 no alcanza)
     from = 0;
@@ -396,7 +502,15 @@ export const providersService = {
     }
 
     // Filtrar en memoria: solo los proveedores que nos importan
-    const cpRows = allCpRows.filter((r: any) => providerSet.has(r.provider_id));
+    // Deduplicar por provider_id + client_id para evitar duplicados
+    const cpSeen = new Set<string>();
+    const cpRows = allCpRows.filter((r: any) => {
+      if (!providerSet.has(r.provider_id)) return false;
+      const key = `${r.provider_id}|${r.client_id}`;
+      if (cpSeen.has(key)) return false;
+      cpSeen.add(key);
+      return true;
+    });
 
     // 3. Traer warehouse_clients para saber qué clientes pertenecen a qué almacén
     // Los almacenes son pocos (<50 típicamente) — .in(warehouseIds) es seguro aquí
@@ -441,14 +555,15 @@ export const providersService = {
       const warehouses = (pwRows ?? []).filter((r: any) => r.provider_id === pid);
 
       if (warehouses.length === 0) {
-        // Fallback: buscar cliente por source del provider (traído desde la BD)
+        // Fallback: buscar cliente por source_code del provider (traído desde la BD)
         const { data: providerSources } = await supabase
           .from('providers')
-          .select('source')
+          .select('source_code')
           .eq('id', pid)
           .maybeSingle();
-        const autoClient = providerSources?.source ? resolveClientBySource(providerSources.source) : null;
-        result[pid] = autoClient ? `Cliente: ${autoClient.name}` : 'Sin asignación';
+        const orgMap = await getOrigenProveedoresMap(orgId);
+        const autoClient = providerSources?.source_code ? resolveClientBySource(providerSources.source_code, orgMap) : null;
+        result[pid] = autoClient ? `OLO: (${autoClient.name})` : 'Sin asignación';
         continue;
       }
 
@@ -550,7 +665,7 @@ export const providersService = {
 
   /**
    * Obtener las asignaciones almacén→clientes de una lista de proveedores (OPTIMIZADO).
-   * Versión optimizada: recibe los providers ya cargados para usar su source como fallback
+   * Versión optimizada: recibe los providers ya cargados para usar su source_code como fallback
    * sin hacer N+1 queries a la BD.
    */
   async getProviderAssignmentsOptimized(
@@ -560,10 +675,10 @@ export const providersService = {
     const providerIds = providers.map(p => p.id);
     if (providerIds.length === 0) return {};
     const providerSet = new Set(providerIds);
-    // Índice rápido: providerId → source
-    const providerSourceMap: Record<string, string | null> = {};
+    // Índice rápido: providerId → source_code
+    const providerSourceCodeMap: Record<string, string | null> = {};
     for (const p of providers) {
-      providerSourceMap[p.id] = p.source || null;
+      providerSourceCodeMap[p.id] = p.source_code || null;
     }
 
     // 1. Traer TODOS los provider_warehouses de la org — paginado
@@ -586,6 +701,16 @@ export const providersService = {
     }
 
     const pwRows = allPwRows.filter((r: any) => providerSet.has(r.provider_id));
+    // Deduplicar por provider_id + warehouse_id para evitar duplicados en la UI
+    const pwRowsDeduped = [];
+    const pwSeen = new Set<string>();
+    for (const r of pwRows) {
+      const key = `${r.provider_id}|${r.warehouse_id}`;
+      if (pwSeen.has(key)) continue;
+      pwSeen.add(key);
+      pwRowsDeduped.push(r);
+    }
+    const pwRowsFinal = pwRowsDeduped;
 
     // 2. Traer TODOS los client_providers de la org — paginado
     from = 0;
@@ -606,9 +731,19 @@ export const providersService = {
     }
 
     const cpRows = allCpRows.filter((r: any) => providerSet.has(r.provider_id));
+    // Deduplicar por provider_id + client_id para evitar duplicados
+    const cpRowsDeduped = [];
+    const cpSeen = new Set<string>();
+    for (const r of cpRows) {
+      const key = `${r.provider_id}|${r.client_id}`;
+      if (cpSeen.has(key)) continue;
+      cpSeen.add(key);
+      cpRowsDeduped.push(r);
+    }
+    const cpRowsFinal = cpRowsDeduped;
 
     // 3. Traer warehouse_clients
-    const warehouseIds = [...new Set(pwRows.map((r: any) => r.warehouse_id as string))];
+    const warehouseIds = [...new Set(pwRowsFinal.map((r: any) => r.warehouse_id as string))];
     let wcRows: any[] = [];
     if (warehouseIds.length > 0) {
       const { data, error: wcErr } = await supabase
@@ -629,7 +764,7 @@ export const providersService = {
 
     // Índice: client_id → client name
     const clientNames: Record<string, string> = {};
-    for (const cp of (cpRows ?? [])) {
+    for (const cp of (cpRowsFinal ?? [])) {
       if (cp.clients && cp.client_id) {
         clientNames[cp.client_id] = (cp.clients as any).name ?? cp.client_id;
       }
@@ -637,7 +772,7 @@ export const providersService = {
 
     // Índice: provider_id → Set<client_id>
     const providerToClients: Record<string, Set<string>> = {};
-    for (const cp of (cpRows ?? [])) {
+    for (const cp of (cpRowsFinal ?? [])) {
       if (!providerToClients[cp.provider_id]) providerToClients[cp.provider_id] = new Set();
       providerToClients[cp.provider_id].add(cp.client_id);
     }
@@ -646,13 +781,13 @@ export const providersService = {
     const result: Record<string, string> = {};
 
     for (const pid of providerIds) {
-      const warehouses = (pwRows ?? []).filter((r: any) => r.provider_id === pid);
+      const warehouses = (pwRowsFinal ?? []).filter((r: any) => r.provider_id === pid);
 
       if (warehouses.length === 0) {
-        // Fallback: usar source del provider del mapa (ya cargado, sin query N+1)
-        const source = providerSourceMap[pid];
-        const autoClient = source ? resolveClientBySource(source) : null;
-        result[pid] = autoClient ? `Cliente: ${autoClient.name}` : 'Sin asignación';
+        const sourceCode = providerSourceCodeMap[pid];
+        const orgMap = await getOrigenProveedoresMap(orgId);
+        const autoClient = sourceCode ? resolveClientBySource(sourceCode, orgMap) : null;
+        result[pid] = autoClient ? `OLO: (${autoClient.name})` : 'Sin asignación';
         continue;
       }
 

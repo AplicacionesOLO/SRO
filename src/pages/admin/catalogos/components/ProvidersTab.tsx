@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { usePermissions } from '../../../../hooks/usePermissions';
+import { useActiveWarehouse } from '../../../../contexts/ActiveWarehouseContext';
 import { useDebouncedValue } from '../../../../hooks/useDebouncedValue';
 import { providersService } from '../../../../services/providersService';
 import { clientsService } from '../../../../services/clientsService';
@@ -19,6 +20,7 @@ const PAGE_SIZE = 25;
 
 export default function ProvidersTab({ orgId, warehouseId }: ProvidersTabProps) {
   const { can } = usePermissions();
+  const { activeWarehouse } = useActiveWarehouse();
   const [providers, setProviders] = useState<Provider[]>([]);
   const [loading, setLoading] = useState(true);
   const [showOnlyActive, setShowOnlyActive] = useState(true);
@@ -35,26 +37,34 @@ export default function ProvidersTab({ orgId, warehouseId }: ProvidersTabProps) 
   const [error, setError] = useState<string | undefined>();
   const [assignments, setAssignments] = useState<Record<string, string>>();
   const [clientsMap, setClientsMap] = useState<Record<string, string>>();
+  const [selectedClientId, setSelectedClientId] = useState<string | null>(null);
 
   const canRead = can('providers.view');
   const canCreate = can('providers.create');
   const canUpdate = can('providers.update');
   const canDelete = can('providers.delete');
 
-  const loadProviders = useCallback(async (page: number, search?: string) => {
+  const loadProviders = useCallback(async (page: number, search?: string, clientId?: string | null) => {
     if (!canRead) { setLoading(false); return; }
     try {
       setLoading(true);
       setError(undefined);
-      const { data, total, totalPages: pages } = showOnlyActive
-        ? await providersService.getActivePaginated(orgId, page, PAGE_SIZE, search)
-        : await providersService.getAllPaginated(orgId, page, PAGE_SIZE, search);
-      setProviders(data);
-      setTotalPages(pages);
-      setTotalItems(total);
-      if (data.length > 0) {
+      let result: { data: Provider[]; total: number; totalPages: number };
+      if (warehouseId) {
+        result = await providersService.getByWarehousePaginated(
+          orgId, warehouseId, page, PAGE_SIZE, search, clientId, showOnlyActive
+        );
+      } else {
+        result = showOnlyActive
+          ? await providersService.getActivePaginated(orgId, page, PAGE_SIZE, search, clientId)
+          : await providersService.getAllPaginated(orgId, page, PAGE_SIZE, search, clientId);
+      }
+      setProviders(result.data);
+      setTotalPages(result.totalPages);
+      setTotalItems(result.total);
+      if (result.data.length > 0) {
         try {
-          const asgn = await providersService.getProviderAssignmentsOptimized(orgId, data);
+          const asgn = await providersService.getProviderAssignmentsOptimized(orgId, result.data);
           setAssignments(asgn);
         } catch {
           setAssignments({});
@@ -71,14 +81,14 @@ export default function ProvidersTab({ orgId, warehouseId }: ProvidersTabProps) 
     } finally {
       setLoading(false);
     }
-  }, [orgId, showOnlyActive, canRead]);
+  }, [orgId, warehouseId, showOnlyActive, canRead]);
 
   // Cargar datos cuando cambian org, filtro, página, o búsqueda debounced
   useEffect(() => {
     if (canRead) {
-      loadProviders(currentPage, debouncedSearch);
+      loadProviders(currentPage, debouncedSearch, selectedClientId);
     } else setLoading(false);
-  }, [orgId, currentPage, showOnlyActive, canRead, loadProviders, debouncedSearch]);
+  }, [orgId, currentPage, showOnlyActive, canRead, loadProviders, debouncedSearch, selectedClientId, warehouseId]);
 
   // Cargar clientes una sola vez
   useEffect(() => {
@@ -93,10 +103,10 @@ export default function ProvidersTab({ orgId, warehouseId }: ProvidersTabProps) 
     }
   }, [orgId, canRead]);
 
-  // Reset a página 1 cuando cambia la búsqueda
+  // Reset a página 1 cuando cambia la búsqueda, filtro activo, cliente seleccionado o almacén
   useEffect(() => {
     setCurrentPage(1);
-  }, [debouncedSearch, showOnlyActive]);
+  }, [debouncedSearch, showOnlyActive, selectedClientId, warehouseId]);
 
   const handleCreate = () => { setEditingProvider(undefined); setIsModalOpen(true); };
   const handleEdit = (provider: Provider) => { setEditingProvider(provider); setIsModalOpen(true); };
@@ -105,13 +115,13 @@ export default function ProvidersTab({ orgId, warehouseId }: ProvidersTabProps) 
     if (!confirm(`¿Desactivar el proveedor "${provider.name}"?`)) return;
     try {
       await providersService.deleteProvider(provider.id);
-      await loadProviders(currentPage, debouncedSearch);
+      await loadProviders(currentPage, debouncedSearch, selectedClientId);
     } catch (err: any) {
       setError(err?.message || 'Error al eliminar');
     }
   };
 
-  const handleSave = async () => { await loadProviders(currentPage, debouncedSearch); setIsModalOpen(false); };
+  const handleSave = async () => { await loadProviders(currentPage, debouncedSearch, selectedClientId); setIsModalOpen(false); };
 
   const handlePageChange = (page: number) => {
     setCurrentPage(page);
@@ -175,11 +185,57 @@ export default function ProvidersTab({ orgId, warehouseId }: ProvidersTabProps) 
         )}
       </div>
 
+      {/* Filtros por cliente — minimalistas */}
+      {clientsMap && Object.keys(clientsMap).length > 0 && (
+        <div className="flex items-center gap-1 mb-5 flex-wrap">
+          <button
+            onClick={() => setSelectedClientId(null)}
+            className={`relative px-2 py-0.5 text-[11px] font-medium tracking-wide transition-all duration-150 cursor-pointer whitespace-nowrap rounded-md border ${
+              selectedClientId === null
+                ? 'bg-foreground-100 text-foreground-800 border-foreground-200/50'
+                : 'text-foreground-400 border-transparent hover:text-foreground-600'
+            }`}
+          >
+            <span className="flex items-center gap-1">
+              {selectedClientId === null && (
+                <span className="w-1 h-1 rounded-full bg-foreground-500"></span>
+              )}
+              Todos
+            </span>
+          </button>
+          <span className="text-foreground-200 mx-0.5 text-[11px]">·</span>
+          {Object.entries(clientsMap).map(([id, name]) => (
+            <button
+              key={id}
+              onClick={() => setSelectedClientId(id)}
+              className={`relative px-2 py-0.5 text-[11px] font-medium tracking-wide transition-all duration-150 cursor-pointer whitespace-nowrap rounded-md border ${
+                selectedClientId === id
+                  ? 'bg-foreground-100 text-foreground-800 border-foreground-200/50'
+                  : 'text-foreground-400 border-transparent hover:text-foreground-600'
+              }`}
+            >
+              <span className="flex items-center gap-1">
+                {selectedClientId === id && (
+                  <span className="w-1 h-1 rounded-full bg-foreground-500"></span>
+                )}
+                {name}
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
+
       {/* Total count */}
       <div className="flex items-center justify-between mb-3">
         <p className="text-sm text-gray-500">
-          {totalItems} proveedores en total
-          {debouncedSearch && <span className="text-gray-400 ml-1">(filtrado por "{debouncedSearch}")</span>}
+          {totalItems} proveedores
+          {warehouseId && activeWarehouse && (
+            <span className="text-gray-400 ml-1">· {activeWarehouse.name}</span>
+          )}
+          {selectedClientId && clientsMap?.[selectedClientId] && (
+            <span className="text-gray-400 ml-1">· {clientsMap[selectedClientId]}</span>
+          )}
+          {debouncedSearch && <span className="text-gray-400 ml-1">· "{debouncedSearch}"</span>}
         </p>
       </div>
 
@@ -253,9 +309,8 @@ export default function ProvidersTab({ orgId, warehouseId }: ProvidersTabProps) 
                         <span className="text-gray-300 text-xs">—</span>
                       ) : isUnassigned ? (
                         autoClient ? (
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-teal-50 text-teal-700 border border-teal-200 whitespace-nowrap">
-                            <i className="ri-magic-line w-3 h-3 flex items-center justify-center"></i>
-                            {autoClient.name}
+                          <span className="text-gray-600 text-xs leading-snug block truncate">
+                            OLO: ({autoClient.name})
                           </span>
                         ) : (
                           <span className="text-gray-400 text-xs italic">Sin asignación</span>
@@ -316,19 +371,19 @@ export default function ProvidersTab({ orgId, warehouseId }: ProvidersTabProps) 
         <ProviderBulkImportModal
           orgId={orgId}
           onClose={() => setIsBulkImportOpen(false)}
-          onImportDone={() => loadProviders(1, debouncedSearch)}
+          onImportDone={() => loadProviders(1, debouncedSearch, selectedClientId)}
         />
       )}
       {isSyncOpen && (
         <ProviderSyncModal
           orgId={orgId}
           onClose={() => setIsSyncOpen(false)}
-          onSyncDone={() => loadProviders(1, debouncedSearch)}
+          onSyncDone={() => loadProviders(1, debouncedSearch, selectedClientId)}
         />
       )}
       {isExcelSyncOpen && (
         <ProviderExcelSyncModal
-          onClose={() => { setIsExcelSyncOpen(false); loadProviders(1, debouncedSearch); }}
+          onClose={() => { setIsExcelSyncOpen(false); loadProviders(1, debouncedSearch, selectedClientId); }}
           onDone={() => {}}
         />
       )}

@@ -451,17 +451,17 @@ export default function ProviderDistributionGrid({
         sheetName = 'Por proveedor';
 
         const headersAll = [
-          'Proveedor','Tipo proveedor','Citas programadas','Citas con IN','Citas con OUT','Pendientes OUT',
+          'Proveedor','Código','Cliente','Tipo proveedor','Citas programadas','Citas con IN','Citas con OUT','Pendientes OUT',
           'Tiempo teórico minutos','Tiempo teórico HH:mm','Tiempo real minutos','Tiempo real HH:mm',
           'Diferencia minutos','Diferencia texto','% total teórico','% total real',
           'Promedio teórico minutos','Promedio teórico HH:mm','Promedio real minutos','Promedio real HH:mm',
         ];
         const headersTheoretical = [
-          'Proveedor','Tipo proveedor','Citas programadas','Tiempo teórico minutos','Tiempo teórico HH:mm',
+          'Proveedor','Código','Cliente','Tipo proveedor','Citas programadas','Tiempo teórico minutos','Tiempo teórico HH:mm',
           '% total teórico','Promedio teórico minutos','Promedio teórico HH:mm',
         ];
         const headersReal = [
-          'Proveedor','Tipo proveedor','Citas con IN','Citas con OUT','Pendientes OUT','Tiempo real minutos','Tiempo real HH:mm',
+          'Proveedor','Código','Cliente','Tipo proveedor','Citas con IN','Citas con OUT','Pendientes OUT','Tiempo real minutos','Tiempo real HH:mm',
           '% total real','Promedio real minutos','Promedio real HH:mm',
         ];
 
@@ -476,18 +476,18 @@ export default function ProviderDistributionGrid({
         computedProviderData.forEach((r) => {
           if (vm === 'THEORETICAL') {
             dataRows.push([
-              r.provider_name, r.provider_type === 'pesado' ? 'Pesado' : 'Almacenaje', r.citas_programadas, r.tiempo_teorico_minutos, r.tiempo_teorico_formato,
+              r.provider_name, r.provider_code ?? '', r.client_name ?? '', r.provider_type === 'pesado' ? 'Pesado' : 'Almacenaje', r.citas_programadas, r.tiempo_teorico_minutos, r.tiempo_teorico_formato,
               r.pct_teorico_total, r.promedio_teorico_minutos, r.promedio_teorico_formato,
             ]);
           } else if (vm === 'REAL') {
             dataRows.push([
-              r.provider_name, r.provider_type === 'pesado' ? 'Pesado' : 'Almacenaje', r.citas_con_in, r.citas_con_out, r.pendientes_out,
+              r.provider_name, r.provider_code ?? '', r.client_name ?? '', r.provider_type === 'pesado' ? 'Pesado' : 'Almacenaje', r.citas_con_in, r.citas_con_out, r.pendientes_out,
               r.tiempo_real_minutos, r.tiempo_real_formato, r.pct_real_total,
               r.promedio_real_minutos, r.promedio_real_formato,
             ]);
           } else {
             dataRows.push([
-              r.provider_name, r.provider_type === 'pesado' ? 'Pesado' : 'Almacenaje', r.citas_programadas, r.citas_con_in, r.citas_con_out, r.pendientes_out,
+              r.provider_name, r.provider_code ?? '', r.client_name ?? '', r.provider_type === 'pesado' ? 'Pesado' : 'Almacenaje', r.citas_programadas, r.citas_con_in, r.citas_con_out, r.pendientes_out,
               r.tiempo_teorico_minutos, r.tiempo_teorico_formato, r.tiempo_real_minutos, r.tiempo_real_formato,
               r.diferencia_minutos, r.diferencia_formato, r.pct_teorico_total, r.pct_real_total,
               r.promedio_teorico_minutos, r.promedio_teorico_formato, r.promedio_real_minutos, r.promedio_real_formato,
@@ -510,12 +510,12 @@ export default function ProviderDistributionGrid({
           });
 
           if (vm === 'THEORETICAL') {
-            totalRow.push('', sums['citas_programadas'], sums['tiempo_teorico_min'], '', 1, '', '');
+            totalRow.push('', '', '', sums['citas_programadas'], sums['tiempo_teorico_min'], '', 1, '', '');
           } else if (vm === 'REAL') {
-            totalRow.push('', sums['citas_con_in'], sums['citas_con_out'], sums['pendientes_out'], sums['tiempo_real_min'], '', 1, '', '');
+            totalRow.push('', '', '', sums['citas_con_in'], sums['citas_con_out'], sums['pendientes_out'], sums['tiempo_real_min'], '', 1, '', '');
           } else {
             totalRow.push(
-              '', sums['citas_programadas'], sums['citas_con_in'], sums['citas_con_out'], sums['pendientes_out'],
+              '', '', '', sums['citas_programadas'], sums['citas_con_in'], sums['citas_con_out'], sums['pendientes_out'],
               sums['tiempo_teorico_min'], '', sums['tiempo_real_min'], '', sums['diferencia_min'], '', 1, 1, '', '', '', ''
             );
           }
@@ -922,6 +922,8 @@ export default function ProviderDistributionGrid({
                     {analysisMode === 'PROVIDER' ? (
                       <>
                         <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Proveedor</th>
+                        <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Código</th>
+                        <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Cliente</th>
                         <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Tipo</th>
                         {(viewMode === 'ALL' || viewMode === 'THEORETICAL') && (
                           <th className="px-4 py-3 text-center text-xs font-semibold text-gray-700 uppercase tracking-wider">Citas prog.</th>
@@ -978,6 +980,8 @@ export default function ProviderDistributionGrid({
                       {paginatedData.map((row: ProviderDistributionRow) => (
                         <tr key={row.provider_name} className="hover:bg-gray-50 transition-colors">
                           <td className="px-4 py-3 text-sm font-medium text-gray-900">{row.provider_name}</td>
+                          <td className="px-4 py-3 text-sm text-gray-700">{row.provider_code ?? <span className="text-gray-400">—</span>}</td>
+                          <td className="px-4 py-3 text-sm text-gray-700">{row.client_name ?? <span className="text-gray-400">—</span>}</td>
                           <td className="px-4 py-3">{renderProviderTypeBadge(row.provider_type)}</td>
                           {(viewMode === 'ALL' || viewMode === 'THEORETICAL') && (
                             <td className="px-4 py-3 text-sm text-gray-700 text-center">{row.citas_programadas}</td>
@@ -1047,6 +1051,8 @@ export default function ProviderDistributionGrid({
                       {providerTotalRow && (
                         <tr className="bg-gray-50 font-semibold border-t-2 border-gray-300">
                           <td className="px-4 py-3 text-sm font-bold text-gray-900">TOTAL</td>
+                          <td className="px-4 py-3"><span className="text-sm text-gray-400">—</span></td>
+                          <td className="px-4 py-3"><span className="text-sm text-gray-400">—</span></td>
                           <td className="px-4 py-3"><span className="text-sm text-gray-400">—</span></td>
                           {(viewMode === 'ALL' || viewMode === 'THEORETICAL') && (
                             <td className="px-4 py-3 text-sm text-gray-900 text-center">{providerTotalRow.citas_programadas}</td>
@@ -1175,7 +1181,15 @@ export default function ProviderDistributionGrid({
                     <div className="flex items-start justify-between mb-3">
                       <div className="flex-1 min-w-0">
                         <h3 className="text-base font-bold text-gray-900 truncate">{row.provider_name}</h3>
-                        <div className="mt-1">{renderProviderTypeBadge(row.provider_type)}</div>
+                        <div className="mt-1 flex flex-col gap-0.5">
+                          {row.provider_code && (
+                            <span className="text-xs text-gray-500">Código: {row.provider_code}</span>
+                          )}
+                          {row.client_name && (
+                            <span className="text-xs text-gray-500">Cliente: {row.client_name}</span>
+                          )}
+                          <div className="mt-0.5">{renderProviderTypeBadge(row.provider_type)}</div>
+                        </div>
                       </div>
                       {viewMode === 'ALL' && (
                         <div className="text-right flex flex-col items-end">

@@ -125,6 +125,8 @@ export interface DurationReportRow {
 // Fila del reporte de distribución por proveedor
 export interface ProviderDistributionRow {
   provider_name: string;
+  provider_code?: string | null;
+  client_name?: string | null;
   provider_type: string; // 'almacenaje' | 'pesado'
   citas_programadas: number;
   citas_con_in: number;

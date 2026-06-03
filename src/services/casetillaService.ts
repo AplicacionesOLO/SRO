@@ -1578,30 +1578,76 @@ async getExitEligibleReservations(
 
       const providersMap = new Map<string, string>();
       const providersTypeMap = new Map<string, string>();
+      const providersCodeMap = new Map<string, string | null>();
+      const providersClientMap = new Map<string, string | null>();
       if (providerIds.length > 0) {
         const { data: provData } = await supabase
           .from('providers')
-          .select('id, name, provider_type')
+          .select('id, name, provider_type, provider_code, client_id')
           .in('id', providerIds);
 
         (provData ?? []).forEach((p: any) => {
           providersMap.set(p.id as string, p.name as string);
           providersTypeMap.set(p.id as string, (p.provider_type as string) || 'almacenaje');
+          providersCodeMap.set(p.id as string, (p.provider_code as string) || null);
+          providersClientMap.set(p.id as string, (p.client_id as string) || null);
         });
       }
 
-      // Helper: resolver nombre de proveedor
-      const resolveProviderName = (shipper: string | null): string => {
+      // NUEVO: cargar nombres de clientes de los proveedores
+      const clientIds = [...new Set([...providersClientMap.values()].filter(Boolean))] as string[];
+      const clientsMap = new Map<string, string>();
+      if (clientIds.length > 0) {
+        const { data: clientData } = await supabase
+          .from('clients')
+          .select('id, name')
+          .in('id', clientIds)
+          .eq('org_id', orgId);
+
+        (clientData ?? []).forEach((c: any) => {
+          clientsMap.set(c.id as string, c.name as string);
+        });
+      }
+
+      // Helper: resolver nombre de proveedor (null = excluir)
+      const resolveProviderName = (shipper: string | null): string | null => {
         if (!shipper) return 'Sin proveedor';
         const isUUID = String(shipper).match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
-        return isUUID ? (providersMap.get(shipper) ?? 'N/A') : shipper;
+        if (isUUID) {
+          return providersMap.get(shipper) ?? 'N/A';
+        }
+        return shipper;
       };
 
-      // Helper: resolver provider_type
-      const resolveProviderType = (shipper: string | null): string => {
+      // Helper: resolver provider_type (null = excluir)
+      const resolveProviderType = (shipper: string | null): string | null => {
         if (!shipper) return 'almacenaje';
         const isUUID = String(shipper).match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
-        return isUUID ? (providersTypeMap.get(shipper) ?? 'almacenaje') : 'almacenaje';
+        if (isUUID) {
+          return providersTypeMap.get(shipper) ?? 'almacenaje';
+        }
+        return 'almacenaje';
+      };
+
+      // Helper: resolver provider_code
+      const resolveProviderCode = (shipper: string | null): string | null => {
+        if (!shipper) return null;
+        const isUUID = String(shipper).match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+        if (isUUID) {
+          return providersCodeMap.get(shipper) ?? null;
+        }
+        return null;
+      };
+
+      // Helper: resolver client_name
+      const resolveClientName = (shipper: string | null): string | null => {
+        if (!shipper) return null;
+        const isUUID = String(shipper).match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+        if (isUUID) {
+          const clientId = providersClientMap.get(shipper);
+          if (clientId) return clientsMap.get(clientId) ?? null;
+        }
+        return null;
       };
 
       // Helper: minutos a HH:mm
@@ -1633,6 +1679,9 @@ async getExitEligibleReservations(
       for (const r of rows) {
         const pname = resolveProviderName(r.shipper_provider ?? null);
         const ptype = resolveProviderType(r.shipper_provider ?? null);
+        // Excluir proveedores que no están asignados al almacén activo
+        if (pname === null || ptype === null) continue;
+
         let g = groups.get(pname);
         if (!g) {
           g = { provider_type: ptype, citas_programadas: 0, citas_con_in: 0, citas_con_out: 0, tiempo_teorico_min: 0, tiempo_real_min: 0 };
@@ -1706,8 +1755,23 @@ async getExitEligibleReservations(
         const promedioTeorico = g.citas_programadas > 0 ? Math.round(g.tiempo_teorico_min / g.citas_programadas) : 0;
         const promedioReal = g.citas_con_out > 0 ? Math.round(g.tiempo_real_min / g.citas_con_out) : 0;
 
+        // Necesitamos buscar un shipper_provider que resuelva a este provider_name
+        // para obtener el code y client_name. Como es un reporte agrupado, buscamos
+        // el primer provider_id que coincida.
+        let foundProviderCode: string | null = null;
+        let foundClientName: string | null = null;
+        for (const r of rows) {
+          if (resolveProviderName(r.shipper_provider ?? null) === provider_name) {
+            foundProviderCode = resolveProviderCode(r.shipper_provider ?? null);
+            foundClientName = resolveClientName(r.shipper_provider ?? null);
+            break;
+          }
+        }
+
         result.push({
           provider_name,
+          provider_code: foundProviderCode,
+          client_name: foundClientName,
           provider_type: g.provider_type || 'almacenaje',
           citas_programadas: g.citas_programadas,
           citas_con_in: g.citas_con_in,

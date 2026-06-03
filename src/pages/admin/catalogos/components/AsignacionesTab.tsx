@@ -46,19 +46,27 @@ export default function AsignacionesTab({ orgId, userId }: Props) {
         clusterService.getClientUsers(orgId, client.id),
       ]);
 
-      const clientProviderRows = await clientsService.getClientProviders(orgId, client.id);
-      const providerIds = clientProviderRows.map((r) => r.provider_id);
+      // Cargar proveedores vinculados al cliente vía join directo (evita
+      // el límite de 1000 items de .in() en Supabase)
+      const { data: providersData, error: providersError } = await supabase
+        .from('providers')
+        .select('id, org_id, name, active, created_at, client_providers!inner(client_id, provider_id)')
+        .eq('client_providers.client_id', client.id)
+        .eq('client_providers.org_id', orgId)
+        .eq('active', true)
+        .order('name', { ascending: true });
 
-      let providers: Provider[] = [];
-      if (providerIds.length > 0) {
-        const { data } = await supabase
-          .from('providers')
-          .select('id, org_id, name, active, created_at')
-          .in('id', providerIds)
-          .eq('active', true)
-          .order('name', { ascending: true });
-        providers = (data ?? []) as Provider[];
+      if (providersError) {
+        console.error('[AsignacionesTab] Error cargando proveedores:', providersError);
       }
+
+      const providers = ((providersData ?? []) as any[]).map((p) => ({
+        id: p.id,
+        org_id: p.org_id,
+        name: p.name,
+        active: p.active,
+        created_at: p.created_at,
+      })) as Provider[];
 
       setClusters(clustersData);
       setUsers(usersData);
