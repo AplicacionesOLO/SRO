@@ -14,7 +14,6 @@ type Step = 'upload' | 'preview' | 'importing' | 'result';
 interface ImportResult {
   attempted: number;
   succeeded: number;
-  updated: number;
   failed: number;
   skipped: number;
   errors: { nombre: string; reason: string }[];
@@ -22,18 +21,14 @@ interface ImportResult {
 
 const STATUS_LABELS: Record<string, string> = {
   valid: 'Nuevo',
-  update_warehouses: 'Actualizar almacenes',
   duplicate_file: 'Dup. archivo',
-  duplicate_db: 'Dup. base de datos',
   invalid_warehouse: 'Almacén no encontrado',
   error: 'Error',
 };
 
 const STATUS_COLORS: Record<string, string> = {
   valid: 'bg-green-100 text-green-700',
-  update_warehouses: 'bg-teal-100 text-teal-700',
   duplicate_file: 'bg-amber-100 text-amber-700',
-  duplicate_db: 'bg-amber-100 text-amber-700',
   invalid_warehouse: 'bg-red-100 text-red-700',
   error: 'bg-red-100 text-red-700',
 };
@@ -53,8 +48,8 @@ export default function ProviderBulkImportModal({
   const [progress, setProgress] = useState<ImportProgress | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const validCount = validatedRows.filter((r) => r.status === 'valid' || r.status === 'update_warehouses').length;
-  const invalidCount = validatedRows.filter((r) => r.status !== 'valid' && r.status !== 'update_warehouses').length;
+  const validCount = validatedRows.filter((r) => r.status === 'valid').length;
+  const invalidCount = validatedRows.filter((r) => r.status !== 'valid').length;
 
   const processFile = useCallback(
     async (file: File) => {
@@ -114,7 +109,6 @@ export default function ProviderBulkImportModal({
       setImportResult({
         attempted: result.attempted,
         succeeded: result.succeeded,
-        updated: result.updated,
         failed: result.failed,
         skipped: result.skipped,
         errors: result.errors,
@@ -124,7 +118,6 @@ export default function ProviderBulkImportModal({
       setImportResult({
         attempted: validCount,
         succeeded: 0,
-        updated: 0,
         failed: validCount,
         skipped: 0,
         errors: [{ nombre: 'general', reason: String(err) }],
@@ -270,6 +263,7 @@ export default function ProviderBulkImportModal({
                     <thead>
                       <tr className="bg-gray-200">
                         <th className="px-3 py-1.5 text-left text-gray-700 font-semibold rounded-tl-lg">nombre *</th>
+                        <th className="px-3 py-1.5 text-left text-gray-700 font-semibold">codigo</th>
                         <th className="px-3 py-1.5 text-left text-gray-700 font-semibold">almacenes</th>
                         <th className="px-3 py-1.5 text-left text-gray-700 font-semibold rounded-tr-lg">activo</th>
                       </tr>
@@ -277,11 +271,13 @@ export default function ProviderBulkImportModal({
                     <tbody>
                       <tr className="bg-white border-b border-gray-100">
                         <td className="px-3 py-1.5 text-gray-800">Proveedor A</td>
+                        <td className="px-3 py-1.5 text-gray-600">PROV-001</td>
                         <td className="px-3 py-1.5 text-gray-600">Almacén OLO|San Diego</td>
                         <td className="px-3 py-1.5 text-gray-600">true</td>
                       </tr>
                       <tr className="bg-white">
                         <td className="px-3 py-1.5 text-gray-800">Proveedor B</td>
+                        <td className="px-3 py-1.5 text-gray-600">PROV-002</td>
                         <td className="px-3 py-1.5 text-gray-600">Almacén OLO</td>
                         <td className="px-3 py-1.5 text-gray-600">false</td>
                       </tr>
@@ -289,7 +285,7 @@ export default function ProviderBulkImportModal({
                   </table>
                 </div>
                 <p className="text-xs text-gray-500 mt-2">
-                  * <strong>nombre</strong> es obligatorio. Separar múltiples almacenes con <code className="bg-gray-200 px-1 rounded">|</code> o <code className="bg-gray-200 px-1 rounded">,</code>
+                  * <strong>nombre</strong> es obligatorio. <strong>codigo</strong> es opcional. Separar múltiples almacenes con <code className="bg-gray-200 px-1 rounded">|</code> o <code className="bg-gray-200 px-1 rounded">,</code>
                 </p>
               </div>
 
@@ -341,6 +337,7 @@ export default function ProviderBulkImportModal({
                     <tr>
                       <th className="px-3 py-2 text-left text-gray-600 font-semibold">Fila</th>
                       <th className="px-3 py-2 text-left text-gray-600 font-semibold">Nombre</th>
+                      <th className="px-3 py-2 text-left text-gray-600 font-semibold">Código</th>
                       <th className="px-3 py-2 text-left text-gray-600 font-semibold">Almacenes</th>
                       <th className="px-3 py-2 text-left text-gray-600 font-semibold">Activo</th>
                       <th className="px-3 py-2 text-left text-gray-600 font-semibold">Estado</th>
@@ -354,6 +351,13 @@ export default function ProviderBulkImportModal({
                       >
                         <td className="px-3 py-2 text-gray-400">{row.rowIndex}</td>
                         <td className="px-3 py-2 text-gray-800 font-medium">{row.nombre}</td>
+                        <td className="px-3 py-2 text-gray-600">
+                          {row.codigo ? (
+                            <span className="bg-gray-100 px-1.5 py-0.5 rounded text-xs font-medium">{row.codigo}</span>
+                          ) : (
+                            <span className="text-gray-400 italic">—</span>
+                          )}
+                        </td>
                         <td className="px-3 py-2 text-gray-600">
                           {row.almacenesInput.length === 0 ? (
                             <span className="text-gray-400 italic">Sin almacenes</span>
@@ -386,8 +390,8 @@ export default function ProviderBulkImportModal({
                         </td>
                         <td className="px-3 py-2">
                           <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${STATUS_COLORS[row.status]}`}>
-                            {(row.status === 'valid' || row.status === 'update_warehouses') && <i className="ri-check-line text-xs"></i>}
-                            {row.status !== 'valid' && row.status !== 'update_warehouses' && <i className="ri-close-line text-xs"></i>}
+                            {row.status === 'valid' && <i className="ri-check-line text-xs"></i>}
+                            {row.status !== 'valid' && <i className="ri-close-line text-xs"></i>}
                             {STATUS_LABELS[row.status]}
                           </span>
                           {row.reason && (
@@ -443,7 +447,7 @@ export default function ProviderBulkImportModal({
                       <p className="text-xs text-green-600 mt-0.5">Creados</p>
                     </div>
                     <div className="bg-teal-50 rounded-lg p-2.5 text-center">
-                      <p className="text-lg font-bold text-teal-700">{progress.updated}</p>
+                      <p className="text-lg font-bold text-teal-700">0</p>
                       <p className="text-xs text-teal-600 mt-0.5">Actualizados</p>
                     </div>
                     <div className="bg-red-50 rounded-lg p-2.5 text-center">
@@ -481,10 +485,7 @@ export default function ProviderBulkImportModal({
                   <p className="text-lg font-bold text-gray-800">¡Importación completada!</p>
                   <p className="text-sm text-gray-500 text-center">
                     {importResult.succeeded > 0 && (
-                      <>Creados: <strong>{importResult.succeeded}</strong>. </>
-                    )}
-                    {importResult.updated > 0 && (
-                      <>Actualizados: <strong>{importResult.updated}</strong>.</>
+                      <>Creados: <strong>{importResult.succeeded}</strong>.</>
                     )}
                   </p>
                 </div>
@@ -509,7 +510,7 @@ export default function ProviderBulkImportModal({
                   <p className="text-xs text-green-600 mt-0.5">Creados</p>
                 </div>
                 <div className="bg-teal-50 rounded-xl p-3 text-center">
-                  <p className="text-2xl font-bold text-teal-700">{importResult.updated}</p>
+                  <p className="text-2xl font-bold text-teal-700">0</p>
                   <p className="text-xs text-teal-600 mt-0.5">Actualizados</p>
                 </div>
                 <div className="bg-red-50 rounded-xl p-3 text-center">

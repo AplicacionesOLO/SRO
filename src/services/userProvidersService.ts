@@ -7,17 +7,18 @@ export interface UserProvider {
 
 export const userProvidersService = {
   /**
-   * Obtiene los proveedores asignados a un usuario específico
+   * Obtiene los proveedores asignados a un usuario específico,
+   * incluyendo tanto asignaciones directas como las que vienen por clusters.
    * @param orgId - ID de la organización
    * @param userId - ID del usuario
    * @returns Lista de proveedores activos asignados al usuario
    */
   async getUserProviders(orgId: string, userId: string): Promise<UserProvider[]> {
-    // Paginado en bloques de 1000 para usuarios con gran cantidad de proveedores asignados.
-    // Sin paginación, Supabase devuelve máximo 1000 filas y los restantes quedan invisibles.
+    const providerMap = new Map<string, string>(); // id → name
+
+    // ── 1. Proveedores directos (user_providers) ──────────────────────
     const pageSize = 1000;
     let from = 0;
-    const allRows: any[] = [];
 
     while (true) {
       const { data, error } = await supabase
@@ -36,18 +37,94 @@ export const userProvidersService = {
 
       if (error) throw error;
 
-      allRows.push(...(data ?? []));
+      for (const row of (data ?? []) as any[]) {
+        if (row.providers?.active === true) {
+          providerMap.set(row.providers.id, row.providers.name);
+        }
+      }
+
       if ((data ?? []).length < pageSize) break;
       from += pageSize;
     }
 
-    // Filtrar solo proveedores activos y mapear a formato simple
-    return allRows
-      .filter((up: any) => up.providers?.active === true)
-      .map((up: any) => ({
-        id: up.providers.id,
-        name: up.providers.name,
-      }));
+    // ── 2. Proveedores por cluster (user_provider_clusters → provider_cluster_items) ──
+    // user_provider_clusters tiene client_id, pero acá necesitamos TODOS los clusters
+    // del usuario sin importar el cliente.
+    let clusterFrom = 0;
+    const allClusterRows: any[] = [];
+
+    while (true) {
+      const { data: upcData, error: upcErr } = await supabase
+        .from('user_provider_clusters')
+        .select('cluster_id')
+        .eq('org_id', orgId)
+        .eq('user_id', userId)
+        .range(clusterFrom, clusterFrom + pageSize - 1);
+
+      if (upcErr) throw upcErr;
+
+      allClusterRows.push(...(upcData ?? []));
+      if ((upcData ?? []).length < pageSize) break;
+      clusterFrom += pageSize;
+    }
+
+    if (allClusterRows.length > 0) {
+      const clusterIds = [...new Set(allClusterRows.map((r: any) => r.cluster_id as string))];
+
+      // Obtener provider_ids de los clusters (paginado)
+      const clusterProviderIds = new Set<string>();
+      let pciFrom = 0;
+
+      while (true) {
+        const { data: pciData, error: pciErr } = await supabase
+          .from('provider_cluster_items')
+          .select('provider_id')
+          .in('cluster_id', clusterIds)
+          .range(pciFrom, pciFrom + pageSize - 1);
+
+        if (pciErr) throw pciErr;
+
+        for (const row of (pciData ?? []) as any[]) {
+          clusterProviderIds.add(row.provider_id);
+        }
+
+        if ((pciData ?? []).length < pageSize) break;
+        pciFrom += pageSize;
+      }
+
+      // Filtrar los que ya tenemos del paso 1
+      const missingIds = [...clusterProviderIds].filter((id) => !providerMap.has(id));
+
+      if (missingIds.length > 0) {
+        // Obtener nombres de los proveedores faltantes (paginado, activos solamente)
+        let provFrom = 0;
+        while (true) {
+          const { data: provData, error: provErr } = await supabase
+            .from('providers')
+            .select('id, name')
+            .eq('org_id', orgId)
+            .eq('active', true)
+            .in('id', missingIds)
+            .range(provFrom, provFrom + pageSize - 1);
+
+          if (provErr) throw provErr;
+
+          for (const row of (provData ?? []) as any[]) {
+            if (!providerMap.has(row.id)) {
+              providerMap.set(row.id, row.name);
+            }
+          }
+
+          if ((provData ?? []).length < pageSize) break;
+          provFrom += pageSize;
+        }
+      }
+    }
+
+    // ── 3. Resultado final ordenado ──────────────────────────────────
+    return [...providerMap.entries()]
+      .map(([id, name]) => ({ id, name }))
+      .sort((a, b) => a.name.localeCompare(b.name, 'es', { sensitivity: 'base' }));
   },
 
   /**
@@ -80,13 +157,10 @@ export const userProvidersService = {
     }
 
     const currentProviderIds = currentRows.map((up: any) => up.provider_id);
-    //console.log('[userProvidersService] Current providers:', currentProviderIds);
 
     // 2. Calcular diff
     const toInsert = providerIds.filter(id => !currentProviderIds.includes(id));
     const toDelete = currentProviderIds.filter(id => !providerIds.includes(id));
-
-    //console.log('[userProvidersService] Diff:', { toInsert, toDelete });
 
     // 3. Eliminar proveedores removidos
     if (toDelete.length > 0) {
@@ -98,11 +172,8 @@ export const userProvidersService = {
         .in('provider_id', toDelete);
 
       if (deleteError) {
-        // console.error('[userProvidersService] ❌ ERROR deleting providers', deleteError);
         throw deleteError;
       }
-
-      //console.log('[userProvidersService] ✅ Deleted providers:', toDelete.length);
     }
 
     // 4. Insertar nuevos proveedores
@@ -118,14 +189,8 @@ export const userProvidersService = {
         .insert(insertData);
 
       if (insertError) {
-        // console.error('[userProvidersService] ❌ ERROR inserting providers', insertError);
         throw insertError;
       }
-
-      //console.log('[userProvidersService] ✅ Inserted providers:', toInsert.length);
     }
-
-    //console.log('[userProvidersService] ✅ User providers updated successfully');
-    //console.log('[userProvidersService] ================================================');
   }
 };

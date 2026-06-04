@@ -843,7 +843,7 @@ export default function CalendarioPage() {
 
         if (rule && rule.clientDocks.length === 0 && !rule.allowAllDocks) {
           setAllocationError(
-            'No hay andenes disponibles que cumplan las reglas de todos los proveedores del consolidado.'
+            'No hay andenes asignados a este cliente en el almacén actual. Contactá a un administrador para que configure los andenes del cliente en este almacén.'
           );
           setAllocationRule(null);
           setAllocationLoading(false);
@@ -1113,7 +1113,7 @@ export default function CalendarioPage() {
               </div>
             </div>
           )}
-          {selectionMode && allocationError && (<div className="bg-amber-500 text-white px-4 py-2 flex items-center gap-2"><i className="ri-alert-line text-base w-4 h-4 flex items-center justify-center"></i><div><p className="font-semibold text-xs">Reglas no disponibles</p><p className="text-[11px] text-amber-100">{allocationError}</p></div></div>)}
+          {selectionMode && allocationError && (<div className="bg-amber-500 text-white px-4 py-2 flex items-center gap-2"><i className="ri-alert-line text-base w-4 h-4 flex items-center justify-center"></i><div><p className="font-semibold text-xs">Andenes no disponibles</p><p className="text-[11px] text-amber-100">{allocationError}</p></div></div>)}
           {selectionMode && allocationLoading && (<div className="bg-blue-500 text-white px-4 py-2 flex items-center gap-2"><i className="ri-loader-4-line text-base w-4 h-4 flex items-center justify-center animate-spin"></i><p className="font-medium text-xs">Cargando reglas de asignación de andenes...</p></div>)}
           {selectionMode && sameDayCutoffInfo?.blocked && (
             <div className="bg-red-50 border-b border-red-200 px-4 py-2 flex items-center gap-2">

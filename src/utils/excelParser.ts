@@ -3,6 +3,7 @@ import * as XLSX from 'xlsx';
 export interface ParsedExcelRow {
   rowIndex: number;
   nombre: string;
+  codigo?: string;
   almacenes: string[];
   activo: boolean;
   raw: Record<string, unknown>;
@@ -13,7 +14,7 @@ export interface ExcelParseResult {
   errors: string[];
 }
 
-const EXPECTED_HEADERS = ['nombre', 'almacenes', 'activo'];
+const EXPECTED_HEADERS = ['nombre', 'codigo', 'almacenes', 'activo'];
 
 function normalizeHeader(h: string): string {
   return h.trim().toLowerCase()
@@ -82,12 +83,14 @@ export function parseProvidersExcel(file: File): Promise<ExcelParseResult> {
           const nombre = String(raw[colMap['nombre']] ?? '').trim();
           if (!nombre) continue; // saltar filas vacías
 
+          const codigoRaw = colMap['codigo'] ? raw[colMap['codigo']] : '';
           const almacenesRaw = colMap['almacenes'] ? raw[colMap['almacenes']] : '';
           const activoRaw = colMap['activo'] ? raw[colMap['activo']] : true;
 
           rows.push({
             rowIndex: i + 2, // +2: encabezado en fila 1, datos desde fila 2
             nombre,
+            codigo: String(codigoRaw || '').trim() || undefined,
             almacenes: parseWarehouses(almacenesRaw),
             activo: parseBoolean(activoRaw),
             raw,
@@ -106,14 +109,14 @@ export function parseProvidersExcel(file: File): Promise<ExcelParseResult> {
 
 export function generateProviderTemplate(): void {
   const ws = XLSX.utils.aoa_to_sheet([
-    ['nombre', 'almacenes', 'activo'],
-    ['Proveedor Ejemplo A', 'Almacén Central|Almacén Norte', 'true'],
-    ['Proveedor Ejemplo B', 'Almacén Central', 'true'],
-    ['Proveedor Inactivo', '', 'false'],
+    ['nombre', 'codigo', 'almacenes', 'activo'],
+    ['Proveedor Ejemplo A', 'PROV-001', 'Almacén Central|Almacén Norte', 'true'],
+    ['Proveedor Ejemplo B', 'PROV-002', 'Almacén Central', 'true'],
+    ['Proveedor Inactivo', 'PROV-003', '', 'false'],
   ]);
 
   // Ajustar anchos de columna
-  ws['!cols'] = [{ wch: 30 }, { wch: 40 }, { wch: 10 }];
+  ws['!cols'] = [{ wch: 30 }, { wch: 15 }, { wch: 40 }, { wch: 10 }];
 
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Proveedores');

@@ -143,9 +143,10 @@ export default function PreReservationMiniModal({
         ]);
 
         const warehouseProviderIds = new Set(warehouseProviders.map((p) => p.id));
-        const filtered = warehouseId
-          ? userProviders.filter((up) => warehouseProviderIds.has(up.id))
-          : userProviders;
+        const warehouseMatched = userProviders.filter((up) => warehouseProviderIds.has(up.id));
+        // Proveedores asignados vía cluster que NO están en provider_warehouses — deben verse igual
+        const clusterOnly = userProviders.filter((up) => !warehouseProviderIds.has(up.id));
+        const filtered = warehouseMatched.concat(clusterOnly);
 
         providersData = filtered.map(up => ({
           id: up.id,

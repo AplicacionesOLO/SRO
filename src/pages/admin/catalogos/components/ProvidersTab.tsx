@@ -4,6 +4,7 @@ import { useActiveWarehouse } from '../../../../contexts/ActiveWarehouseContext'
 import { useDebouncedValue } from '../../../../hooks/useDebouncedValue';
 import { providersService } from '../../../../services/providersService';
 import { clientsService } from '../../../../services/clientsService';
+import { supabase } from '../../../../lib/supabase';
 import type { Provider } from '../../../../types/catalog';
 import { Pagination } from '../../../../components/base/Pagination';
 import ProviderModal from './ProviderModal';
@@ -102,6 +103,27 @@ export default function ProvidersTab({ orgId, warehouseId }: ProvidersTabProps) 
         .catch(() => setClientsMap({}));
     }
   }, [orgId, canRead]);
+
+  // Migración única: cambiar índice único de providers a llave compuesta (nombre + código)
+  useEffect(() => {
+    const MIGRATION_KEY = 'provider_index_migrated_v1';
+    if (localStorage.getItem(MIGRATION_KEY) === 'done') return;
+
+    supabase.functions.invoke('fix-provider-unique-index', {})
+      .then(({ data, error: fnErr }) => {
+        if (fnErr) {
+          console.warn('[ProvidersTab] Migración índice falló:', fnErr);
+          return;
+        }
+        if (data?.success) {
+          console.log('[ProvidersTab] Migración índice exitosa:', data.message);
+          localStorage.setItem(MIGRATION_KEY, 'done');
+        }
+      })
+      .catch((err) => {
+        console.warn('[ProvidersTab] Error invocando migración:', err);
+      });
+  }, []);
 
   // Reset a página 1 cuando cambia la búsqueda, filtro activo, cliente seleccionado o almacén
   useEffect(() => {
