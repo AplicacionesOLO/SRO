@@ -43,6 +43,8 @@ export interface PendingReservation {
   created_at: string;
   // Campos adicionales para pre-cargar el form de ingreso
   notes?: string | null;
+  /** Fecha y hora de inicio de la cita (start_datetime de la reserva) */
+  start_datetime?: string | null;
   /**
    * true si el cargo_type de la reserva contiene "Importado" (case-insensitive)
    * O si la reserva ya tiene un DUA cargado.

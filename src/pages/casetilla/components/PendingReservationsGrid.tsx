@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useCallback } from 'react';
 
 interface PendingReservation {
   id: string;
@@ -10,6 +10,8 @@ interface PendingReservation {
   provider_name: string;
   warehouse_name: string;
   created_at: string;
+  notes?: string | null;
+  start_datetime?: string | null;
 }
 
 interface PendingReservationsGridProps {
@@ -23,8 +25,18 @@ const safeText = (v: any, fallback = '-') => {
   return s.length ? s : fallback;
 };
 
+const formatDate = (iso: string) => {
+  try {
+    const d = new Date(iso);
+    return d.toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit', year: 'numeric' }) + ' ' +
+           d.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
+  } catch { return iso; }
+};
+
 export default function PendingReservationsGrid({ reservations, onOpenIngreso, isLoading }: PendingReservationsGridProps) {
   const [searchTerm, setSearchTerm] = useState('');
+  const [hoveredReservation, setHoveredReservation] = useState<PendingReservation | null>(null);
+  const [popupPos, setPopupPos] = useState({ x: 0, y: 0 });
 
   const filteredReservations = useMemo(() => {
     if (!searchTerm.trim()) return reservations;
@@ -35,9 +47,29 @@ export default function PendingReservationsGrid({ reservations, onOpenIngreso, i
       r.chofer?.toLowerCase().includes(term) ||
       r.provider_name?.toLowerCase().includes(term) ||
       r.placa?.toLowerCase().includes(term) ||
-      (r.orden_compra ?? '').toLowerCase().includes(term)
+      (r.orden_compra ?? '').toLowerCase().includes(term) ||
+      (r.notes ?? '').toLowerCase().includes(term)
     );
   }, [reservations, searchTerm]);
+
+  const handleRowEnter = useCallback((reservation: PendingReservation, e: React.MouseEvent) => {
+    setHoveredReservation(reservation);
+    setPopupPos({ x: e.clientX, y: e.clientY });
+  }, []);
+
+  const handleRowMove = useCallback((e: React.MouseEvent) => {
+    // Si el mouse está en la zona derecha (donde está el botón de acción), ocultamos el popup
+    if (e.clientX > window.innerWidth - 180) {
+      setHoveredReservation(null);
+      return;
+    }
+    // Posicionamos el popup a la izquierda del cursor para no tapar los botones de la derecha
+    setPopupPos({ x: e.clientX - 340, y: e.clientY });
+  }, []);
+
+  const handleRowLeave = useCallback(() => {
+    setHoveredReservation(null);
+  }, []);
 
   if (isLoading) {
     return (
@@ -102,19 +134,37 @@ export default function PendingReservationsGrid({ reservations, onOpenIngreso, i
                   <th className="px-4 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider whitespace-nowrap">PROVEEDOR</th>
                   <th className="px-4 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider whitespace-nowrap">ALMACÉN</th>
                   <th className="px-4 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider whitespace-nowrap">OC</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider whitespace-nowrap">INICIO CITA</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider whitespace-nowrap">OBSERVACIONES</th>
                   <th className="px-4 py-3 text-center text-xs font-medium text-gray-700 uppercase tracking-wider whitespace-nowrap">ACCIÓN</th>
                 </tr>
               </thead>
 
               <tbody className="bg-white divide-y divide-gray-200">
                 {filteredReservations.map((reservation) => (
-                  <tr key={reservation.id} className="hover:bg-gray-50 transition-colors">
+                  <tr
+                    key={reservation.id}
+                    className="hover:bg-gray-50 transition-colors relative"
+                    onMouseEnter={(e) => handleRowEnter(reservation, e)}
+                    onMouseMove={handleRowMove}
+                    onMouseLeave={handleRowLeave}
+                  >
                     <td className="px-4 py-3 text-sm text-gray-900 font-medium whitespace-nowrap">{safeText(reservation.dua)}</td>
                     <td className="px-4 py-3 text-sm text-gray-900 whitespace-nowrap">{safeText(reservation.placa)}</td>
                     <td className="px-4 py-3 text-sm text-gray-900 whitespace-nowrap">{safeText(reservation.chofer)}</td>
                     <td className="px-4 py-3 text-sm text-gray-600 whitespace-nowrap">{safeText(reservation.provider_name, 'N/A')}</td>
                     <td className="px-4 py-3 text-sm text-gray-600 whitespace-nowrap">{safeText(reservation.warehouse_name, 'N/A')}</td>
                     <td className="px-4 py-3 text-sm text-gray-600 whitespace-nowrap">{safeText(reservation.orden_compra)}</td>
+                    <td className="px-4 py-3 text-sm text-gray-600 whitespace-nowrap">
+                      {reservation.start_datetime ? formatDate(reservation.start_datetime) : <span className="text-gray-400">-</span>}
+                    </td>
+                    <td className="px-4 py-3 text-sm text-gray-600 max-w-[200px]">
+                      {reservation.notes ? (
+                        <span className="block truncate" title={reservation.notes}>{reservation.notes}</span>
+                      ) : (
+                        <span className="text-gray-400">-</span>
+                      )}
+                    </td>
                     <td className="px-4 py-3 text-center">
                       <button
                         onClick={() => onOpenIngreso(reservation)}
@@ -166,6 +216,12 @@ export default function PendingReservationsGrid({ reservations, onOpenIngreso, i
                     <span className="text-gray-500 text-xs">OC:</span>
                     <p className="text-gray-900 truncate">{safeText(reservation.orden_compra)}</p>
                   </div>
+                  {reservation.start_datetime && (
+                    <div className="col-span-2">
+                      <span className="text-gray-500 text-xs">Inicio Cita:</span>
+                      <p className="text-gray-900 text-sm font-medium">{formatDate(reservation.start_datetime)}</p>
+                    </div>
+                  )}
                 </div>
 
                 <div className="pt-2 border-t border-gray-100 space-y-1">
@@ -177,12 +233,85 @@ export default function PendingReservationsGrid({ reservations, onOpenIngreso, i
                     <i className="ri-store-line text-gray-400"></i>
                     <span className="text-gray-600 truncate">{safeText(reservation.warehouse_name, 'N/A')}</span>
                   </div>
+                  {reservation.notes && (
+                    <div className="flex items-start gap-2 text-xs">
+                      <i className="ri-chat-1-line text-gray-400 mt-0.5 flex-shrink-0"></i>
+                      <span className="text-gray-600">{reservation.notes}</span>
+                    </div>
+                  )}
                 </div>
               </div>
             ))}
           </div>
         </>
       )}
+
+      {/* ─── Hover Popup: todos los datos de la reserva (solo desktop) ─── */}
+      {hoveredReservation && (
+        <div
+          className="hidden md:block fixed z-50 pointer-events-none"
+          style={{
+            left: Math.max(8, popupPos.x),
+            top: Math.min(popupPos.y - 10, window.innerHeight - 380),
+          }}
+        >
+          <div className="bg-white border border-gray-200 rounded-xl shadow-lg p-5 w-[320px] animate-in fade-in zoom-in-95 duration-150">
+            {/* Cabecera */}
+            <div className="flex items-center gap-2 mb-4 pb-3 border-b border-gray-100">
+              <div className="w-9 h-9 bg-teal-100 rounded-lg flex items-center justify-center flex-shrink-0">
+                <i className="ri-file-list-3-line text-teal-600 text-lg"></i>
+              </div>
+              <div className="min-w-0">
+                <p className="text-sm font-bold text-gray-900 truncate">Reserva #{hoveredReservation.id.slice(-8).toUpperCase()}</p>
+                <p className="text-xs text-gray-500">{formatDate(hoveredReservation.created_at)}</p>
+              </div>
+            </div>
+
+            {/* Campos */}
+            <div className="space-y-2.5">
+              <FieldRow icon="ri-file-copy-line" label="DUA" value={hoveredReservation.dua} />
+              <FieldRow icon="ri-car-line" label="Matrícula" value={hoveredReservation.placa} />
+              <FieldRow icon="ri-user-line" label="Chofer" value={hoveredReservation.chofer} />
+              <FieldRow icon="ri-building-line" label="Proveedor" value={hoveredReservation.provider_name} fallback="N/A" />
+              <FieldRow icon="ri-store-line" label="Almacén" value={hoveredReservation.warehouse_name} fallback="N/A" />
+              <FieldRow icon="ri-file-text-line" label="OC" value={hoveredReservation.orden_compra} />
+              <FieldRow icon="ri-hashtag" label="N° Pedido" value={hoveredReservation.numero_pedido} />
+              <FieldRow icon="ri-calendar-event-line" label="Inicio Cita" value={hoveredReservation.start_datetime ? formatDate(hoveredReservation.start_datetime) : ''} />
+              <FieldRow icon="ri-chat-1-line" label="Observaciones" value={hoveredReservation.notes} fullWidth />
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Helper: fila de campo para el hover popup ───
+function FieldRow({ icon, label, value, fallback, fullWidth }: {
+  icon: string;
+  label: string;
+  value?: string | null;
+  fallback?: string;
+  fullWidth?: boolean;
+}) {
+  const display = (value ?? '').trim();
+  const fb = fallback || '-';
+
+  return (
+    <div className={`flex gap-2.5 ${fullWidth ? 'items-start' : 'items-center'}`}>
+      <div className="w-7 h-7 bg-gray-100 rounded-md flex items-center justify-center flex-shrink-0">
+        <i className={`${icon} text-gray-500 text-xs`}></i>
+      </div>
+      <div className={`min-w-0 ${fullWidth ? 'flex-1' : 'flex items-center gap-1.5 flex-1'}`}>
+        <span className="text-xs text-gray-400 font-medium flex-shrink-0">{label}:</span>
+        {display ? (
+          <span className={`text-xs text-gray-800 font-medium ${fullWidth ? 'block break-words' : 'truncate'}`}>
+            {display}
+          </span>
+        ) : (
+          <span className="text-xs text-gray-300">{fb}</span>
+        )}
+      </div>
     </div>
   );
 }

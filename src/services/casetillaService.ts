@@ -712,6 +712,7 @@ class CasetillaService {
           created_at: r.created_at,
           is_imported,
           cargo_type_name: cargoTypeName || null,
+          start_datetime: r.start_datetime ?? null,
         };
       });
     } catch (error) {
