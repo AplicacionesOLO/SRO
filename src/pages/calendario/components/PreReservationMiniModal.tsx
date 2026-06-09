@@ -8,6 +8,7 @@ import { timeProfilesService } from '../../../services/timeProfilesService';
 import { dockAllocationService } from '../../../services/dockAllocationService';
 import { useAuth } from '../../../contexts/AuthContext';
 import SearchSelect from '../../../components/base/SearchSelect';
+import { formatProviderLabel } from '../../../utils/providerFormat';
 
 interface PreReservationMiniModalProps {
   isOpen: boolean;
@@ -551,7 +552,7 @@ export default function PreReservationMiniModal({
                 )}
 
                 <SearchSelect
-                  options={providers.map(p => ({ id: p.id, label: p.name }))}
+                  options={providers.map(p => ({ id: p.id, label: formatProviderLabel(p) }))}
                   value={selectedProviderId}
                   onChange={setSelectedProviderId}
                   placeholder={
@@ -638,7 +639,7 @@ export default function PreReservationMiniModal({
                           <SearchSelect
                             options={providers
                               .filter(p => !consolidatedProviders.some(cp => cp.provider_id === p.id))
-                              .map(p => ({ id: p.id, label: p.name }))}
+                              .map(p => ({ id: p.id, label: formatProviderLabel(p) }))}
                             value={consolidatedProviderId}
                             onChange={setConsolidatedProviderId}
                             placeholder="Buscar proveedor..."

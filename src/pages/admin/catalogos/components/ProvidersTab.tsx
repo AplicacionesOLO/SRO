@@ -405,8 +405,10 @@ export default function ProvidersTab({ orgId, warehouseId }: ProvidersTabProps) 
       )}
       {isExcelSyncOpen && (
         <ProviderExcelSyncModal
+          orgId={orgId}
+          warehouseId={warehouseId}
           onClose={() => { setIsExcelSyncOpen(false); loadProviders(1, debouncedSearch, selectedClientId); }}
-          onDone={() => {}}
+          onDone={() => { loadProviders(1, debouncedSearch, selectedClientId); }}
         />
       )}
     </div>

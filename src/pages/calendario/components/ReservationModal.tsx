@@ -3,6 +3,7 @@ import React from 'react';
 import ReservationQRModal from '../../../components/feature/ReservationQRModal';
 import type { ReservationQRData } from '../../../components/feature/ReservationQRModal';
 import SearchSelect from '../../../components/base/SearchSelect';
+import { formatProviderLabel } from '../../../utils/providerFormat';
 import { Dock } from '../../../types/dock';
 import { useAuth } from '../../../contexts/AuthContext';
 import { calendarService, regenerateReservationQRAssets, type Reservation } from '../../../services/calendarService';
@@ -1063,7 +1064,7 @@ export default function ReservationModal({
                               ) : (
                                 <>
                                   <SearchSelect
-                                    options={allowedProviders.map(p => ({ id: p.id, label: p.name }))}
+                                    options={allowedProviders.map(p => ({ id: p.id, label: formatProviderLabel(p) }))}
                                     value={formData.shipperProvider}
                                     onChange={(id) => handleProviderOrCargoTypeChange('shipperProvider', id)}
                                     placeholder={
@@ -1148,7 +1149,7 @@ export default function ReservationModal({
                                   <SearchSelect
                                     options={allowedProviders
                                       .filter(p => !consolidatedProviders.some(cp => cp.provider_id === p.id))
-                                      .map(p => ({ id: p.id, label: p.name }))}
+                                      .map(p => ({ id: p.id, label: formatProviderLabel(p) }))}
                                     value={consolidatedProviderId}
                                     onChange={setConsolidatedProviderId}
                                     placeholder={

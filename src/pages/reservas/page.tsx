@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import * as XLSX from 'xlsx';
+import { supabase } from '../../lib/supabase';
 import { usePermissions } from '../../hooks/usePermissions';
 import { useUserScope } from '../../hooks/useUserScope';
 import { useActiveWarehouse } from '../../contexts/ActiveWarehouseContext';
@@ -26,6 +27,9 @@ export default function ReservasPage() {
   const [providers, setProviders] = useState<any[]>([]);
   const [cargoTypes, setCargoTypes] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+
+  // Mapa proveedor → clientes (reverse lookup desde client_providers)
+  const [providerClientMap, setProviderClientMap] = useState<Map<string, string>>(new Map());
 
   const [searchTerm, setSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState<string>('all');
@@ -110,6 +114,33 @@ export default function ReservasPage() {
       setProviders(providersData);
       setCargoTypes(cargoTypesData);
 
+      // PASO 3: reverse lookup proveedor → cliente (client_providers)
+      try {
+        const { data: cpData, error: cpError } = await supabase
+          .from('client_providers')
+          .select('provider_id, client_id, clients!inner(name)')
+          .eq('org_id', orgId);
+
+        if (!cpError && cpData) {
+          const map = new Map<string, string>();
+          const grouped = new Map<string, string[]>();
+          for (const row of cpData as any[]) {
+            const pid = row.provider_id;
+            const cname = row.clients?.name || '';
+            if (pid && cname) {
+              if (!grouped.has(pid)) grouped.set(pid, []);
+              grouped.get(pid)!.push(cname);
+            }
+          }
+          for (const [pid, names] of grouped) {
+            map.set(pid, [...new Set(names)].sort().join(', '));
+          }
+          setProviderClientMap(map);
+        }
+      } catch {
+        // non-blocking
+      }
+
     } catch (error: any) {
       // silenced
     } finally {
@@ -142,6 +173,14 @@ export default function ReservasPage() {
     [cargoTypes]
   );
 
+  const getClientName = useCallback(
+    (providerId: string | null | undefined) => {
+      if (!providerId) return '-';
+      return providerClientMap.get(providerId) || '-';
+    },
+    [providerClientMap]
+  );
+
   const filteredReservations = useMemo(() => {
     let filtered = [...reservations];
 
@@ -156,6 +195,7 @@ export default function ReservasPage() {
         // Buscar tanto por ID de proveedor como por su nombre legible
         r.shipper_provider?.toLowerCase().includes(term) ||
         getProviderName(r.shipper_provider).toLowerCase().includes(term) ||
+        getClientName(r.shipper_provider).toLowerCase().includes(term) ||
         r.truck_plate?.toLowerCase().includes(term) ||
         r.notes?.toLowerCase().includes(term) ||
         r.order_request_number?.toLowerCase().includes(term) ||
@@ -193,7 +233,7 @@ export default function ReservasPage() {
     });
 
     return filtered;
-  }, [reservations, searchTerm, filterStatus, filterCancelled, filterDateFrom, filterDateTo, sortField, sortOrder]);
+  }, [reservations, searchTerm, filterStatus, filterCancelled, filterDateFrom, filterDateTo, sortField, sortOrder, getProviderName, getClientName]);
 
   const paginatedReservations = useMemo(() => {
     const startIndex = (currentPage - 1) * itemsPerPage;
@@ -308,6 +348,7 @@ export default function ReservasPage() {
         'Razon Cancelacion': r.cancel_reason || '',
         'Orden de Compra': r.purchase_order || '',
         'Proveedor': getProviderName(r.shipper_provider),
+        'Reversa Cliente': getClientName(r.shipper_provider),
         'Chofer': r.driver || '',
         'DUA': r.dua || '',
         'Factura': r.invoice || '',
@@ -323,7 +364,7 @@ export default function ReservasPage() {
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, 'Reservas');
     XLSX.writeFile(workbook, 'Reservas.xlsx');
-  }, [filteredReservations, getStatusInfo, getDockName, getProviderName, getCargoTypeName, formatDateTime]);
+  }, [filteredReservations, getStatusInfo, getDockName, getProviderName, getClientName, getCargoTypeName, formatDateTime]);
 
   if (permLoading || loading) {
     return (
@@ -490,6 +531,7 @@ export default function ReservasPage() {
                   <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Estado</th>
                   <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Orden Compra</th>
                   <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Proveedor</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Reversa Cliente</th>
                   <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Chofer</th>
                   <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">DUA</th>
                   <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Placa</th>
@@ -499,7 +541,7 @@ export default function ReservasPage() {
               <tbody className="divide-y divide-gray-200">
                 {paginatedReservations.length === 0 ? (
                   <tr>
-                    <td colSpan={10} className="px-4 py-12 text-center">
+                    <td colSpan={11} className="px-4 py-12 text-center">
                       <div className="w-10 h-10 flex items-center justify-center mx-auto mb-2">
                         <i className="ri-inbox-line text-4xl text-gray-300"></i>
                       </div>
@@ -555,6 +597,9 @@ export default function ReservasPage() {
                         </td>
                         <td className={`px-4 py-3 text-sm ${isCancelled ? 'text-gray-400' : 'text-gray-900'}`}>
                           {getProviderName(reservation.shipper_provider)}
+                        </td>
+                        <td className={`px-4 py-3 text-sm ${isCancelled ? 'text-gray-400' : 'text-gray-900'}`}>
+                          {getClientName(reservation.shipper_provider)}
                         </td>
                         <td className={`px-4 py-3 text-sm ${isCancelled ? 'text-gray-400' : 'text-gray-900'}`}>
                           {reservation.driver || '-'}

@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import type { ProviderWithClients } from '../../../../types/catalog';
+import { formatProviderLabel } from '../../../../utils/providerFormat';
 
 interface ProviderSearchSelectProps {
   providers: ProviderWithClients[];
@@ -197,31 +198,15 @@ export default function ProviderSearchSelect({
                 onMouseEnter={() => setHighlighted(i)}
               >
                 <div className="flex items-center justify-between gap-2">
-                  <span className="text-sm font-medium text-gray-900 truncate">{provider.name}</span>
+                  <span className="text-sm text-gray-900 truncate">
+                    {formatProviderLabel(provider)}
+                  </span>
                   {provider.id === value && (
                     <div className="w-4 h-4 flex items-center justify-center flex-shrink-0">
                       <i className="ri-check-line text-teal-600 text-sm"></i>
                     </div>
                   )}
                 </div>
-
-                {provider.clientNames.length > 0 && (
-                  <div className="flex flex-wrap gap-1 mt-1.5">
-                    {provider.clientNames.map(clientName => (
-                      <span
-                        key={clientName}
-                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-teal-50 text-teal-700 font-medium border border-teal-100"
-                      >
-                        <i className="ri-building-line text-teal-500" style={{ fontSize: '10px' }}></i>
-                        {clientName}
-                      </span>
-                    ))}
-                  </div>
-                )}
-
-                {provider.clientNames.length === 0 && (
-                  <p className="text-xs text-gray-400 mt-0.5">Sin cliente asociado en este almacén</p>
-                )}
               </div>
             ))
           )}

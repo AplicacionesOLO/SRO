@@ -3,6 +3,8 @@ import * as XLSX from 'xlsx';
 import { supabase } from '../../../../lib/supabase';
 
 interface ProviderExcelSyncModalProps {
+  orgId: string;
+  warehouseId?: string | null;
   onClose: () => void;
   onDone: () => void;
 }
@@ -10,7 +12,7 @@ interface ProviderExcelSyncModalProps {
 interface ExcelRow {
   idCompania: number;
   origen: string;
-  idProveedor: number;
+  idProveedor: string;
   nombre: string;
 }
 
@@ -36,6 +38,14 @@ function normalizeHeader(h: string): string {
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '');
 }
+
+// Mapeo de IDs de compañía conocidos a nombres de cliente
+const COMPANY_MAP: Record<number, { name: string; color: string; bg: string; text: string }> = {
+  1: { name: 'FEBECA', color: 'bg-teal-50', bg: 'bg-teal-50', text: 'text-teal-700' },
+  2: { name: 'SILLACA', color: 'bg-blue-50', bg: 'bg-blue-50', text: 'text-blue-700' },
+  29: { name: 'Cofersa', color: 'bg-teal-50', bg: 'bg-teal-50', text: 'text-teal-700' },
+  109: { name: 'EPA', color: 'bg-blue-50', bg: 'bg-blue-50', text: 'text-blue-700' },
+};
 
 function parseExcel(file: File): Promise<{ rows: ExcelRow[]; error: string }> {
   return new Promise((resolve, reject) => {
@@ -87,11 +97,13 @@ function parseExcel(file: File): Promise<{ rows: ExcelRow[]; error: string }> {
           const nombre = String(raw[nombreKey] ?? '').trim();
           if (!nombre) continue;
 
-          const idCompania = Number(raw[idcompaniaKey]);
-          const idProveedor = Number(raw[idproveedorKey]);
+          const idCompaniaRaw = String(raw[idcompaniaKey] ?? '').trim();
+          const idCompania = Number(idCompaniaRaw);
           const origen = String(raw[origenKey] ?? '').trim();
+          // IDPROVEEDOR puede ser alfanumérico (RIF): J310268568, V196411476, etc.
+          const idProveedor = String(raw[idproveedorKey] ?? '').trim();
 
-          if (isNaN(idCompania) || isNaN(idProveedor)) continue;
+          if (isNaN(idCompania) || !idProveedor) continue;
 
           rows.push({ idCompania, origen, idProveedor, nombre });
         }
@@ -106,7 +118,7 @@ function parseExcel(file: File): Promise<{ rows: ExcelRow[]; error: string }> {
   });
 }
 
-export default function ProviderExcelSyncModal({ onClose, onDone }: ProviderExcelSyncModalProps) {
+export default function ProviderExcelSyncModal({ orgId, warehouseId, onClose, onDone }: ProviderExcelSyncModalProps) {
   const [step, setStep] = useState<Step>('upload');
   const [dragOver, setDragOver] = useState(false);
   const [fileName, setFileName] = useState('');
@@ -117,10 +129,23 @@ export default function ProviderExcelSyncModal({ onClose, onDone }: ProviderExce
   const [syncError, setSyncError] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Stats del preview
-  const cofersa = rows.filter((r) => r.idCompania === 29);
-  const epa = rows.filter((r) => r.idCompania === 109);
-  const otros = rows.filter((r) => r.idCompania !== 29 && r.idCompania !== 109);
+  // Stats del preview: agrupar por compañía dinámicamente
+  const companyStats = (() => {
+    const stats: Record<number, number> = {};
+    for (const r of rows) {
+      stats[r.idCompania] = (stats[r.idCompania] || 0) + 1;
+    }
+    return stats;
+  })();
+  const knownCompanies = Object.keys(companyStats)
+    .map(Number)
+    .filter((id) => COMPANY_MAP[id])
+    .sort((a, b) => a - b);
+  const otherIds = Object.keys(companyStats)
+    .map(Number)
+    .filter((id) => !COMPANY_MAP[id])
+    .sort((a, b) => a - b);
+  const otherCount = otherIds.reduce((sum, id) => sum + (companyStats[id] || 0), 0);
 
   const processFile = useCallback(async (file: File) => {
     if (!file.name.match(/\.(xlsx|xls)$/i)) {
@@ -138,7 +163,7 @@ export default function ProviderExcelSyncModal({ onClose, onDone }: ProviderExce
         return;
       }
       if (parsed.length === 0) {
-        setParseError('No se encontraron filas válidas en el archivo.');
+        setParseError('No se encontraron filas válidas en el archivo. Revisá que IDPROVEEDOR no esté vacío y que IDCOMPANIA sea numérico.');
         setLoading(false);
         return;
       }
@@ -168,14 +193,13 @@ export default function ProviderExcelSyncModal({ onClose, onDone }: ProviderExce
     setSyncError('');
     try {
       const payload = rows.map((r) => ({
-        id_compania: r.idCompania,
-        origen: r.origen,
-        id_proveedor: r.idProveedor,
-        nombre: r.nombre,
+        name: r.nombre,
+        provider_code: r.idProveedor,
+        source: r.origen,
       }));
 
       const { data, error } = await supabase.functions.invoke('sync-providers-excel', {
-        body: { providers: payload },
+        body: { org_id: orgId, warehouse_id: warehouseId || undefined, providers: payload },
       });
 
       if (error) throw new Error(error.message || 'Error en la sincronización');
@@ -336,25 +360,28 @@ export default function ProviderExcelSyncModal({ onClose, onDone }: ProviderExce
                     </thead>
                     <tbody>
                       <tr className="bg-white border-b border-gray-100">
-                        <td className="px-3 py-1.5 text-gray-800">29</td>
-                        <td className="px-3 py-1.5 text-gray-600">Cofersa</td>
-                        <td className="px-3 py-1.5 text-gray-600">1</td>
-                        <td className="px-3 py-1.5 text-gray-800">TESA TAPE CENTRO AMERICA S.A.</td>
-                        <td className="px-3 py-1.5 text-gray-600">TESA TAPE</td>
+                        <td className="px-3 py-1.5 text-gray-800">0001</td>
+                        <td className="px-3 py-1.5 text-gray-600">FEBECA</td>
+                        <td className="px-3 py-1.5 text-gray-600">J310268568</td>
+                        <td className="px-3 py-1.5 text-gray-800">HOTEL LOS MOLINOS C.A</td>
+                        <td className="px-3 py-1.5 text-gray-600">HOTEL LOS MOLINOS</td>
                       </tr>
                       <tr className="bg-white">
-                        <td className="px-3 py-1.5 text-gray-800">109</td>
-                        <td className="px-3 py-1.5 text-gray-600">EPA</td>
-                        <td className="px-3 py-1.5 text-gray-600">1</td>
-                        <td className="px-3 py-1.5 text-gray-800">Rex Internacional Costa Rica S.A.</td>
-                        <td className="px-3 py-1.5 text-gray-600">Rex CR</td>
+                        <td className="px-3 py-1.5 text-gray-800">0002</td>
+                        <td className="px-3 py-1.5 text-gray-600">SILLACA</td>
+                        <td className="px-3 py-1.5 text-gray-600">J303992722</td>
+                        <td className="px-3 py-1.5 text-gray-800">ADMINISTRADORA DE RIESGOS PARSALUD</td>
+                        <td className="px-3 py-1.5 text-gray-600">PARSALUD</td>
                       </tr>
                     </tbody>
                   </table>
                 </div>
                 <div className="mt-2 space-y-1">
                   <p className="text-xs text-gray-500">
-                    <strong>IDCOMPANIA:</strong> 29 = Cofersa · 109 = EPA · otros se ignoran en el cliente
+                    <strong>IDCOMPANIA:</strong> 0001 = FEBECA · 0002 = SILLACA · 0029 = Cofersa · 0109 = EPA
+                  </p>
+                  <p className="text-xs text-gray-500">
+                    <strong>IDPROVEEDOR:</strong> puede ser alfanumérico (RIF, cédula, código). No se convierte a número.
                   </p>
                   <p className="text-xs text-gray-500">
                     <strong>Match exacto:</strong> los proveedores existentes se actualizan con código y origen. Los que no coincidan se crean.
@@ -373,28 +400,38 @@ export default function ProviderExcelSyncModal({ onClose, onDone }: ProviderExce
                   <p className="text-2xl font-bold text-gray-800">{rows.length}</p>
                   <p className="text-xs text-gray-500 mt-0.5">Total filas</p>
                 </div>
-                <div className="bg-teal-50 rounded-xl p-3 text-center">
-                  <p className="text-2xl font-bold text-teal-700">{cofersa.length}</p>
-                  <p className="text-xs text-teal-600 mt-0.5">Cofersa (ID 29)</p>
-                </div>
-                <div className="bg-teal-50 rounded-xl p-3 text-center">
-                  <p className="text-2xl font-bold text-teal-700">{epa.length}</p>
-                  <p className="text-xs text-teal-600 mt-0.5">EPA (ID 109)</p>
-                </div>
-                <div className="bg-amber-50 rounded-xl p-3 text-center">
-                  <p className="text-2xl font-bold text-amber-700">{otros.length}</p>
-                  <p className="text-xs text-amber-600 mt-0.5">Otras compañías</p>
-                </div>
+                {knownCompanies.map((id) => {
+                  const info = COMPANY_MAP[id];
+                  const count = companyStats[id] || 0;
+                  return (
+                    <div key={id} className={`${info.bg} rounded-xl p-3 text-center`}>
+                      <p className={`text-2xl font-bold ${info.text}`}>{count}</p>
+                      <p className={`text-xs mt-0.5 ${info.text}`}>{info.name} (ID {String(id).padStart(4, '0')})</p>
+                    </div>
+                  );
+                })}
+                {otherCount > 0 && (
+                  <div className="bg-amber-50 rounded-xl p-3 text-center">
+                    <p className="text-2xl font-bold text-amber-700">{otherCount}</p>
+                    <p className="text-xs text-amber-600 mt-0.5">Otras compañías</p>
+                  </div>
+                )}
+                {knownCompanies.length === 0 && otherCount === 0 && (
+                  <div className="bg-amber-50 rounded-xl p-3 text-center">
+                    <p className="text-2xl font-bold text-amber-700">0</p>
+                    <p className="text-xs text-amber-600 mt-0.5">Sin compañías reconocidas</p>
+                  </div>
+                )}
               </div>
 
               {/* Info */}
               <div className="flex items-start gap-2 p-3 bg-blue-50 border border-blue-200 rounded-lg">
                 <i className="ri-information-line text-blue-500 mt-0.5 w-4 h-4 flex items-center justify-center flex-shrink-0"></i>
                 <div className="text-xs text-blue-700 space-y-1">
-                  <p><strong>Match exacto por nombre:</strong> los proveedores existentes se actualizan con código y origen.</p>
+                  <p><strong>Match exacto por código:</strong> los proveedores existentes se actualizan con nombre y origen.</p>
                   <p><strong>Nuevos:</strong> los que no coincidan se crean automáticamente con su cliente correspondiente.</p>
-                  {otros.length > 0 && (
-                    <p><strong>Otras compañías ({otros.length}):</strong> se crean sin cliente asignado.</p>
+                  {otherCount > 0 && (
+                    <p><strong>Otras compañías ({otherCount}):</strong> se crean sin cliente asignado.</p>
                   )}
                 </div>
               </div>
@@ -411,22 +448,23 @@ export default function ProviderExcelSyncModal({ onClose, onDone }: ProviderExce
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-100">
-                    {rows.slice(0, 150).map((r, idx) => (
-                      <tr key={idx} className="hover:bg-gray-50">
-                        <td className="px-3 py-1.5 text-gray-500 font-mono">{r.idProveedor}</td>
-                        <td className="px-3 py-1.5 text-gray-800 font-medium max-w-xs truncate" title={r.nombre}>{r.nombre}</td>
-                        <td className="px-3 py-1.5 text-gray-600">{r.origen || <span className="text-gray-300">—</span>}</td>
-                        <td className="px-3 py-1.5">
-                          {r.idCompania === 29 ? (
-                            <span className="inline-flex px-1.5 py-0.5 bg-teal-100 text-teal-700 rounded text-xs font-medium">Cofersa</span>
-                          ) : r.idCompania === 109 ? (
-                            <span className="inline-flex px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded text-xs font-medium">EPA</span>
-                          ) : (
-                            <span className="text-gray-400 text-xs">ID {r.idCompania}</span>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
+                    {rows.slice(0, 150).map((r, idx) => {
+                      const info = COMPANY_MAP[r.idCompania];
+                      return (
+                        <tr key={idx} className="hover:bg-gray-50">
+                          <td className="px-3 py-1.5 text-gray-500 font-mono">{r.idProveedor}</td>
+                          <td className="px-3 py-1.5 text-gray-800 font-medium max-w-xs truncate" title={r.nombre}>{r.nombre}</td>
+                          <td className="px-3 py-1.5 text-gray-600">{r.origen || <span className="text-gray-300">—</span>}</td>
+                          <td className="px-3 py-1.5">
+                            {info ? (
+                              <span className={`inline-flex px-1.5 py-0.5 ${info.bg} ${info.text} rounded text-xs font-medium`}>{info.name}</span>
+                            ) : (
+                              <span className="text-gray-400 text-xs">ID {r.idCompania}</span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
                 {rows.length > 150 && (
@@ -592,7 +630,7 @@ export default function ProviderExcelSyncModal({ onClose, onDone }: ProviderExce
             {step === 'result' && (
               <button
                 type="button"
-                onClick={onClose}
+                onClick={() => { onDone(); onClose(); }}
                 className="flex items-center gap-2 px-5 py-2 bg-teal-600 text-white rounded-lg hover:bg-teal-700 transition-colors text-sm font-medium whitespace-nowrap cursor-pointer"
               >
                 <i className="ri-check-line w-4 h-4 flex items-center justify-center"></i>
