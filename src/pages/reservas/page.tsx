@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import * as XLSX from 'xlsx';
 import { supabase } from '../../lib/supabase';
 import { usePermissions } from '../../hooks/usePermissions';
@@ -154,6 +154,37 @@ export default function ReservasPage() {
     if (!ready) return;
     loadData();
   }, [ready, loadData]);
+
+  // ── Batch lookup for inactive providers that appear in reservations ──
+  const lastMissingProvFetchKeyRef = useRef<string>('');
+  useEffect(() => {
+    if (!orgId || reservations.length === 0 || providers.length === 0) return;
+    const activeIdSet = new Set(providers.map((p: any) => p.id));
+    const missingIds = new Set<string>();
+    for (const r of reservations) {
+      if (r.shipper_provider && !activeIdSet.has(r.shipper_provider)) {
+        missingIds.add(r.shipper_provider);
+      }
+    }
+    if (missingIds.size === 0) return;
+    const dedupKey = [...missingIds].sort().join(',');
+    if (dedupKey === lastMissingProvFetchKeyRef.current) return;
+    lastMissingProvFetchKeyRef.current = dedupKey;
+
+    supabase.from('providers')
+      .select('id, name')
+      .in('id', [...missingIds])
+      .then(({ data }) => {
+        if (data && data.length > 0) {
+          setProviders(prev => {
+            const existingIds = new Set(prev.map((p: any) => p.id));
+            const newOnes = data.filter((p: any) => !existingIds.has(p.id)).map((p: any) => ({ id: p.id, name: p.name }));
+            return newOnes.length > 0 ? [...prev, ...newOnes] : prev;
+          });
+        }
+      })
+      .catch(() => {});
+  }, [orgId, reservations, providers]);
 
   const getProviderName = useCallback(
     (value: string | null | undefined) => {

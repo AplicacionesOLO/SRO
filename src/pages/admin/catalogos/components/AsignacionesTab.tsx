@@ -46,26 +46,43 @@ export default function AsignacionesTab({ orgId, userId }: Props) {
         clusterService.getClientUsers(orgId, client.id),
       ]);
 
-      // Cargar proveedores vinculados al cliente vía join directo (evita
-      // el límite de 1000 items de .in() en Supabase)
-      const { data: providersData, error: providersError } = await supabase
-        .from('providers')
-        .select('id, org_id, name, active, created_at, client_providers!inner(client_id, provider_id)')
-        .eq('client_providers.client_id', client.id)
-        .eq('client_providers.org_id', orgId)
-        .eq('active', true)
-        .order('name', { ascending: true });
+      // Cargar proveedores vinculados al cliente con paginación (evita
+      // el límite de 1000 registros de Supabase)
+      let allProviders: any[] = [];
+      let rangeStart = 0;
+      const pageSize = 1000;
+      while (true) {
+        const { data: providersData, error: providersError } = await supabase
+          .from('providers')
+          .select('id, org_id, name, active, created_at, provider_code, source, source_code, client_providers!inner(client_id, provider_id)')
+          .eq('client_providers.client_id', client.id)
+          .eq('client_providers.org_id', orgId)
+          .eq('active', true)
+          .order('name', { ascending: true })
+          .range(rangeStart, rangeStart + pageSize - 1);
 
-      if (providersError) {
-        console.error('[AsignacionesTab] Error cargando proveedores:', providersError);
+        if (providersError) {
+          console.error('[AsignacionesTab] Error cargando proveedores:', providersError);
+          break;
+        }
+
+        if (!providersData || providersData.length === 0) break;
+
+        allProviders = allProviders.concat(providersData);
+
+        if (providersData.length < pageSize) break;
+        rangeStart += pageSize;
       }
 
-      const providers = ((providersData ?? []) as any[]).map((p) => ({
+      const providers = allProviders.map((p) => ({
         id: p.id,
         org_id: p.org_id,
         name: p.name,
         active: p.active,
         created_at: p.created_at,
+        provider_code: p.provider_code,
+        source: p.source,
+        source_code: p.source_code,
       })) as Provider[];
 
       setClusters(clustersData);

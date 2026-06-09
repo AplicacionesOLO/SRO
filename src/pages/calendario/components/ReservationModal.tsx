@@ -6,6 +6,7 @@ import SearchSelect from '../../../components/base/SearchSelect';
 import { formatProviderLabel } from '../../../utils/providerFormat';
 import { Dock } from '../../../types/dock';
 import { useAuth } from '../../../contexts/AuthContext';
+import { supabase } from '../../../lib/supabase';
 import { calendarService, regenerateReservationQRAssets, type Reservation } from '../../../services/calendarService';
 import { activityLogService } from '../../../services/activityLogService';
 import { ActivityTab } from './ActivityTab';
@@ -280,7 +281,25 @@ export default function ReservationModal({
         const alreadyIncluded = (visibleProviders as UserProvider[]).some(p => p.id === preselectedProviderId);
         if (!alreadyIncluded) {
           const missingProvider = allProvidersData.find(p => p.id === preselectedProviderId);
-          if (missingProvider) visibleProviders = [...visibleProviders, missingProvider] as UserProvider[];
+          if (missingProvider) {
+            visibleProviders = [...visibleProviders, missingProvider] as UserProvider[];
+          } else {
+            // Provider is not in active list — fetch directly from DB (may be inactive)
+            try {
+              const { data: inactiveProvider } = await supabase
+                .from('providers')
+                .select('id, org_id, name, active, provider_type, provider_code, source, source_code, client_id, created_at')
+                .eq('id', preselectedProviderId)
+                .maybeSingle();
+              if (inactiveProvider) {
+                setProviders(prev => {
+                  if (prev.some(p => p.id === inactiveProvider.id)) return prev;
+                  return [...prev, inactiveProvider as Provider];
+                });
+                visibleProviders = [...visibleProviders, inactiveProvider as Provider] as UserProvider[];
+              }
+            } catch { /* non-blocking — will show ID as fallback */ }
+          }
         }
       }
       setAllowedProviders(visibleProviders as UserProvider[]);

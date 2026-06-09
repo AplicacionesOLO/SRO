@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { clusterService, type Cluster } from '@/services/clusterService';
 import type { Provider } from '@/types/catalog';
+import { formatProviderLabel } from '@/utils/providerFormat';
 
 interface Props {
   orgId: string;
@@ -52,9 +53,12 @@ export default function ClusterModal({
     );
   }
 
-  const filteredProviders = clientProviders.filter((p) =>
-    p.name.toLowerCase().includes(providerSearch.toLowerCase())
-  );
+  const filteredProviders = clientProviders.filter((p) => {
+    const q = providerSearch.toLowerCase();
+    return p.name.toLowerCase().includes(q) ||
+      (p.provider_code && p.provider_code.toLowerCase().includes(q)) ||
+      (p.source && p.source.toLowerCase().includes(q));
+  });
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -95,7 +99,7 @@ export default function ClusterModal({
 
   return (
     <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-xl w-full max-w-lg max-h-[90vh] flex flex-col">
+      <div className="bg-white rounded-xl w-full max-w-xl max-h-[90vh] flex flex-col">
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
           <h2 className="text-base font-semibold text-gray-900">
@@ -188,7 +192,7 @@ export default function ClusterModal({
                           onChange={() => toggleProvider(p.id)}
                           className="accent-teal-600 w-4 h-4 shrink-0"
                         />
-                        <span className="text-sm text-gray-700 truncate">{p.name}</span>
+                        <span className="text-sm text-gray-700 truncate">{formatProviderLabel(p)}</span>
                       </label>
                     );
                   })

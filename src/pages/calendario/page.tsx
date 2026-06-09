@@ -891,6 +891,38 @@ export default function CalendarioPage() {
   useEffect(() => { if (!orgId) return; providersService.getActive(orgId).then(setProviders).catch(() => {}); }, [orgId]);
   useEffect(() => { if (!orgId || !user?.id) return; userProvidersService.getUserProviders(orgId, user.id).then((ups) => setUserProviderIds(new Set(ups.map((p) => p.id)))).catch(() => {}); }, [orgId, user?.id]);
 
+  // ── Batch lookup for inactive providers that appear in reservations ──
+  const lastMissingProviderFetchRef = useRef<string>('');
+  useEffect(() => {
+    if (!orgId || reservations.length === 0) return;
+    // Collect shipper_provider IDs from reservations that are missing in the current providers list
+    const activeIdSet = new Set(providers.map(p => p.id));
+    const missingIds = new Set<string>();
+    for (const r of reservations) {
+      if (r.shipper_provider && !activeIdSet.has(r.shipper_provider)) {
+        missingIds.add(r.shipper_provider);
+      }
+    }
+    if (missingIds.size === 0) return;
+    const dedupKey = [...missingIds].sort().join(',');
+    if (dedupKey === lastMissingProviderFetchRef.current) return;
+    lastMissingProviderFetchRef.current = dedupKey;
+
+    supabase.from('providers')
+      .select('id, name')
+      .in('id', [...missingIds])
+      .then(({ data }) => {
+        if (data && data.length > 0) {
+          setProviders(prev => {
+            const existingIds = new Set(prev.map(p => p.id));
+            const newOnes = data.filter((p: any) => !existingIds.has(p.id)).map((p: any) => ({ id: p.id, name: p.name }));
+            return newOnes.length > 0 ? [...prev, ...newOnes] : prev;
+          });
+        }
+      })
+      .catch(() => {});
+  }, [orgId, reservations, providers]);
+
   const handleCopyReservation = useCallback(async (sourceReservation: Reservation) => {
     const safeStatus = statuses.find((s) => (s.code || '').toLowerCase().includes('pendiente') || (s.name || '').toLowerCase().includes('pendiente') || (s.code || '').toLowerCase().includes('pending')) || statuses[0];
     const srcStart = new Date(sourceReservation.start_datetime);
