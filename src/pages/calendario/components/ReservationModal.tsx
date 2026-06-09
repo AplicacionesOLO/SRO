@@ -268,11 +268,8 @@ export default function ReservationModal({
           const rawUserProviders = await userProvidersService.getUserProviders(orgId, user.id);
           if (warehouseId) {
             const warehouseProviderIds = new Set(allProvidersData.map((p) => p.id));
-            // Proveedores que están tanto en el almacén como asignados al usuario (directa o cluster)
-            const warehouseMatched = rawUserProviders.filter((up) => warehouseProviderIds.has(up.id));
-            // Proveedores asignados vía cluster que NO están en el warehouse — deben verse igual
-            const clusterOnly = rawUserProviders.filter((up) => !warehouseProviderIds.has(up.id));
-            visibleProviders = [...warehouseMatched, ...clusterOnly];
+            // Solo proveedores que realmente pertenecen al almacén activo
+            visibleProviders = rawUserProviders.filter((up) => warehouseProviderIds.has(up.id));
           } else {
             visibleProviders = rawUserProviders;
           }

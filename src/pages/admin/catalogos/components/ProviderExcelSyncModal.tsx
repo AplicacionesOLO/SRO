@@ -18,17 +18,32 @@ interface ExcelRow {
 
 type Step = 'upload' | 'preview' | 'syncing' | 'result';
 
+interface RejectedEntry {
+  name: string;
+  provider_code?: string;
+  source?: string;
+  reason: string;
+  firstCode?: string;
+}
+
 interface SyncResult {
   total: number;
-  uniqueNames?: number;
-  duplicatesInFile?: number;
-  matched: number;
+  processed: number;
   inserted: number;
+  updated: number;
   skipped: number;
-  updateErrors?: string[];
-  insertErrors?: string[];
-  sampleUnmatched?: string[];
-  sampleExisting?: string[];
+  preserved: number;
+  rejectedMissingCode: number;
+  rejectedDuplicateInExcel: number;
+  errors: number;
+  details?: {
+    created?: { name: string; code: string; source: string }[];
+    updated?: { name: string; code: string; source: string }[];
+    preserved?: { name: string; code: string; source: string }[];
+    rejectedMissingCode?: RejectedEntry[];
+    rejectedDuplicateInExcel?: RejectedEntry[];
+    errors?: { code: string; name: string; error: string }[];
+  };
 }
 
 function normalizeHeader(h: string): string {
@@ -47,7 +62,7 @@ const COMPANY_MAP: Record<number, { name: string; color: string; bg: string; tex
   109: { name: 'EPA', color: 'bg-blue-50', bg: 'bg-blue-50', text: 'text-blue-700' },
 };
 
-function parseExcel(file: File): Promise<{ rows: ExcelRow[]; error: string }> {
+function parseExcel(file: File): Promise<{ rows: ExcelRow[]; error: string; sciWarnings: string[] }> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = (e) => {
@@ -56,17 +71,17 @@ function parseExcel(file: File): Promise<{ rows: ExcelRow[]; error: string }> {
         const workbook = XLSX.read(data, { type: 'array' });
         const sheetName = workbook.SheetNames[0];
         if (!sheetName) {
-          resolve({ rows: [], error: 'El archivo no contiene hojas.' });
+          resolve({ rows: [], error: 'El archivo no contiene hojas.', sciWarnings: [] });
           return;
         }
         const sheet = workbook.Sheets[sheetName];
         const jsonRows: Record<string, unknown>[] = XLSX.utils.sheet_to_json(sheet, {
           defval: '',
-          raw: true,
+          raw: false,
         });
 
         if (jsonRows.length === 0) {
-          resolve({ rows: [], error: 'El archivo está vacío.' });
+          resolve({ rows: [], error: 'El archivo está vacío.', sciWarnings: [] });
           return;
         }
 
@@ -88,11 +103,13 @@ function parseExcel(file: File): Promise<{ rows: ExcelRow[]; error: string }> {
             rows: [],
             error:
               'Columnas requeridas no encontradas. El archivo debe tener IDCOMPANIA, IDPROVEEDOR y NOMBRELARGO (o NOMBRECORTO).',
+            sciWarnings: [],
           });
           return;
         }
 
         const rows: ExcelRow[] = [];
+        const sciWarnings: string[] = [];
         for (const raw of jsonRows) {
           const nombre = String(raw[nombreKey] ?? '').trim();
           if (!nombre) continue;
@@ -100,15 +117,45 @@ function parseExcel(file: File): Promise<{ rows: ExcelRow[]; error: string }> {
           const idCompaniaRaw = String(raw[idcompaniaKey] ?? '').trim();
           const idCompania = Number(idCompaniaRaw);
           const origen = String(raw[origenKey] ?? '').trim();
-          // IDPROVEEDOR puede ser alfanumérico (RIF): J310268568, V196411476, etc.
           const idProveedor = String(raw[idproveedorKey] ?? '').trim();
 
           if (isNaN(idCompania) || !idProveedor) continue;
 
-          rows.push({ idCompania, origen, idProveedor, nombre });
+          // AUTO-CORRECCIÓN de notación científica de Excel
+          // Los códigos de FEBECA y SILLACA empiezan con "E" (ej: E9667559, E009667559)
+          // pero Excel los interpreta como notación científica y los convierte a número.
+          // Acá los detectamos y corregimos automáticamente.
+          let fixedCode = idProveedor;
+          let wasFixed = false;
+          
+          const sciPattern = /^[0-9]+(\.[0-9]+)?[eE]\+[0-9]+$/;
+          if (sciPattern.test(fixedCode)) {
+            // Caso: código en notación científica explícita (ej: 9.667559e+6)
+            // Intentamos reconstruir: es difícil, pero advertimos
+            sciWarnings.push(
+              `Código "${idProveedor}" está en notación científica y no se pudo recuperar (proveedor: "${nombre}"). Revisá el Excel original.`
+            );
+            continue; // Saltamos esta fila — no podemos adivinar el código real
+          }
+
+          if (/^[0-9]{5,}$/.test(fixedCode) && origen) {
+            const origUp = origen.toUpperCase();
+            if (origUp === 'FEBECA' || origUp === 'SILLACA') {
+              // Auto-corregir: agregar prefijo "E" perdido por Excel
+              fixedCode = 'E' + fixedCode;
+              wasFixed = true;
+            }
+          }
+
+          rows.push({ idCompania, origen, idProveedor: fixedCode, nombre });
+          if (wasFixed) {
+            sciWarnings.push(
+              `Código auto-corregido: "${idProveedor}" → "${fixedCode}" (${origen}, proveedor: "${nombre}"). Se agregó el prefijo "E" perdido por Excel.`
+            );
+          }
         }
 
-        resolve({ rows, error: '' });
+        resolve({ rows, error: '', sciWarnings });
       } catch (err: unknown) {
         reject(new Error('Error leyendo el archivo: ' + String(err)));
       }
@@ -125,6 +172,7 @@ export default function ProviderExcelSyncModal({ orgId, warehouseId, onClose, on
   const [parseError, setParseError] = useState('');
   const [loading, setLoading] = useState(false);
   const [rows, setRows] = useState<ExcelRow[]>([]);
+  const [sciWarnings, setSciWarnings] = useState<string[]>([]);
   const [syncResult, setSyncResult] = useState<SyncResult | null>(null);
   const [syncError, setSyncError] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -155,8 +203,9 @@ export default function ProviderExcelSyncModal({ orgId, warehouseId, onClose, on
     setParseError('');
     setFileName(file.name);
     setLoading(true);
+    setSciWarnings([]);
     try {
-      const { rows: parsed, error } = await parseExcel(file);
+      const { rows: parsed, error, sciWarnings: warns } = await parseExcel(file);
       if (error) {
         setParseError(error);
         setLoading(false);
@@ -168,6 +217,7 @@ export default function ProviderExcelSyncModal({ orgId, warehouseId, onClose, on
         return;
       }
       setRows(parsed);
+      setSciWarnings(warns);
       setStep('preview');
     } catch (err: unknown) {
       setParseError(String(err));
@@ -205,17 +255,26 @@ export default function ProviderExcelSyncModal({ orgId, warehouseId, onClose, on
       if (error) throw new Error(error.message || 'Error en la sincronización');
       if (data?.error) throw new Error(data.error);
 
+      const details = data?.details || {};
+
       setSyncResult({
         total: data.total ?? rows.length,
-        uniqueNames: data.uniqueNames,
-        duplicatesInFile: data.duplicatesInFile,
-        matched: data.matched ?? 0,
+        processed: data.processed ?? 0,
         inserted: data.inserted ?? 0,
-        skipped: data.skipped ?? 0,
-        updateErrors: data.updateErrors,
-        insertErrors: data.insertErrors,
-        sampleUnmatched: data.sampleUnmatched,
-        sampleExisting: data.sampleExisting,
+        updated: data.updated ?? 0,
+        skipped: data.preserved ?? 0,
+        preserved: data.preserved ?? 0,
+        rejectedMissingCode: data.rejectedMissingCode ?? 0,
+        rejectedDuplicateInExcel: data.rejectedDuplicateInExcel ?? 0,
+        errors: data.errors ?? 0,
+        details: {
+          created: details.created || [],
+          updated: details.updated || [],
+          preserved: details.preserved || [],
+          rejectedMissingCode: details.rejectedMissingCode || [],
+          rejectedDuplicateInExcel: details.rejectedDuplicateInExcel || [],
+          errors: details.errors || [],
+        },
       });
       setStep('result');
     } catch (err: unknown) {
@@ -229,6 +288,7 @@ export default function ProviderExcelSyncModal({ orgId, warehouseId, onClose, on
     setFileName('');
     setParseError('');
     setRows([]);
+    setSciWarnings([]);
     setSyncResult(null);
     setSyncError('');
     if (fileInputRef.current) fileInputRef.current.value = '';
@@ -384,7 +444,7 @@ export default function ProviderExcelSyncModal({ orgId, warehouseId, onClose, on
                     <strong>IDPROVEEDOR:</strong> puede ser alfanumérico (RIF, cédula, código). No se convierte a número.
                   </p>
                   <p className="text-xs text-gray-500">
-                    <strong>Match exacto:</strong> los proveedores existentes se actualizan con código y origen. Los que no coincidan se crean.
+                    <strong>Reglas:</strong> 1) Código obligatorio. 2) Mismo nombre + mismo origen = 1 solo. 3) Mismo nombre + origen diferente = proveedores diferentes.
                   </p>
                 </div>
               </div>
@@ -424,15 +484,30 @@ export default function ProviderExcelSyncModal({ orgId, warehouseId, onClose, on
                 )}
               </div>
 
+              {/* Advertencias de notación científica */}
+              {sciWarnings.length > 0 && (
+                <div className="flex items-start gap-2 p-3 bg-amber-50 border border-amber-200 rounded-lg">
+                  <i className="ri-alert-line text-amber-500 mt-0.5 w-4 h-4 flex items-center justify-center flex-shrink-0"></i>
+                  <div className="text-xs text-amber-800 space-y-1">
+                    <p className="font-semibold">Posibles problemas de notación científica ({sciWarnings.length})</p>
+                    <p>Excel puede haber interpretado códigos que empiezan con &quot;E&quot; como notación científica.</p>
+                    <div className="max-h-32 overflow-y-auto mt-1 space-y-0.5">
+                      {sciWarnings.map((w, i) => (
+                        <p key={i} className="text-amber-700 font-mono">• {w}</p>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {/* Info */}
               <div className="flex items-start gap-2 p-3 bg-blue-50 border border-blue-200 rounded-lg">
                 <i className="ri-information-line text-blue-500 mt-0.5 w-4 h-4 flex items-center justify-center flex-shrink-0"></i>
-                <div className="text-xs text-blue-700 space-y-1">
-                  <p><strong>Match exacto por código:</strong> los proveedores existentes se actualizan con nombre y origen.</p>
-                  <p><strong>Nuevos:</strong> los que no coincidan se crean automáticamente con su cliente correspondiente.</p>
-                  {otherCount > 0 && (
-                    <p><strong>Otras compañías ({otherCount}):</strong> se crean sin cliente asignado.</p>
-                  )}
+                <div className="text-xs text-blue-700 space-y-1.5">
+                  <p><strong>Regla 1 — Código obligatorio:</strong> si una fila del Excel no tiene código de proveedor (IDPROVEEDOR vacío), se rechaza directamente.</p>
+                  <p><strong>Regla 2 — Mismo nombre + mismo origen = único:</strong> si el Excel tiene el mismo proveedor con el mismo origen pero con diferentes códigos, solo se carga el primero. Los demás se rechazan como duplicados.</p>
+                  <p><strong>Regla 3 — Nombre igual + origen diferente = proveedor diferente:</strong> un proveedor con el mismo nombre puede existir con diferentes orígenes (ej: FEBECA y SILLACA). Se crea uno por cada origen.</p>
+                  <p><strong>Match:</strong> la identidad del proveedor es nombre + origen. Si coincide, se actualiza (código incluido). Si no coincide, se crea uno nuevo. El código es solo metadata, no define identidad.</p>
                 </div>
               </div>
 
@@ -507,84 +582,161 @@ export default function ProviderExcelSyncModal({ orgId, warehouseId, onClose, on
                       <i className="ri-checkbox-circle-line text-4xl text-green-500"></i>
                     </div>
                     <p className="text-lg font-bold text-gray-800">¡Sincronización completada!</p>
+                    <p className="text-xs text-gray-500">
+                      {syncResult.processed} procesados · {syncResult.total} total filas Excel
+                    </p>
                   </div>
 
                   {/* Stats principales */}
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                    <div className="bg-gray-50 rounded-xl p-3 text-center">
-                      <p className="text-2xl font-bold text-gray-800">{syncResult.total}</p>
-                      <p className="text-xs text-gray-500 mt-0.5">Total filas Excel</p>
-                    </div>
-                    <div className="bg-teal-50 rounded-xl p-3 text-center">
-                      <p className="text-2xl font-bold text-teal-700">{syncResult.matched}</p>
-                      <p className="text-xs text-teal-600 mt-0.5">Match actualizado</p>
-                    </div>
                     <div className="bg-green-50 rounded-xl p-3 text-center">
                       <p className="text-2xl font-bold text-green-700">{syncResult.inserted}</p>
                       <p className="text-xs text-green-600 mt-0.5">Nuevos creados</p>
+                    </div>
+                    <div className="bg-teal-50 rounded-xl p-3 text-center">
+                      <p className="text-2xl font-bold text-teal-700">{syncResult.updated}</p>
+                      <p className="text-xs text-teal-600 mt-0.5">Actualizados</p>
                     </div>
                     <div className="bg-amber-50 rounded-xl p-3 text-center">
                       <p className="text-2xl font-bold text-amber-700">{syncResult.skipped}</p>
                       <p className="text-xs text-amber-600 mt-0.5">Sin cambios</p>
                     </div>
+                    <div className="bg-red-50 rounded-xl p-3 text-center">
+                      <p className="text-2xl font-bold text-red-700">
+                        {syncResult.rejectedMissingCode + syncResult.rejectedDuplicateInExcel + syncResult.errors}
+                      </p>
+                      <p className="text-xs text-red-600 mt-0.5">Rechazados / Errores</p>
+                    </div>
                   </div>
 
-                  {/* Deduplicación del archivo */}
-                  {(syncResult.uniqueNames !== undefined || syncResult.duplicatesInFile !== undefined) && (
-                    <div className="bg-blue-50 rounded-xl p-4 border border-blue-200">
-                      <p className="text-sm font-semibold text-blue-800 mb-2">Análisis del archivo Excel</p>
-                      <div className="flex gap-4 text-sm">
-                        <span className="text-blue-700">Nombres únicos: <strong>{syncResult.uniqueNames}</strong></span>
-                        <span className="text-blue-700">Duplicados en archivo: <strong>{syncResult.duplicatesInFile}</strong></span>
-                      </div>
+                  {/* Rechazados detallados */}
+                  {(syncResult.rejectedMissingCode > 0 || syncResult.rejectedDuplicateInExcel > 0) && (
+                    <div className="bg-red-50 rounded-xl p-4 border border-red-200">
+                      <p className="text-sm font-semibold text-red-800 mb-3">
+                        Proveedores rechazados ({syncResult.rejectedMissingCode + syncResult.rejectedDuplicateInExcel})
+                      </p>
+
+                      {/* Regla 1: Sin código */}
+                      {syncResult.rejectedMissingCode > 0 && (
+                        <div className="mb-3">
+                          <p className="text-xs font-semibold text-red-700 mb-1">
+                            Sin código (Regla 1) — {syncResult.rejectedMissingCode} proveedores
+                          </p>
+                          <div className="max-h-32 overflow-y-auto space-y-0.5">
+                            {syncResult.details?.rejectedMissingCode?.map((item, i) => (
+                              <p key={i} className="text-xs text-red-600 font-mono">
+                                • {item.name || 'Sin nombre'} — {item.reason}
+                              </p>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Regla 2: Duplicado en Excel */}
+                      {syncResult.rejectedDuplicateInExcel > 0 && (
+                        <div className="mb-3">
+                          <p className="text-xs font-semibold text-red-700 mb-1">
+                            Duplicado en Excel (Regla 2) — {syncResult.rejectedDuplicateInExcel} proveedores
+                          </p>
+                          <div className="max-h-32 overflow-y-auto space-y-0.5">
+                            {syncResult.details?.rejectedDuplicateInExcel?.map((item, i) => (
+                              <p key={i} className="text-xs text-red-600 font-mono">
+                                • {item.name} ({item.source}) — código: {item.provider_code} — {item.reason}
+                              </p>
+                            ))}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )}
 
-                  {/* Errores */}
-                  {(syncResult.updateErrors && syncResult.updateErrors.length > 0) && (
+                  {/* Errores técnicos */}
+                  {syncResult.errors > 0 && (
                     <div className="bg-red-50 rounded-xl p-4 border border-red-200">
-                      <p className="text-sm font-semibold text-red-800 mb-2">Errores al actualizar ({syncResult.updateErrors.length})</p>
-                      <div className="space-y-1">
-                        {syncResult.updateErrors.slice(0, 3).map((err, i) => (
-                          <p key={i} className="text-xs text-red-600 font-mono">{err}</p>
+                      <p className="text-sm font-semibold text-red-800 mb-2">
+                        Errores técnicos ({syncResult.errors})
+                      </p>
+                      <div className="space-y-1 max-h-32 overflow-y-auto">
+                        {syncResult.details?.errors?.map((err, i) => (
+                          <p key={i} className="text-xs text-red-600 font-mono">
+                            {err.code}: {err.error}
+                          </p>
                         ))}
                       </div>
                     </div>
                   )}
-                  {(syncResult.insertErrors && syncResult.insertErrors.length > 0) && (
-                    <div className="bg-red-50 rounded-xl p-4 border border-red-200">
-                      <p className="text-sm font-semibold text-red-800 mb-2">Errores al crear ({syncResult.insertErrors.length})</p>
-                      <div className="space-y-1">
-                        {syncResult.insertErrors.slice(0, 3).map((err, i) => (
-                          <p key={i} className="text-xs text-red-600 font-mono">{err}</p>
-                        ))}
+
+                  {/* Creados */}
+                  {(syncResult.details?.created && syncResult.details.created.length > 0) && (
+                    <div className="bg-green-50 rounded-xl p-4 border border-green-200">
+                      <p className="text-sm font-semibold text-green-800 mb-2">
+                        Nuevos proveedores creados ({syncResult.details.created.length})
+                      </p>
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-xs">
+                          <thead>
+                            <tr className="border-b border-green-200">
+                              <th className="px-2 py-1 text-left text-green-700 font-semibold">Nombre</th>
+                              <th className="px-2 py-1 text-left text-green-700 font-semibold">Código</th>
+                              <th className="px-2 py-1 text-left text-green-700 font-semibold">Origen</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-green-100">
+                            {syncResult.details.created.map((item, i) => (
+                              <tr key={i}>
+                                <td className="px-2 py-1 text-gray-800 font-medium">{item.name}</td>
+                                <td className="px-2 py-1 text-green-700 font-mono font-semibold">{item.code}</td>
+                                <td className="px-2 py-1 text-green-700 font-semibold">{item.source}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
                       </div>
                     </div>
                   )}
 
-                  {/* Nombres que no hicieron match */}
-                  {(syncResult.sampleUnmatched && syncResult.sampleUnmatched.length > 0) && (
+                  {/* Actualizados */}
+                  {(syncResult.details?.updated && syncResult.details.updated.length > 0) && (
+                    <div className="bg-teal-50 rounded-xl p-4 border border-teal-200">
+                      <p className="text-sm font-semibold text-teal-800 mb-2">
+                        Proveedores actualizados ({syncResult.details.updated.length})
+                      </p>
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-xs">
+                          <thead>
+                            <tr className="border-b border-teal-200">
+                              <th className="px-2 py-1 text-left text-teal-700 font-semibold">Nombre</th>
+                              <th className="px-2 py-1 text-left text-teal-700 font-semibold">Código</th>
+                              <th className="px-2 py-1 text-left text-teal-700 font-semibold">Origen</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-teal-100">
+                            {syncResult.details.updated.map((item, i) => (
+                              <tr key={i}>
+                                <td className="px-2 py-1 text-gray-800 font-medium">{item.name}</td>
+                                <td className="px-2 py-1 text-teal-700 font-mono font-semibold">{item.code}</td>
+                                <td className="px-2 py-1 text-teal-700 font-semibold">{item.source}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Sin cambios */}
+                  {(syncResult.details?.preserved && syncResult.details.preserved.length > 0) && (
                     <div className="bg-gray-50 rounded-xl p-4 border border-gray-200">
                       <p className="text-sm font-semibold text-gray-800 mb-2">
-                        Ejemplos de nombres del Excel que NO coinciden con la base ({syncResult.skipped} total)
+                        Sin cambios ({syncResult.details.preserved.length})
                       </p>
-                      <ul className="space-y-1">
-                        {syncResult.sampleUnmatched.map((name, i) => (
-                          <li key={i} className="text-xs text-gray-600 font-mono">• {name}</li>
+                      <div className="max-h-32 overflow-y-auto space-y-0.5">
+                        {syncResult.details.preserved.map((item, i) => (
+                          <p key={i} className="text-xs text-gray-600 font-mono">
+                            • {item.name} ({item.code}) — {item.source}
+                          </p>
                         ))}
-                      </ul>
-                    </div>
-                  )}
-
-                  {/* Nombres existentes en la base */}
-                  {(syncResult.sampleExisting && syncResult.sampleExisting.length > 0) && (
-                    <div className="bg-gray-50 rounded-xl p-4 border border-gray-200">
-                      <p className="text-sm font-semibold text-gray-800 mb-2">Ejemplos de proveedores existentes en la base</p>
-                      <ul className="space-y-1">
-                        {syncResult.sampleExisting.map((name, i) => (
-                          <li key={i} className="text-xs text-gray-600 font-mono">• {name}</li>
-                        ))}
-                      </ul>
+                      </div>
                     </div>
                   )}
                 </>

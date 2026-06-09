@@ -4,7 +4,6 @@ import { useActiveWarehouse } from '../../../../contexts/ActiveWarehouseContext'
 import { useDebouncedValue } from '../../../../hooks/useDebouncedValue';
 import { providersService } from '../../../../services/providersService';
 import { clientsService } from '../../../../services/clientsService';
-import { supabase } from '../../../../lib/supabase';
 import type { Provider } from '../../../../types/catalog';
 import { Pagination } from '../../../../components/base/Pagination';
 import ProviderModal from './ProviderModal';
@@ -104,25 +103,11 @@ export default function ProvidersTab({ orgId, warehouseId }: ProvidersTabProps) 
     }
   }, [orgId, canRead]);
 
-  // Migración única: cambiar índice único de providers a llave compuesta (nombre + código)
+  // Migración única: índice unique ya migrado a llave compuesta (org_id, nombre, código)
+  // La migración se aplicó directamente en la base de datos.
   useEffect(() => {
-    const MIGRATION_KEY = 'provider_index_migrated_v1';
-    if (localStorage.getItem(MIGRATION_KEY) === 'done') return;
-
-    supabase.functions.invoke('fix-provider-unique-index', {})
-      .then(({ data, error: fnErr }) => {
-        if (fnErr) {
-          console.warn('[ProvidersTab] Migración índice falló:', fnErr);
-          return;
-        }
-        if (data?.success) {
-          console.log('[ProvidersTab] Migración índice exitosa:', data.message);
-          localStorage.setItem(MIGRATION_KEY, 'done');
-        }
-      })
-      .catch((err) => {
-        console.warn('[ProvidersTab] Error invocando migración:', err);
-      });
+    const MIGRATION_KEY = 'provider_index_migrated_v2';
+    localStorage.setItem(MIGRATION_KEY, 'done');
   }, []);
 
   // Reset a página 1 cuando cambia la búsqueda, filtro activo, cliente seleccionado o almacén
@@ -137,13 +122,22 @@ export default function ProvidersTab({ orgId, warehouseId }: ProvidersTabProps) 
     if (!confirm(`¿Desactivar el proveedor "${provider.name}"?`)) return;
     try {
       await providersService.deleteProvider(provider.id);
-      await loadProviders(currentPage, debouncedSearch, selectedClientId);
+      // Actualización local inmediata: marcar inactive + restar 1 del total
+      setProviders(prev => prev.map(p => p.id === provider.id ? { ...p, active: false } : p));
+      setTotalItems(prev => prev - 1);
+      // Invalidar cache de asignaciones para la próxima recarga
+      providersService.invalidateAssignmentsCache();
     } catch (err: any) {
       setError(err?.message || 'Error al eliminar');
+      await loadProviders(currentPage, debouncedSearch, selectedClientId);
     }
   };
 
-  const handleSave = async () => { await loadProviders(currentPage, debouncedSearch, selectedClientId); setIsModalOpen(false); };
+  const handleSave = () => {
+    setIsModalOpen(false);
+    providersService.invalidateAssignmentsCache();
+    loadProviders(currentPage, debouncedSearch, selectedClientId);
+  };
 
   const handlePageChange = (page: number) => {
     setCurrentPage(page);

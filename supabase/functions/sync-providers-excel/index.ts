@@ -18,7 +18,6 @@ async function resolveClientBySource(supabase: any, orgId: string, source: strin
   if (!source) return null;
   const normalized = source.trim().toUpperCase();
 
-  // 1. Buscar en origen_proveedores (fuente de verdad)
   const { data } = await supabase
     .from('origen_proveedores')
     .select('client_id')
@@ -29,21 +28,16 @@ async function resolveClientBySource(supabase: any, orgId: string, source: strin
 
   if (data?.client_id) return data.client_id;
 
-  // 2. Fallback legacy: mapeo de origen/nombre de compañía → client_id
   const legacyMap: Record<string, string> = {
-    // FEBECA
     'FEBECA':   'f64dd648-5b6d-48fd-9f93-64e5a07c34d9',
     '0001':     'f64dd648-5b6d-48fd-9f93-64e5a07c34d9',
     '001':      'f64dd648-5b6d-48fd-9f93-64e5a07c34d9',
-    // SILLACA
     'SILLACA':  '9703c174-6789-4487-acaa-36a37d94a6ca',
     '0002':     '9703c174-6789-4487-acaa-36a37d94a6ca',
     '002':      '9703c174-6789-4487-acaa-36a37d94a6ca',
-    // Cofersa
     'COFERSA':  'f897b0e2-721f-498d-a5d2-800dd3755139',
     '029':      'f897b0e2-721f-498d-a5d2-800dd3755139',
     '0029':     'f897b0e2-721f-498d-a5d2-800dd3755139',
-    // EPA
     'EPA':      'ae488aaf-706a-46fa-9251-d00a35e78384',
     '0109':     'ae488aaf-706a-46fa-9251-d00a35e78384',
   };
@@ -58,6 +52,39 @@ async function linkProviderToWarehouse(supabase: any, orgId: string, providerId:
       { onConflict: 'org_id,provider_id,warehouse_id' }
     );
   if (error) console.error(`[sync-providers-excel] Error linking provider ${providerId} to warehouse ${warehouseId}:`, error.message);
+}
+
+function normalizeName(s: string): string {
+  return (s ?? '').trim().toUpperCase();
+}
+
+async function fetchAllProviders(supabase: any, orgId: string): Promise<any[]> {
+  const all: any[] = [];
+  const PAGE_SIZE = 1000;
+  let page = 0;
+  let hasMore = true;
+
+  while (hasMore) {
+    const from = page * PAGE_SIZE;
+    const to = from + PAGE_SIZE - 1;
+    const { data, error } = await supabase
+      .from('providers')
+      .select('id, name, name_normalized, provider_code, code_normalized, active, provider_type, source, source_code, client_id, source_normalized')
+      .eq('org_id', orgId)
+      .range(from, to)
+      .order('name');
+
+    if (error) throw error;
+    if (data && data.length > 0) {
+      all.push(...data);
+      page++;
+      if (data.length < PAGE_SIZE) hasMore = false;
+    } else {
+      hasMore = false;
+    }
+  }
+
+  return all;
 }
 
 Deno.serve(async (req) => {
@@ -90,93 +117,207 @@ Deno.serve(async (req) => {
       { auth: { persistSession: false } }
     );
 
-    // 1. Traer todos los proveedores de la org
-    const { data: existingProviders, error: fetchErr } = await supabase
-      .from('providers')
-      .select('id, name, provider_code, active, provider_type, source, source_code, client_id')
-      .eq('org_id', org_id);
+    const existingProviders = await fetchAllProviders(supabase, org_id);
 
-    if (fetchErr) throw fetchErr;
+    // === MAPA PRINCIPAL: name_normalized + source_normalized → provider ===
+    // El código NO es identificador único. Dos proveedores con mismo código
+    // pero diferente origen SON PROVEEDORES DIFERENTES.
+    const existingByNameSource = new Map<string, any>();
+    const existingByCode = new Map<string, any[]>();
 
-    const existingMap = new Map((existingProviders || []).map((p: any) => [p.provider_code?.toUpperCase(), p]));
-    const created: any[] = [];
-    const updated: any[] = [];
+    for (const p of existingProviders) {
+      const nn = normalizeName(p.name);
+      const src = p.source || '';
+      const key = `${nn}|||${src}`;
+
+      if (!existingByNameSource.has(key)) {
+        existingByNameSource.set(key, p);
+      }
+
+      if (p.provider_code) {
+        const code = p.provider_code.toUpperCase();
+        if (!existingByCode.has(code)) {
+          existingByCode.set(code, []);
+        }
+        existingByCode.get(code)!.push(p);
+      }
+    }
+
+    // === REGLA 1: Rechazar filas sin código ===
+    const rejectedMissingCode: any[] = [];
+    const withCode: ProviderPayload[] = [];
+    for (const ep of providers) {
+      const code = ep.provider_code?.trim().toUpperCase();
+      if (!code || code === '') {
+        rejectedMissingCode.push({
+          name: ep.name,
+          provider_code: ep.provider_code,
+          source: ep.source,
+          reason: 'Falta el código del proveedor',
+        });
+      } else {
+        withCode.push(ep);
+      }
+    }
+
+    // === REGLA 2: Rechazar duplicados en Excel por nombre + origen ===
+    const seenNameSource = new Map<string, ProviderPayload>();
+    const dedupedProviders: ProviderPayload[] = [];
+    const rejectedDuplicateInExcel: any[] = [];
+    for (const ep of withCode) {
+      const excelName = normalizeName(ep.name);
+      const excelSource = ep.source?.trim().toUpperCase() || '';
+      const key = `${excelName}|||${excelSource}`;
+      if (seenNameSource.has(key)) {
+        const first = seenNameSource.get(key)!;
+        rejectedDuplicateInExcel.push({
+          name: ep.name,
+          provider_code: ep.provider_code,
+          source: ep.source,
+          firstCode: first.provider_code,
+          reason: `Duplicado en Excel: el proveedor "${ep.name}" con origen "${ep.source}" ya aparece con código "${first.provider_code}"`,
+        });
+      } else {
+        seenNameSource.set(key, ep);
+        dedupedProviders.push(ep);
+      }
+    }
+
+    // === MATCHING: name + source es el identificador único ===
+    const toCreate: any[] = [];
+    const toUpdate: any[] = [];
     const preserved: any[] = [];
     const errors: any[] = [];
+    const warehouseLinks: { providerId: string; existing: boolean }[] = [];
 
-    // 2. Procesar cada proveedor del Excel
-    for (const excelProvider of providers) {
+    for (const excelProvider of dedupedProviders) {
       try {
         const excelCode = excelProvider.provider_code?.trim().toUpperCase();
-        const excelName = excelProvider.name?.trim().toUpperCase();
+        const excelName = normalizeName(excelProvider.name);
         const excelType = excelProvider.provider_type || 'almacenaje';
         const excelSource = excelProvider.source?.trim().toUpperCase() || null;
         const autoClientId = await resolveClientBySource(supabase, org_id, excelSource);
-        const existing = excelCode ? existingMap.get(excelCode) : null;
+
+        const nameSourceKey = `${excelName}|||${excelSource || ''}`;
+        const existing = existingByNameSource.get(nameSourceKey);
 
         if (existing) {
           const needsUpdate =
-            existing.name !== excelName ||
+            existing.name !== excelProvider.name ||
+            existing.provider_code !== excelCode ||
             existing.provider_type !== excelType ||
             existing.source !== excelSource;
+
           if (needsUpdate) {
-            const { error: updErr } = await supabase
-              .from('providers')
-              .update({
-                name: excelName,
-                provider_type: excelType,
-                source: excelSource,
-                source_code: excelSource,
-                client_id: autoClientId || existing.client_id,
-              })
-              .eq('id', existing.id);
-            if (updErr) throw updErr;
-            updated.push({ id: existing.id, name: excelName, code: excelCode, source: excelSource });
-          } else {
-            preserved.push({ id: existing.id, name: excelName, code: excelCode, source: excelSource });
-          }
-          // Vincular al warehouse si se especificó
-          if (warehouse_id && existing.id) {
-            await linkProviderToWarehouse(supabase, org_id, existing.id, warehouse_id);
-          }
-        } else {
-          const { data: newProv, error: insErr } = await supabase
-            .from('providers')
-            .insert({
-              org_id,
-              name: excelName,
+            const updates: any = {
+              name: excelProvider.name,
               provider_code: excelCode,
               provider_type: excelType,
-              active: true,
               source: excelSource,
               source_code: excelSource,
-              client_id: autoClientId,
-            })
-            .select('id')
-            .single();
-          if (insErr) throw insErr;
-          created.push({ id: newProv.id, name: excelName, code: excelCode, source: excelSource });
-          // Vincular al warehouse si se especificó
-          if (warehouse_id && newProv?.id) {
-            await linkProviderToWarehouse(supabase, org_id, newProv.id, warehouse_id);
+              client_id: autoClientId || existing.client_id,
+            };
+            toUpdate.push({ id: existing.id, code: excelCode, updates });
+          } else {
+            preserved.push({ id: existing.id, name: excelProvider.name, code: excelCode, source: excelSource });
           }
+          if (warehouse_id) {
+            warehouseLinks.push({ providerId: existing.id, existing: true });
+          }
+        } else {
+          toCreate.push({
+            org_id,
+            name: excelProvider.name,
+            provider_code: excelCode,
+            provider_type: excelType,
+            active: true,
+            source: excelSource,
+            source_code: excelSource,
+            client_id: autoClientId,
+          });
         }
       } catch (err: any) {
         errors.push({ code: excelProvider.provider_code, name: excelProvider.name, error: err.message });
       }
     }
 
+    // === UPSERT: usar columnas reales que existen en el UNIQUE CONSTRAINT ===
+    // CONSTRAINT: providers_name_source_uniq ON (org_id, name_normalized, source_normalized)
+    // name_normalized y source_normalized son columnas generadas — se calculan automáticamente.
+    const created: any[] = [];
+    const BATCH_SIZE = 100;
+
+    for (let i = 0; i < toCreate.length; i += BATCH_SIZE) {
+      const batch = toCreate.slice(i, i + BATCH_SIZE);
+      const { data, error } = await supabase
+        .from('providers')
+        .upsert(batch, { onConflict: 'org_id, name_normalized, source_normalized' })
+        .select('id, name, provider_code, source');
+
+      if (error) {
+        errors.push({ code: 'BATCH', name: 'BATCH', error: `Batch ${i}-${i + batch.length}: ${error.message}` });
+        console.error(`[sync-providers-excel] Batch upsert error:`, error.message);
+      } else if (data) {
+        for (const row of data) {
+          created.push({ id: row.id, name: row.name, code: row.provider_code, source: row.source });
+          if (warehouse_id) {
+            warehouseLinks.push({ providerId: row.id, existing: false });
+          }
+        }
+      }
+    }
+
+    // === UPDATE individual ===
+    const updated: any[] = [];
+    for (const item of toUpdate) {
+      const { error: updErr } = await supabase
+        .from('providers')
+        .update(item.updates)
+        .eq('id', item.id);
+
+      if (updErr) {
+        errors.push({ code: 'UPDATE', name: `Update ${item.code}`, error: updErr.message });
+      } else {
+        updated.push({ id: item.id, name: item.updates.name, code: item.code, source: item.updates.source });
+      }
+    }
+
+    // === Vincular a bodega ===
+    if (warehouse_id && warehouseLinks.length > 0) {
+      const LINK_BATCH = 100;
+      const uniqueLinks = new Map<string, boolean>();
+      for (const wl of warehouseLinks) {
+        if (!uniqueLinks.has(wl.providerId)) {
+          uniqueLinks.set(wl.providerId, wl.existing);
+        }
+      }
+      const linksArr = Array.from(uniqueLinks.entries()).map(([providerId, existing]) => ({ providerId, existing }));
+
+      for (let i = 0; i < linksArr.length; i += LINK_BATCH) {
+        const batch = linksArr.slice(i, i + LINK_BATCH);
+        const promises = batch.map((wl) => linkProviderToWarehouse(supabase, org_id, wl.providerId, warehouse_id));
+        await Promise.all(promises);
+      }
+    }
+
     return new Response(
       JSON.stringify({
         total: providers.length,
-        matched: updated.length + preserved.length,
+        processed: dedupedProviders.length,
+        rejectedMissingCode: rejectedMissingCode.length,
+        rejectedDuplicateInExcel: rejectedDuplicateInExcel.length,
         inserted: created.length,
-        skipped: preserved.length,
-        created: created.length,
         updated: updated.length,
         preserved: preserved.length,
         errors: errors.length,
-        details: { created, updated, preserved, errors },
+        details: {
+          created,
+          updated,
+          preserved,
+          rejectedMissingCode,
+          rejectedDuplicateInExcel,
+          errors,
+        },
       }),
       {
         status: 200,

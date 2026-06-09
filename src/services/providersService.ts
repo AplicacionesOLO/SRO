@@ -33,6 +33,19 @@ let origenCache: Record<string, { clientId: string; name: string }> | null = nul
 let origenCacheTs = 0;
 const ORIGEN_CACHE_TTL = 60_000; // 1 minuto
 
+// ── Cache de los dos barridos pesados de getProviderAssignmentsOptimized ──
+let assignmentsFullCache: {
+  orgId: string;
+  allPwRows: any[];
+  allCpRows: any[];
+  ts: number;
+} | null = null;
+const ASSIGNMENTS_FULL_CACHE_TTL = 30_000; // 30 segundos — suficiente para navegación fluida
+
+function invalidateAssignmentsCache() {
+  assignmentsFullCache = null;
+}
+
 async function getOrigenProveedoresMap(orgId: string): Promise<Record<string, { clientId: string; name: string }>> {
   const now = Date.now();
   if (origenCache && origenCacheTs + ORIGEN_CACHE_TTL > now && (origenCache as any)._orgId === orgId) {
@@ -41,7 +54,7 @@ async function getOrigenProveedoresMap(orgId: string): Promise<Record<string, { 
 
   const { data, error } = await supabase
     .from('origen_proveedores')
-    .select('source_code, client_id, description')
+    .select('source_code, client_id, description, clients(name)')
     .eq('org_id', orgId)
     .eq('is_active', true);
 
@@ -54,7 +67,8 @@ async function getOrigenProveedoresMap(orgId: string): Promise<Record<string, { 
   for (const row of (data ?? [])) {
     const key = row.source_code?.toUpperCase().trim();
     if (key) {
-      map[key] = { clientId: row.client_id, name: row.description || row.client_id };
+      const clientName = (row.clients as any)?.name || row.description || row.client_id;
+      map[key] = { clientId: row.client_id, name: clientName };
     }
   }
 
@@ -73,15 +87,17 @@ function resolveClientBySource(source: string | null | undefined, orgMap: Record
   // El campo 'source' indica el sistema de origen de los datos:
   //   - 'EPA'      = datos provenientes del sistema EPA (IDCOMPANIA=109, código 0109)
   //   - 'COFERSA'  = datos provenientes del sistema COFERSA (IDCOMPANIA=29, código 029)
-  // El cliente al que pertenecen los proveedores es el opuesto al origen:
-  //   - origen EPA     → cliente Cofersa
-  //   - origen COFERSA → cliente EPA
+  //   - 'FEBECA'   = datos provenientes del sistema FEBECA
+  //   - 'SILLACA'  = datos provenientes del sistema SILLACA
+  // Mapeo directo: origen → cliente con el mismo nombre
   const legacyMap: Record<string, { id: string; name: string }> = {
-    'COFERSA':  { id: 'f897b0e2-721f-498d-a5d2-800dd3755139', name: 'EPA' },
-    'EPA':      { id: 'ae488aaf-706a-46fa-9251-d00a35e78384', name: 'Cofersa' },
+    'COFERSA':  { id: 'ae488aaf-706a-46fa-9251-d00a35e78384', name: 'Cofersa' },
+    'EPA':      { id: 'f897b0e2-721f-498d-a5d2-800dd3755139', name: 'Epa' },
+    'FEBECA':   { id: 'f64dd648-5b6d-48fd-9f93-64e5a07c34d9', name: 'Febeca C.A' },
+    'SILLACA':  { id: '9703c174-6789-4487-acaa-36a37d94a6ca', name: 'Sillaca S.A' },
     '0109':     { id: 'ae488aaf-706a-46fa-9251-d00a35e78384', name: 'Cofersa' },
-    '029':      { id: 'f897b0e2-721f-498d-a5d2-800dd3755139', name: 'EPA' },
-    '0029':     { id: 'f897b0e2-721f-498d-a5d2-800dd3755139', name: 'EPA' },
+    '029':      { id: 'f897b0e2-721f-498d-a5d2-800dd3755139', name: 'Epa' },
+    '0029':     { id: 'f897b0e2-721f-498d-a5d2-800dd3755139', name: 'Epa' },
   };
   return legacyMap[normalized] ?? null;
 }
@@ -110,6 +126,9 @@ export const providersService = {
    * Exportado para uso en componentes UI.
    */
   resolveClientBySource,
+
+  /** Invalidar cache de asignaciones (usar tras crear/editar/eliminar proveedores). */
+  invalidateAssignmentsCache,
 
   /**
    * Sincronizar proveedores desde API externa.
@@ -548,6 +567,33 @@ export const providersService = {
       providerToClients[cp.provider_id].add(cp.client_id);
     }
 
+    // Fallback: obtener client_id directo de la tabla providers para proveedores sin client_providers
+    let providerClientIdsMap: Record<string, string> = {};
+    if (providerIds.length > 0) {
+      const { data: providerRows } = await supabase
+        .from('providers')
+        .select('id, client_id')
+        .eq('org_id', orgId)
+        .in('id', providerIds);
+      for (const pr of (providerRows ?? []) as any[]) {
+        if (pr.client_id) providerClientIdsMap[pr.id] = pr.client_id;
+      }
+    }
+
+    // Merge client_id directo en providerToClients
+    for (const [pid, cid] of Object.entries(providerClientIdsMap)) {
+      if (!providerToClients[pid]) providerToClients[pid] = new Set();
+      providerToClients[pid].add(cid);
+      if (!clientNames[cid]) {
+        const { data: clientRow } = await supabase
+          .from('clients')
+          .select('name')
+          .eq('id', cid)
+          .maybeSingle();
+        if (clientRow?.name) clientNames[cid] = clientRow.name;
+      }
+    }
+
     // Construir texto final por proveedor
     const result: Record<string, string> = {};
 
@@ -555,14 +601,15 @@ export const providersService = {
       const warehouses = (pwRows ?? []).filter((r: any) => r.provider_id === pid);
 
       if (warehouses.length === 0) {
-        // Fallback: buscar cliente por source_code del provider (traído desde la BD)
+        // Fallback: buscar cliente por source_code o source del provider
         const { data: providerSources } = await supabase
           .from('providers')
-          .select('source_code')
+          .select('source_code, source')
           .eq('id', pid)
           .maybeSingle();
         const orgMap = await getOrigenProveedoresMap(orgId);
-        const autoClient = providerSources?.source_code ? resolveClientBySource(providerSources.source_code, orgMap) : null;
+        const lookupKey = providerSources?.source_code || providerSources?.source || null;
+        const autoClient = lookupKey ? resolveClientBySource(lookupKey, orgMap) : null;
         result[pid] = autoClient ? `OLO: (${autoClient.name})` : 'Sin asignación';
         continue;
       }
@@ -581,6 +628,13 @@ export const providersService = {
 
         if (matchingClients.length > 0) {
           return `${warehouseName}: (${matchingClients.join(', ')})`;
+        }
+        // Fallback: si no hay matching clients via warehouse_clients, pero hay clientes directos del proveedor, mostrarlos
+        const allClients = [...providerClientIds]
+          .map(cid => clientNames[cid] ?? cid)
+          .sort();
+        if (allClients.length > 0) {
+          return `${warehouseName}: (${allClients.join(', ')})`;
         }
         return warehouseName;
       });
@@ -675,34 +729,68 @@ export const providersService = {
     const providerIds = providers.map(p => p.id);
     if (providerIds.length === 0) return {};
     const providerSet = new Set(providerIds);
-    // Índice rápido: providerId → source_code
+    // Índice rápido: providerId → source_code y source
     const providerSourceCodeMap: Record<string, string | null> = {};
+    const providerSourceMap: Record<string, string | null> = {};
     for (const p of providers) {
       providerSourceCodeMap[p.id] = p.source_code || null;
+      providerSourceMap[p.id] = p.source || null;
     }
 
-    // 1. Traer TODOS los provider_warehouses de la org — paginado
-    const pageSize = 1000;
-    let from = 0;
-    let allPwRows: any[] = [];
+    // ── Cache check: si ya tenemos los datos completos de esta org frescos, saltamos los barridos ──
+    const now = Date.now();
+    const cacheValid = assignmentsFullCache
+      && assignmentsFullCache.orgId === orgId
+      && assignmentsFullCache.ts + ASSIGNMENTS_FULL_CACHE_TTL > now;
 
-    while (true) {
-      const { data, error: pwErr } = await supabase
-        .from('provider_warehouses')
-        .select('provider_id, warehouse_id, warehouses(name)')
-        .eq('org_id', orgId)
-        .order('created_at', { ascending: true })
-        .range(from, from + pageSize - 1);
+    let allPwRows: any[];
+    let allCpRows: any[];
 
-      if (pwErr) throw pwErr;
-      allPwRows = allPwRows.concat(data ?? []);
-      if ((data ?? []).length < pageSize) break;
-      from += pageSize;
+    if (cacheValid) {
+      allPwRows = assignmentsFullCache!.allPwRows;
+      allCpRows = assignmentsFullCache!.allCpRows;
+    } else {
+      const pageSize = 1000;
+
+      // ── PARALELO: los dos barridos son independientes, los disparamos juntos ──
+      async function fetchAllPages(
+        table: string,
+        select: string,
+        eqField: string,
+        eqValue: string
+      ): Promise<any[]> {
+        let from = 0;
+        const rows: any[] = [];
+        while (true) {
+          const { data, error } = await supabase
+            .from(table)
+            .select(select)
+            .eq(eqField, eqValue)
+            .order('created_at', { ascending: true })
+            .range(from, from + pageSize - 1);
+          if (error) throw error;
+          rows.push(...(data ?? []));
+          if ((data ?? []).length < pageSize) break;
+          from += pageSize;
+        }
+        return rows;
+      }
+
+      const [pwResult, cpResult] = await Promise.all([
+        fetchAllPages('provider_warehouses', 'provider_id, warehouse_id, warehouses(name)', 'org_id', orgId),
+        fetchAllPages('client_providers', 'provider_id, client_id, clients(name)', 'org_id', orgId),
+      ]);
+
+      allPwRows = pwResult;
+      allCpRows = cpResult;
+
+      // Guardar en cache
+      assignmentsFullCache = { orgId, allPwRows, allCpRows, ts: now };
     }
 
+    // ── Filtrado en memoria (rápido, son operaciones sobre arrays) ──
     const pwRows = allPwRows.filter((r: any) => providerSet.has(r.provider_id));
-    // Deduplicar por provider_id + warehouse_id para evitar duplicados en la UI
-    const pwRowsDeduped = [];
+    const pwRowsDeduped: any[] = [];
     const pwSeen = new Set<string>();
     for (const r of pwRows) {
       const key = `${r.provider_id}|${r.warehouse_id}`;
@@ -712,27 +800,8 @@ export const providersService = {
     }
     const pwRowsFinal = pwRowsDeduped;
 
-    // 2. Traer TODOS los client_providers de la org — paginado
-    from = 0;
-    let allCpRows: any[] = [];
-
-    while (true) {
-      const { data, error: cpErr } = await supabase
-        .from('client_providers')
-        .select('provider_id, client_id, clients(name)')
-        .eq('org_id', orgId)
-        .order('created_at', { ascending: true })
-        .range(from, from + pageSize - 1);
-
-      if (cpErr) throw cpErr;
-      allCpRows = allCpRows.concat(data ?? []);
-      if ((data ?? []).length < pageSize) break;
-      from += pageSize;
-    }
-
     const cpRows = allCpRows.filter((r: any) => providerSet.has(r.provider_id));
-    // Deduplicar por provider_id + client_id para evitar duplicados
-    const cpRowsDeduped = [];
+    const cpRowsDeduped: any[] = [];
     const cpSeen = new Set<string>();
     for (const r of cpRows) {
       const key = `${r.provider_id}|${r.client_id}`;
@@ -742,7 +811,7 @@ export const providersService = {
     }
     const cpRowsFinal = cpRowsDeduped;
 
-    // 3. Traer warehouse_clients
+    // ── warehouse_clients (chico, siempre rápido) ──
     const warehouseIds = [...new Set(pwRowsFinal.map((r: any) => r.warehouse_id as string))];
     let wcRows: any[] = [];
     if (warehouseIds.length > 0) {
@@ -755,14 +824,13 @@ export const providersService = {
       wcRows = data ?? [];
     }
 
-    // Índice: warehouse_id → Set<client_id>
+    // Índices en memoria
     const warehouseToClients: Record<string, Set<string>> = {};
     for (const wc of wcRows) {
       if (!warehouseToClients[wc.warehouse_id]) warehouseToClients[wc.warehouse_id] = new Set();
       warehouseToClients[wc.warehouse_id].add(wc.client_id);
     }
 
-    // Índice: client_id → client name
     const clientNames: Record<string, string> = {};
     for (const cp of (cpRowsFinal ?? [])) {
       if (cp.clients && cp.client_id) {
@@ -770,14 +838,36 @@ export const providersService = {
       }
     }
 
-    // Índice: provider_id → Set<client_id>
     const providerToClients: Record<string, Set<string>> = {};
     for (const cp of (cpRowsFinal ?? [])) {
       if (!providerToClients[cp.provider_id]) providerToClients[cp.provider_id] = new Set();
       providerToClients[cp.provider_id].add(cp.client_id);
     }
 
-    // Construir texto final por proveedor
+    // Fallback: incluir client_id directo de providers si no está en client_providers
+    const directClientIds: Set<string> = new Set();
+    for (const p of providers) {
+      if (p.client_id) {
+        if (!providerToClients[p.id]) providerToClients[p.id] = new Set();
+        providerToClients[p.id].add(p.client_id);
+        if (!clientNames[p.client_id]) {
+          directClientIds.add(p.client_id);
+        }
+      }
+    }
+
+    // Si faltan nombres de clientes directos, los buscamos
+    if (directClientIds.size > 0) {
+      const { data: missingClients } = await supabase
+        .from('clients')
+        .select('id, name')
+        .in('id', [...directClientIds]);
+      for (const c of (missingClients ?? [])) {
+        clientNames[c.id] = c.name;
+      }
+    }
+
+    // Construir texto final
     const result: Record<string, string> = {};
 
     for (const pid of providerIds) {
@@ -785,8 +875,10 @@ export const providersService = {
 
       if (warehouses.length === 0) {
         const sourceCode = providerSourceCodeMap[pid];
+        const source = providerSourceMap[pid];
         const orgMap = await getOrigenProveedoresMap(orgId);
-        const autoClient = sourceCode ? resolveClientBySource(sourceCode, orgMap) : null;
+        const lookupKey = sourceCode || source;
+        const autoClient = lookupKey ? resolveClientBySource(lookupKey, orgMap) : null;
         result[pid] = autoClient ? `OLO: (${autoClient.name})` : 'Sin asignación';
         continue;
       }
@@ -804,6 +896,13 @@ export const providersService = {
 
         if (matchingClients.length > 0) {
           return `${warehouseName}: (${matchingClients.join(', ')})`;
+        }
+        // Fallback: si no hay matching clients via warehouse_clients, pero hay clientes directos del proveedor, mostrarlos
+        const allClients = [...providerClientIds]
+          .map(cid => clientNames[cid] ?? cid)
+          .sort();
+        if (allClients.length > 0) {
+          return `${warehouseName}: (${allClients.join(', ')})`;
         }
         return warehouseName;
       });

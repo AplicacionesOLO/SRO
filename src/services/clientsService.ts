@@ -1,6 +1,7 @@
 import { supabase } from '../lib/supabase';
 import type { Client, ClientFormData, ClientRules, ClientRulesFormData, ClientDock, ClientProviderPayload } from '../types/client';
 import type { Dock } from '../types/dock';
+import { providersService } from './providersService';
 
 export const clientsService = {
   async listClients(orgId: string, search?: string): Promise<Client[]> {
@@ -349,18 +350,31 @@ export const clientsService = {
   async getClientProviders(orgId: string, clientId: string): Promise<{ provider_id: string; is_default: boolean }[]> {
     //console.log('[ClientsService] getClientProviders', { orgId, clientId });
 
-    const { data, error } = await supabase
-      .from('client_providers')
-      .select('provider_id, is_default')
-      .eq('client_id', clientId)
-      .eq('org_id', orgId);
+    // Paginado: clientes con >1000 proveedores exceden el default de Supabase
+    const pageSize = 1000;
+    let from = 0;
+    let allRows: { provider_id: string; is_default: boolean }[] = [];
 
-    if (error) {
-      // console.error('[ClientsService] getClientProviders error', error);
-      throw error;
+    while (true) {
+      const { data, error } = await supabase
+        .from('client_providers')
+        .select('provider_id, is_default')
+        .eq('client_id', clientId)
+        .eq('org_id', orgId)
+        .order('created_at', { ascending: true })
+        .range(from, from + pageSize - 1);
+
+      if (error) {
+        // console.error('[ClientsService] getClientProviders error', error);
+        throw error;
+      }
+
+      allRows = allRows.concat(data ?? []);
+      if ((data ?? []).length < pageSize) break;
+      from += pageSize;
     }
 
-    return data || [];
+    return allRows;
   },
 
   async setClientProviders(orgId: string, clientId: string, providers: ClientProviderPayload[]): Promise<void> {
@@ -437,6 +451,9 @@ export const clientsService = {
           throw updateError;
         }
       }
+
+      // Invalidar cache de asignaciones de proveedores para que la UI se refresque
+      providersService.invalidateAssignmentsCache();
     } catch (error) {
       // console.error('[ClientsService] setClientProviders transaction error', error);
       throw error;

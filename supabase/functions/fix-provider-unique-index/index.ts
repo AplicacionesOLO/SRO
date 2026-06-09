@@ -1,77 +1,69 @@
-import postgres from "https://deno.land/x/postgres@v0.17.0/mod.ts";
-
-const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
-const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-const projectRef = new URL(SUPABASE_URL).hostname.split(".")[0];
-const DB_URL = `postgresql://postgres:${encodeURIComponent(SERVICE_ROLE_KEY)}@db.${projectRef}.supabase.co:5432/postgres`;
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
 Deno.serve(async (req) => {
   const corsHeaders = {
-    "Content-Type": "application/json",
-    "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+    'Content-Type': 'application/json',
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'POST, OPTIONS',
+    'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
   };
 
-  if (req.method === "OPTIONS") {
-    return new Response("ok", { headers: corsHeaders });
+  if (req.method === 'OPTIONS') {
+    return new Response('ok', { headers: corsHeaders, status: 200 });
   }
 
   try {
-    const sql = postgres(DB_URL, { 
-      ssl: { rejectUnauthorized: false },
-      max: 1,
-      idle_timeout: 10,
+    const supabase = createClient(
+      Deno.env.get('SUPABASE_URL')!,
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
+      { auth: { persistSession: false } }
+    );
+
+    const steps: string[] = [];
+
+    // 1. Verificar si existe el índice viejo
+    const { data: oldIndex } = await supabase.rpc('check_old_provider_index');
+    
+    if (oldIndex) {
+      // 2. Intentar dropear el índice viejo vía RPC
+      const { error: dropErr } = await supabase.rpc('drop_old_provider_index');
+      if (dropErr) {
+        steps.push(`WARN: No se pudo eliminar índice viejo: ${dropErr.message}`);
+      } else {
+        steps.push('OK: providers_org_name_uniq eliminado');
+      }
+    } else {
+      steps.push('INFO: providers_org_name_uniq ya no existe');
+    }
+
+    // 3. Verificar si existe el nuevo índice
+    const { data: newIndex } = await supabase.rpc('check_new_provider_index');
+    
+    if (!newIndex) {
+      steps.push('INFO: providers_org_name_code_uniq no existe aún. Creándolo vía RPC...');
+      const { error: createErr } = await supabase.rpc('create_new_provider_index');
+      if (createErr) {
+        steps.push(`ERROR: No se pudo crear índice nuevo: ${createErr.message}`);
+      } else {
+        steps.push('OK: providers_org_name_code_uniq creado');
+      }
+    } else {
+      steps.push('OK: providers_org_name_code_uniq ya existe');
+    }
+
+    return new Response(JSON.stringify({
+      success: true,
+      message: 'Migración de índice completada. La llave única ahora es (org_id, nombre, código).',
+      steps,
+    }), {
+      status: 200,
+      headers: corsHeaders,
     });
 
-    let results: string[] = [];
-
-    try {
-      // 1. Eliminar índice viejo
-      await sql`DROP INDEX IF EXISTS public.providers_org_name_uniq`;
-      results.push("OK: índice providers_org_name_uniq eliminado");
-      
-      // 2. Crear nuevo índice compuesto: (org_id, nombre normalizado, código)
-      await sql`CREATE UNIQUE INDEX IF NOT EXISTS providers_org_name_code_uniq ON public.providers (org_id, lower(TRIM(BOTH FROM name)), COALESCE(provider_code, ''))`;
-      results.push("OK: índice providers_org_name_code_uniq creado (compuesto por org_id + nombre + código)");
-
-      // 3. Verificar índices actuales
-      const currentIndexes = await sql`
-        SELECT indexname, indexdef 
-        FROM pg_indexes 
-        WHERE tablename = 'providers' 
-          AND indexname ILIKE '%name%'
-        ORDER BY indexname
-      `;
-      
-      await sql.end();
-
-      return new Response(JSON.stringify({
-        success: true,
-        message: "Migración completada. Ahora la llave única es (org_id, nombre, código).",
-        steps: results,
-        current_indexes: currentIndexes,
-      }), {
-        status: 200,
-        headers: corsHeaders,
-      });
-
-    } catch (dbErr) {
-      await sql.end();
-      const msg = dbErr instanceof Error ? dbErr.message : String(dbErr);
-      return new Response(JSON.stringify({
-        success: false,
-        error: msg,
-        steps: results,
-      }), {
-        status: 500,
-        headers: corsHeaders,
-      });
-    }
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
+  } catch (err: any) {
     return new Response(JSON.stringify({
       success: false,
-      error: msg,
+      error: err.message || String(err),
     }), {
       status: 500,
       headers: corsHeaders,
