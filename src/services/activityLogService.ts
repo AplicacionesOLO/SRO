@@ -132,7 +132,6 @@ export const activityLogService = {
 
     if (error) {
       // Silencioso — no fallar el flujo principal
-      console.warn('[activityLogService] writeLog error:', error.message);
     }
   }
 };

@@ -27,8 +27,6 @@ export interface CutoffCheckResult {
   verificationFailed?: boolean;
 }
 
-const LOG = '[SameDayCutoff]';
-
 /** Convierte "HH:MM:SS" o "HH:MM" → total de minutos desde medianoche */
 function timeToMinutes(t: string): number {
   const parts = t.split(':').map(Number);
@@ -190,7 +188,6 @@ export const sameDayCutoffService = {
     try {
       config = await this.getConfig(orgId, clientId);
     } catch (err) {
-      console.log(LOG, 'getConfig ERROR', err);
       return {
         blocked: false,
         cutoffTimeStr: null,
@@ -201,7 +198,6 @@ export const sameDayCutoffService = {
 
     // ── Regla desactivada o sin horas configuradas: pasa libre ────────────
     if (!config.same_day_cutoff_enabled || config.same_day_cutoff_hours <= 0) {
-      console.log(LOG, 'Regla desactivada o sin horas → pasa libre');
       return { blocked: false, cutoffTimeStr: null, message: '' };
     }
 
@@ -210,7 +206,6 @@ export const sameDayCutoffService = {
     try {
       bypassUsers = await this.getBypassUsers(orgId, clientId);
     } catch (err) {
-      console.log(LOG, 'getBypassUsers ERROR', err);
       return {
         blocked: false,
         cutoffTimeStr: null,
@@ -220,10 +215,8 @@ export const sameDayCutoffService = {
     }
 
     const hasBypass = bypassUsers.includes(userId);
-    console.log(LOG, 'Bypass check:', { userId, bypassUsers, hasBypass });
 
     if (hasBypass) {
-      console.log(LOG, 'Usuario en lista bypass → PERMITIDO');
       return { blocked: false, cutoffTimeStr: null, message: '' };
     }
 
@@ -235,7 +228,6 @@ export const sameDayCutoffService = {
       .maybeSingle();
 
     if (whErr || !wh?.business_end_time) {
-      console.log(LOG, 'Warehouse error', whErr);
       return {
         blocked: false,
         cutoffTimeStr: null,
@@ -246,20 +238,16 @@ export const sameDayCutoffService = {
 
     // ── Calcular hora de corte y comparar contra "ahora" en timezone ───────
     const cutoffTimeStr = calcCutoffTime(wh.business_end_time, config.same_day_cutoff_hours);
-    console.log(LOG, 'Cutoff time:', cutoffTimeStr, 'business_end:', wh.business_end_time, 'hours:', config.same_day_cutoff_hours);
 
     const nowUtc = new Date();
     const nowTimeStr = toWarehouseTimeString(nowUtc, tz);
-    console.log(LOG, 'Now (warehouse tz):', nowTimeStr, 'tz:', tz);
 
     const nowMins = timeToMinutes(nowTimeStr);
     const cutoffMins = timeToMinutes(cutoffTimeStr);
 
     const isBlocked = nowMins >= cutoffMins;
-    console.log(LOG, 'Comparison:', { nowMins, cutoffMins, isBlocked });
 
     if (isBlocked) {
-      console.log(LOG, 'BLOQUEADO');
       return {
         blocked: true,
         cutoffTimeStr,
@@ -267,7 +255,6 @@ export const sameDayCutoffService = {
       };
     }
 
-    console.log(LOG, 'PERMITIDO');
     return { blocked: false, cutoffTimeStr, message: '' };
   },
 };

@@ -238,14 +238,11 @@ export async function ensureReservationQR(
   options?: { forceRefresh?: boolean }
 ): Promise<string | null> {
   const forceRefresh = options?.forceRefresh ?? false;
-  console.log('[QR] ensureReservationQR START', { reservationId, orgId, forceRefresh });
   try {
     const { generateQRBlob } = await import('@/utils/reservationQr.utils');
     const blob = await generateQRBlob(reservationId);
 
     const path = buildQRStoragePath(orgId, reservationId);
-    console.log('[QR] uploading to storage', { path, bucket: RESERVATION_QRS_BUCKET });
-
     const { error: uploadError } = await supabase.storage
       .from(RESERVATION_QRS_BUCKET)
       .upload(path, blob, {
@@ -255,14 +252,12 @@ export async function ensureReservationQR(
       });
 
     if (uploadError) {
-      console.error('[QR] upload error', { reservationId, error: uploadError.message });
       return null;
     }
 
     const baseUrl = getPublicUrlForQR(path);
     // Agregar cache-buster cuando se fuerza regeneración para que los clientes no usen la versión anterior
     const publicUrl = forceRefresh && baseUrl ? `${baseUrl}?t=${Date.now()}` : baseUrl;
-    console.log('[QR] upload success', { reservationId, publicUrl });
 
     // Guardar qr_image_url en la reserva
     if (publicUrl) {
@@ -273,15 +268,12 @@ export async function ensureReservationQR(
         .eq('org_id', orgId);
 
       if (updateError) {
-        console.error('[QR] update reservations.qr_image_url error', { reservationId, error: updateError.message });
-      } else {
-        console.log('[QR] qr_image_url updated', { reservationId });
+        // non-blocking
       }
     }
 
     return publicUrl;
-  } catch (err: any) {
-    console.error('[QR] ensureReservationQR error', { reservationId, error: err?.message ?? String(err) });
+  } catch (_err: any) {
     return null;
   }
 }
@@ -308,8 +300,6 @@ export async function ensureReservationQRCard(
   options?: { forceRefresh?: boolean }
 ): Promise<string | null> {
   const forceRefresh = options?.forceRefresh ?? false;
-  console.log('[QR-CARD] ensureReservationQRCard START', { reservationId, orgId, forceRefresh });
-
   try {
     // 1. Verificar si ya existe (solo si NO es forceRefresh)
     if (!forceRefresh) {
@@ -321,7 +311,6 @@ export async function ensureReservationQRCard(
         .maybeSingle();
 
       if (existing?.qr_card_image_url) {
-        console.log('[QR-CARD] already exists, skipping', { reservationId });
         return existing.qr_card_image_url;
       }
     }
@@ -335,7 +324,6 @@ export async function ensureReservationQRCard(
       .maybeSingle();
 
     if (resErr || !reservation) {
-      console.error('[QR-CARD] fetch reservation error', { reservationId, error: resErr?.message });
       return null;
     }
 
@@ -383,8 +371,6 @@ export async function ensureReservationQRCard(
 
     // 6. Subir a Storage
     const path = buildQRCardStoragePath(orgId, reservationId);
-    console.log('[QR-CARD] uploading to storage', { path, bucket: RESERVATION_QRS_BUCKET });
-
     const { error: uploadError } = await supabase.storage
       .from(RESERVATION_QRS_BUCKET)
       .upload(path, blob, {
@@ -394,14 +380,12 @@ export async function ensureReservationQRCard(
       });
 
     if (uploadError) {
-      console.error('[QR-CARD] upload error', { reservationId, error: uploadError.message });
       return null;
     }
 
     // 7. Guardar URL pública en la reserva (con cache-buster si forceRefresh)
     const baseUrl = getPublicUrlForQRCard(path);
     const publicUrl = forceRefresh && baseUrl ? `${baseUrl}?t=${Date.now()}` : baseUrl;
-    console.log('[QR-CARD] card upload success', { reservationId, publicUrl });
 
     if (publicUrl) {
       const { error: updateError } = await supabase
@@ -411,15 +395,12 @@ export async function ensureReservationQRCard(
         .eq('org_id', orgId);
 
       if (updateError) {
-        console.error('[QR-CARD] update reservations.qr_card_image_url error', { reservationId, error: updateError.message });
-      } else {
-        console.log('[QR-CARD] qr_card_image_url updated', { reservationId });
+        // non-blocking
       }
     }
 
     return publicUrl;
-  } catch (err: any) {
-    console.error('[QR-CARD] ensureReservationQRCard error', { reservationId, error: err?.message ?? String(err) });
+  } catch (_err: any) {
     return null;
   }
 }
@@ -436,8 +417,6 @@ export async function regenerateReservationQRAssets(
   orgId: string,
   reservationId: string
 ): Promise<void> {
-  console.log('[QR] regenerate START', { reservationId });
-
   try {
     // Regenerar ambos assets en paralelo con forceRefresh = true
     const [qrUrl, cardUrl] = await Promise.all([
@@ -446,19 +425,14 @@ export async function regenerateReservationQRAssets(
     ]);
 
     if (qrUrl) {
-      console.log('[QR] qr_image_url updated (regenerate)', { reservationId });
-    } else {
-      console.warn('[QR] regenerate failed: qr_image_url is null', { reservationId });
+      // regenerated successfully
     }
 
     if (cardUrl) {
-      console.log('[QR] qr_card_image_url updated (regenerate)', { reservationId });
-    } else {
-      console.warn('[QR] regenerate failed: qr_card_image_url is null', { reservationId });
+      // regenerated successfully
     }
 
     if (!qrUrl && !cardUrl) {
-      console.error('[QR] regenerate failed: both assets returned null', { reservationId });
       // Registrar el fallo en activity_log de todas formas
       await supabase.from('activity_log').insert({
         org_id: orgId,
@@ -487,12 +461,10 @@ export async function regenerateReservationQRAssets(
     });
 
     if (logError) {
-      console.warn('[ACTIVITY] reservation QR log write error:', logError.message);
-    } else {
-      console.log('[ACTIVITY] reservation QR updated logged', { reservationId });
+      // non-blocking
     }
-  } catch (err: any) {
-    console.error('[QR] regenerate failed', { reservationId, error: err?.message ?? String(err) });
+  } catch (_err: any) {
+    // non-blocking
   }
 }
 
@@ -841,7 +813,6 @@ export const calendarService = {
     const { data, error } = await query;
 
     if (error) {
-      console.error('[DOCK-FAST] getVisibleDockIds query error', error);
       return [];
     }
 

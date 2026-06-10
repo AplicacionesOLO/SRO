@@ -38,7 +38,7 @@ export const userProvidersService = {
       if (error) throw error;
 
       for (const row of (data ?? []) as any[]) {
-        if (row.providers?.active === true) {
+        if (row.providers?.id) {
           providerMap.set(row.providers.id, row.providers.name);
         }
       }
@@ -96,14 +96,13 @@ export const userProvidersService = {
       const missingIds = [...clusterProviderIds].filter((id) => !providerMap.has(id));
 
       if (missingIds.length > 0) {
-        // Obtener nombres de los proveedores faltantes (paginado, activos solamente)
+        // Obtener nombres de los proveedores faltantes (paginado, todos — activos e inactivos)
         let provFrom = 0;
         while (true) {
           const { data: provData, error: provErr } = await supabase
             .from('providers')
             .select('id, name')
             .eq('org_id', orgId)
-            .eq('active', true)
             .in('id', missingIds)
             .range(provFrom, provFrom + pageSize - 1);
 

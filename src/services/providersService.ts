@@ -59,7 +59,6 @@ async function getOrigenProveedoresMap(orgId: string): Promise<Record<string, { 
     .eq('is_active', true);
 
   if (error) {
-    console.error('[providersService] Error cargando origen_proveedores:', error);
     return {};
   }
 

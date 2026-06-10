@@ -734,9 +734,8 @@ export default function ReservationModal({
           isConsolidated === !!reservation.is_consolidated;
 
         if (!isStatusOnlyChangeLocal) {
-          console.log('[QR] scheduling regeneration after update', { reservationId: saved.id });
-          regenerateReservationQRAssets(orgId, saved.id).catch((err: any) => {
-            console.error('[QR] regenerate failed silently', saved.id, err?.message);
+          regenerateReservationQRAssets(orgId, saved.id).catch(() => {
+            // non-blocking
           });
         }
       }

@@ -62,7 +62,6 @@ export default function AsignacionesTab({ orgId, userId }: Props) {
           .range(rangeStart, rangeStart + pageSize - 1);
 
         if (providersError) {
-          console.error('[AsignacionesTab] Error cargando proveedores:', providersError);
           break;
         }
 
