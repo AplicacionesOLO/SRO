@@ -157,7 +157,7 @@ export default function ClientesPage() {
         await clientsService.updateClient(orgId, editingClient.id, formData);
         setSuccessMessage('Cliente actualizado correctamente');
       } else {
-        await clientsService.createClient(orgId, formData);
+        await clientsService.createClient(orgId, formData, activeWarehouseId);
         setSuccessMessage('Cliente creado correctamente');
       }
 

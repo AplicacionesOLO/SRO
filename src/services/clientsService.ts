@@ -85,8 +85,8 @@ export const clientsService = {
     return data as Client;
   },
 
-  async createClient(orgId: string, payload: ClientFormData): Promise<Client> {
-    //console.log('[ClientsService] createClient', { orgId, name: payload.name });
+  async createClient(orgId: string, payload: ClientFormData, warehouseId?: string | null): Promise<Client> {
+    //console.log('[ClientsService] createClient', { orgId, name: payload.name, warehouseId });
 
     const { data, error } = await supabase
       .from('clients')
@@ -109,6 +109,23 @@ export const clientsService = {
     }
 
     if (!data) throw new Error('No se pudo crear el cliente');
+
+    // Si hay un almacén activo, asignar el cliente a ese almacén automáticamente
+    if (warehouseId) {
+      const { error: wcError } = await supabase
+        .from('warehouse_clients')
+        .insert({
+          org_id: orgId,
+          client_id: data.id,
+          warehouse_id: warehouseId
+        });
+
+      if (wcError) {
+        // No tiramos error — el cliente ya se creó. Solo logueamos.
+        // console.warn('[ClientsService] No se pudo asignar el cliente al almacén', wcError);
+      }
+    }
+
     return data as Client;
   },
 

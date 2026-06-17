@@ -58,8 +58,8 @@ function normalizeHeader(h: string): string {
 const COMPANY_MAP: Record<number, { name: string; color: string; bg: string; text: string }> = {
   1: { name: 'FEBECA', color: 'bg-teal-50', bg: 'bg-teal-50', text: 'text-teal-700' },
   2: { name: 'SILLACA', color: 'bg-blue-50', bg: 'bg-blue-50', text: 'text-blue-700' },
-  29: { name: 'Cofersa', color: 'bg-teal-50', bg: 'bg-teal-50', text: 'text-teal-700' },
-  109: { name: 'EPA', color: 'bg-blue-50', bg: 'bg-blue-50', text: 'text-blue-700' },
+  29: { name: 'EPA', color: 'bg-blue-50', bg: 'bg-blue-50', text: 'text-blue-700' },
+  109: { name: 'Cofersa', color: 'bg-teal-50', bg: 'bg-teal-50', text: 'text-teal-700' },
 };
 
 function parseExcel(file: File): Promise<{ rows: ExcelRow[]; error: string; sciWarnings: string[] }> {
@@ -438,7 +438,7 @@ export default function ProviderExcelSyncModal({ orgId, warehouseId, onClose, on
                 </div>
                 <div className="mt-2 space-y-1">
                   <p className="text-xs text-gray-500">
-                    <strong>IDCOMPANIA:</strong> 0001 = FEBECA · 0002 = SILLACA · 0029 = Cofersa · 0109 = EPA
+                    <strong>IDCOMPANIA:</strong> 0001 = FEBECA · 0002 = SILLACA · 0029 = EPA · 0109 = Cofersa
                   </p>
                   <p className="text-xs text-gray-500">
                     <strong>IDPROVEEDOR:</strong> puede ser alfanumérico (RIF, cédula, código). No se convierte a número.

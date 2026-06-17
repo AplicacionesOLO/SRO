@@ -84,8 +84,8 @@ function resolveClientBySource(source: string | null | undefined, orgMap: Record
   if (fromTable) return { id: fromTable.clientId, name: fromTable.name };
   // Fallback legacy para nombres de compañía
   // El campo 'source' indica el sistema de origen de los datos:
-  //   - 'EPA'      = datos provenientes del sistema EPA (IDCOMPANIA=109, código 0109)
-  //   - 'COFERSA'  = datos provenientes del sistema COFERSA (IDCOMPANIA=29, código 029)
+  //   - 'EPA'      = datos provenientes del sistema EPA (IDCOMPANIA=29, código 0029)
+  //   - 'COFERSA'  = datos provenientes del sistema COFERSA (IDCOMPANIA=109, código 0109)
   //   - 'FEBECA'   = datos provenientes del sistema FEBECA
   //   - 'SILLACA'  = datos provenientes del sistema SILLACA
   // Mapeo directo: origen → cliente con el mismo nombre
@@ -284,7 +284,7 @@ export const providersService = {
     
     const { data, error } = await supabase
       .from('providers')
-      .insert({
+      .upsert({
         org_id: orgId,
         name: normalizedName,
         active: true,
@@ -293,7 +293,7 @@ export const providersService = {
         source: normalizedSource,
         source_code: normalizedSourceCode,
         client_id: finalClientId,
-      })
+      }, { onConflict: 'org_id, name_normalized, source_normalized' })
       .select('id, org_id, name, active, provider_type, provider_code, source, source_code, client_id, created_at')
       .single();
 
