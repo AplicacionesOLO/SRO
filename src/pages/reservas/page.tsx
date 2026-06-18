@@ -11,6 +11,28 @@ import ReservationModal from '../calendario/components/ReservationModal';
 import ReservationQRModal, { type ReservationQRData } from '../../components/feature/ReservationQRModal';
 import WarehouseSelector from '../../components/feature/WarehouseSelector';
 
+// ── Persistencia de filtros (sessionStorage, patrón Casetilla) ────────────
+const SESSION_KEY = 'reservas_ui_state';
+
+interface ReservasUIState {
+  searchTerm: string;
+  filterStatus: string;
+  filterCancelled: 'all' | 'active' | 'cancelled';
+  filterDateFrom: string;
+  filterDateTo: string;
+  sortField: 'start_datetime' | 'created_at';
+  sortOrder: 'asc' | 'desc';
+  currentPage: number;
+}
+
+const readSession = (): Partial<ReservasUIState> => {
+  try { const raw = sessionStorage.getItem(SESSION_KEY); return raw ? JSON.parse(raw) : {}; } catch { return {}; }
+};
+const writeSession = (state: ReservasUIState) => {
+  try { sessionStorage.setItem(SESSION_KEY, JSON.stringify(state)); } catch { /* noop */ }
+};
+// ───────────────────────────────────────────────────────────────────────────
+
 export default function ReservasPage() {
   const { can, orgId, loading: permLoading } = usePermissions();
   const { allowedWarehouseIds, allowedClientIds, loading: scopeLoading } = useUserScope();
@@ -31,13 +53,13 @@ export default function ReservasPage() {
   // Mapa proveedor → clientes (reverse lookup desde client_providers)
   const [providerClientMap, setProviderClientMap] = useState<Map<string, string>>(new Map());
 
-  const [searchTerm, setSearchTerm] = useState('');
-  const [filterStatus, setFilterStatus] = useState<string>('all');
-  const [filterCancelled, setFilterCancelled] = useState<'all' | 'active' | 'cancelled'>('all');
-  const [filterDateFrom, setFilterDateFrom] = useState('');
-  const [filterDateTo, setFilterDateTo] = useState('');
-  const [sortField, setSortField] = useState<'start_datetime' | 'created_at'>('start_datetime');
-  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
+  const [searchTerm, setSearchTerm] = useState(() => readSession().searchTerm || '');
+  const [filterStatus, setFilterStatus] = useState<string>(() => readSession().filterStatus || 'all');
+  const [filterCancelled, setFilterCancelled] = useState<'all' | 'active' | 'cancelled'>(() => readSession().filterCancelled || 'all');
+  const [filterDateFrom, setFilterDateFrom] = useState(() => readSession().filterDateFrom || '');
+  const [filterDateTo, setFilterDateTo] = useState(() => readSession().filterDateTo || '');
+  const [sortField, setSortField] = useState<'start_datetime' | 'created_at'>(() => readSession().sortField || 'start_datetime');
+  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>(() => readSession().sortOrder || 'desc');
 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedReservation, setSelectedReservation] = useState<Reservation | null>(null);
@@ -46,8 +68,23 @@ export default function ReservasPage() {
     data: null,
   });
 
-  const [currentPage, setCurrentPage] = useState(1);
+  const [currentPage, setCurrentPage] = useState(() => readSession().currentPage || 1);
   const itemsPerPage = 20;
+
+  // ── Escribir sessionStorage cuando el estado de UI cambie ──────────────
+  useEffect(() => {
+    writeSession({
+      searchTerm,
+      filterStatus,
+      filterCancelled,
+      filterDateFrom,
+      filterDateTo,
+      sortField,
+      sortOrder,
+      currentPage,
+    });
+  }, [searchTerm, filterStatus, filterCancelled, filterDateFrom, filterDateTo, sortField, sortOrder, currentPage]);
+  // ────────────────────────────────────────────────────────────────────────
 
   const [deleteModal, setDeleteModal] = useState<{
     isOpen: boolean;
@@ -75,7 +112,7 @@ export default function ReservasPage() {
       const endDate = new Date();
       endDate.setMonth(endDate.getMonth() + 3);
 
-      // PASO 1: obtener dock IDs visibles/permitidos PRIMERO (~10-20ms)
+      // PASO 1: obtener dock IDs visibles/permitidos PRIMERO
       const allowedDockIds = await calendarService.getVisibleDockIds(orgId, null, effectiveWarehouseIds, allowedClientIds);
 
       // Si no hay docks visibles, no hay reservas posibles -> early return
@@ -223,7 +260,6 @@ export default function ReservasPage() {
         r.invoice?.toLowerCase().includes(term) ||
         r.driver?.toLowerCase().includes(term) ||
         r.purchase_order?.toLowerCase().includes(term) ||
-        // Buscar tanto por ID de proveedor como por su nombre legible
         r.shipper_provider?.toLowerCase().includes(term) ||
         getProviderName(r.shipper_provider).toLowerCase().includes(term) ||
         getClientName(r.shipper_provider).toLowerCase().includes(term) ||
@@ -246,13 +282,11 @@ export default function ReservasPage() {
     }
 
     if (filterDateFrom) {
-      // Parsear como hora local (agregar T00:00:00 evita que JS lo interprete como UTC midnight)
       const fromDate = new Date(`${filterDateFrom}T00:00:00`);
       filtered = filtered.filter((r) => new Date(r.start_datetime) >= fromDate);
     }
 
     if (filterDateTo) {
-      // Fin del día en hora local
       const toDate = new Date(`${filterDateTo}T23:59:59.999`);
       filtered = filtered.filter((r) => new Date(r.start_datetime) <= toDate);
     }

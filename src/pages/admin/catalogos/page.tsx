@@ -19,6 +19,12 @@ export default function CatalogosPage() {
   } = useActiveWarehouse();
 
   const [activeTab, setActiveTab] = useState<'providers' | 'cargo_types' | 'time_profiles' | 'assignments'>('providers');
+  const [mountedTabs, setMountedTabs] = useState<Set<string>>(new Set(['providers']));
+
+  const switchTab = (tabId: typeof activeTab) => {
+    setMountedTabs(prev => prev.has(tabId) ? prev : new Set([...prev, tabId]));
+    setActiveTab(tabId);
+  };
   const isAdminOrFull = hasRole('ADMIN') || hasRole('Full Access');
   const warehouseInitDoneRef = useRef(false);
 
@@ -98,7 +104,7 @@ export default function CatalogosPage() {
               {tabs.map((tab) => (
                 <button
                   key={tab.id}
-                  onClick={() => setActiveTab(tab.id)}
+                  onClick={() => switchTab(tab.id)}
                   className={`flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-colors whitespace-nowrap cursor-pointer ${
                     activeTab === tab.id ? 'bg-teal-50 text-teal-600' : 'text-gray-600 hover:bg-gray-50'
                   }`}
@@ -111,10 +117,26 @@ export default function CatalogosPage() {
           </div>
 
           <div className="p-6">
-            {activeTab === 'providers' && <ProvidersTab orgId={orgId} warehouseId={activeWarehouseId} />}
-            {activeTab === 'cargo_types' && <CargoTypesTab orgId={orgId} warehouseId={activeWarehouseId} />}
-            {activeTab === 'time_profiles' && <TimeProfilesTab orgId={orgId} warehouseId={activeWarehouseId} />}
-            {activeTab === 'assignments' && isAdminOrFull && <AsignacionesTab orgId={orgId} userId={userId ?? undefined} />}
+            {mountedTabs.has('providers') && (
+              <div style={{ display: activeTab === 'providers' ? 'block' : 'none' }}>
+                <ProvidersTab orgId={orgId} warehouseId={activeWarehouseId} />
+              </div>
+            )}
+            {mountedTabs.has('cargo_types') && (
+              <div style={{ display: activeTab === 'cargo_types' ? 'block' : 'none' }}>
+                <CargoTypesTab orgId={orgId} warehouseId={activeWarehouseId} />
+              </div>
+            )}
+            {mountedTabs.has('time_profiles') && (
+              <div style={{ display: activeTab === 'time_profiles' ? 'block' : 'none' }}>
+                <TimeProfilesTab orgId={orgId} warehouseId={activeWarehouseId} />
+              </div>
+            )}
+            {isAdminOrFull && mountedTabs.has('assignments') && (
+              <div style={{ display: activeTab === 'assignments' ? 'block' : 'none' }}>
+                <AsignacionesTab orgId={orgId} userId={userId ?? undefined} />
+              </div>
+            )}
           </div>
         </div>
       </div>

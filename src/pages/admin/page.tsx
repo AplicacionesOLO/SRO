@@ -10,6 +10,12 @@ export default function AdminPage() {
   const { user, permissionsLoading } = useAuth();
   const { orgId, can, hasRole, loading } = usePermissions();
   const [activeTab, setActiveTab] = useState<'roles' | 'permissions' | 'matrix' | 'users'>('matrix');
+  const [mountedTabs, setMountedTabs] = useState<Set<string>>(new Set(['matrix']));
+
+  const switchTab = (tabId: typeof activeTab) => {
+    setMountedTabs(prev => prev.has(tabId) ? prev : new Set([...prev, tabId]));
+    setActiveTab(tabId);
+  };
 
   // ✅ Guard 1: Mostrar loader mientras se cargan permisos
   if (permissionsLoading || loading) {
@@ -91,7 +97,7 @@ export default function AdminPage() {
               {tabs.map((tab) => (
                 <button
                   key={tab.id}
-                  onClick={() => setActiveTab(tab.id)}
+                  onClick={() => switchTab(tab.id)}
                   className={`flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-colors whitespace-nowrap ${
                     activeTab === tab.id
                       ? 'bg-teal-50 text-teal-600'
@@ -106,10 +112,26 @@ export default function AdminPage() {
           </div>
 
           <div className="p-6">
-            {activeTab === 'roles' && <RolesTab />}
-            {activeTab === 'permissions' && <PermissionsTab />}
-            {activeTab === 'matrix' && <PermissionMatrixTab />}
-            {activeTab === 'users' && <UsersTab />}
+            {mountedTabs.has('roles') && (
+              <div style={{ display: activeTab === 'roles' ? 'block' : 'none' }}>
+                <RolesTab />
+              </div>
+            )}
+            {mountedTabs.has('permissions') && (
+              <div style={{ display: activeTab === 'permissions' ? 'block' : 'none' }}>
+                <PermissionsTab />
+              </div>
+            )}
+            {mountedTabs.has('matrix') && (
+              <div style={{ display: activeTab === 'matrix' ? 'block' : 'none' }}>
+                <PermissionMatrixTab />
+              </div>
+            )}
+            {mountedTabs.has('users') && (
+              <div style={{ display: activeTab === 'users' ? 'block' : 'none' }}>
+                <UsersTab />
+              </div>
+            )}
           </div>
         </div>
       </div>

@@ -38,6 +38,27 @@ import {
   getDatePartsInTimezone,
 } from '../../utils/timezoneUtils';
 
+// ── Persistencia de contexto visual (sessionStorage, patrón Casetilla) ─────
+const SESSION_KEY = 'calendar_ui_state';
+
+interface CalendarUIState {
+  rangeDays: number;
+  anchorDate: string; // ISO string
+  tabMode: TabMode;
+  dockSearchTerm: string;
+  reservationSearchTerm: string;
+  filterCategory: string;
+  filterStatus: string;
+}
+
+const readCalendarSession = (): Partial<CalendarUIState> => {
+  try { const raw = sessionStorage.getItem(SESSION_KEY); return raw ? JSON.parse(raw) : {}; } catch { return {}; }
+};
+const writeCalendarSession = (state: CalendarUIState) => {
+  try { sessionStorage.setItem(SESSION_KEY, JSON.stringify(state)); } catch { /* noop */ }
+};
+// ───────────────────────────────────────────────────────────────────────────
+
 function getUtcOffsetLabel(timezone: string): string {
   try {
     const now = new Date();
@@ -104,9 +125,13 @@ export default function CalendarioPage() {
     } catch { /* draft corrupto */ }
   }, [orgId]);
 
-  const [rangeDays, setRangeDays] = useState<number>(3);
-  const [anchorDate, setAnchorDate] = useState(new Date());
-  const [tabMode, setTabMode] = useState<TabMode>('calendar');
+  const [rangeDays, setRangeDays] = useState<number>(() => readCalendarSession().rangeDays || 3);
+  const [anchorDate, setAnchorDate] = useState(() => {
+    const persisted = readCalendarSession().anchorDate;
+    if (persisted) { const d = new Date(persisted); if (!isNaN(d.getTime())) return d; }
+    return new Date();
+  });
+  const [tabMode, setTabMode] = useState<TabMode>(() => readCalendarSession().tabMode || 'calendar');
   const [docks, setDocks] = useState<Dock[]>([]);
   const [reservations, setReservations] = useState<Reservation[]>([]);
   const [blocks, setBlocks] = useState<DockTimeBlock[]>([]);
@@ -124,11 +149,11 @@ export default function CalendarioPage() {
   const [copyDraft, setCopyDraft] = useState<any | null>(null);
   const [selectedBlock, setSelectedBlock] = useState<DockTimeBlock | null>(null);
   const [isBlockModalOpen, setIsBlockModalOpen] = useState(false);
-  const [dockSearchTerm, setDockSearchTerm] = useState('');
-  const [reservationSearchTerm, setReservationSearchTerm] = useState('');
+  const [dockSearchTerm, setDockSearchTerm] = useState(() => readCalendarSession().dockSearchTerm || '');
+  const [reservationSearchTerm, setReservationSearchTerm] = useState(() => readCalendarSession().reservationSearchTerm || '');
   const debouncedReservationSearch = useDebouncedValue(reservationSearchTerm, 300);
-  const [filterCategory, setFilterCategory] = useState<string>('all');
-  const [filterStatus, setFilterStatus] = useState<string>('all');
+  const [filterCategory, setFilterCategory] = useState<string>(() => readCalendarSession().filterCategory || 'all');
+  const [filterStatus, setFilterStatus] = useState<string>(() => readCalendarSession().filterStatus || 'all');
   const [providers, setProviders] = useState<{ id: string; name: string }[]>([]);
   const [userProviderIds, setUserProviderIds] = useState<Set<string>>(new Set());
   const [draggedEvent, setDraggedEvent] = useState<CalendarEvent | null>(null);
@@ -177,6 +202,20 @@ export default function CalendarioPage() {
     const interval = setInterval(() => { setNowTz(new Date()); }, 60000);
     return () => clearInterval(interval);
   }, []);
+
+  // ── Persistir estado visual en sessionStorage ──────────────────────────
+  useEffect(() => {
+    writeCalendarSession({
+      rangeDays,
+      anchorDate: anchorDate.toISOString(),
+      tabMode,
+      dockSearchTerm,
+      reservationSearchTerm,
+      filterCategory,
+      filterStatus,
+    });
+  }, [rangeDays, anchorDate, tabMode, dockSearchTerm, reservationSearchTerm, filterCategory, filterStatus]);
+  // ────────────────────────────────────────────────────────────────────────
 
   const warehouseId = ctxWarehouseId;
 
@@ -417,7 +456,7 @@ export default function CalendarioPage() {
           calendarService.getDockCategories(orgId),
         ]);
 
-        // Enriquecer reservations con status desde cache (getReservations ruta rápida ya no trae el join)
+        // Enriquecer reservations con status desde cache
         let enrichedReservations = reservationsData;
         if (statusesData.length > 0 && reservationsData.length > 0) {
           const statusMap = new Map(statusesData.map((s: any) => [s.id, s]));

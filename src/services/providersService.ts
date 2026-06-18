@@ -33,17 +33,10 @@ let origenCache: Record<string, { clientId: string; name: string }> | null = nul
 let origenCacheTs = 0;
 const ORIGEN_CACHE_TTL = 60_000; // 1 minuto
 
-// ── Cache de los dos barridos pesados de getProviderAssignmentsOptimized ──
-let assignmentsFullCache: {
-  orgId: string;
-  allPwRows: any[];
-  allCpRows: any[];
-  ts: number;
-} | null = null;
-const ASSIGNMENTS_FULL_CACHE_TTL = 30_000; // 30 segundos — suficiente para navegación fluida
+// ── Cache eliminado en Fase 2 (reingeniería): queries quirúrgicas solo piden 25 providers ──
 
 function invalidateAssignmentsCache() {
-  assignmentsFullCache = null;
+  // no-op: sin cache de barridos completos, las queries ahora son quirúrgicas
 }
 
 async function getOrigenProveedoresMap(orgId: string): Promise<Record<string, { clientId: string; name: string }>> {
@@ -382,10 +375,9 @@ export const providersService = {
   },
 
   /**
-   * Paginación con filtro por almacén.
-   * Trae todos los proveedores del almacén, filtra en memoria por búsqueda/cliente,
-   * y pagina en memoria. Esto evita el problema de duplicados en provider_warehouses
-   * y del 414 URI Too Long con .in() de miles de IDs.
+   * Paginación server-side con filtro por almacén.
+   * Búsqueda, filtrado, ordenamiento y paginación ocurren en Supabase.
+   * Solo se transfieren los registros de la página solicitada.
    */
   async getByWarehousePaginated(
     orgId: string,
@@ -396,30 +388,42 @@ export const providersService = {
     clientId?: string | null,
     activeOnly = true,
   ): Promise<{ data: Provider[]; total: number; totalPages: number }> {
-    const allProviders = await this.getByWarehouse(orgId, warehouseId, activeOnly);
+    const from = (page - 1) * pageSize;
+    const to = from + pageSize - 1;
 
-    let filtered = allProviders;
+    let query = supabase
+      .from('providers')
+      .select('id, org_id, name, active, provider_type, provider_code, source, source_code, client_id, created_at, provider_warehouses!inner(warehouse_id)', { count: 'exact' })
+      .eq('org_id', orgId)
+      .eq('provider_warehouses.warehouse_id', warehouseId);
+
+    if (activeOnly) query = query.eq('active', true);
+    if (clientId) query = query.eq('client_id', clientId);
 
     if (searchTerm && searchTerm.trim()) {
-      const term = searchTerm.trim().toLowerCase();
-      filtered = filtered.filter((p) =>
-        p.name.toLowerCase().includes(term) ||
-        (p.provider_code || '').toLowerCase().includes(term) ||
-        (p.source || '').toLowerCase().includes(term) ||
-        (p.source_code || '').toLowerCase().includes(term)
-      );
+      const term = `%${searchTerm.trim()}%`;
+      query = query.or(`name.ilike.${term},provider_code.ilike.${term},source.ilike.${term},source_code.ilike.${term}`);
     }
 
-    if (clientId) {
-      filtered = filtered.filter((p) => p.client_id === clientId);
-    }
+    query = query.order('name', { ascending: true }).range(from, to);
 
-    const total = filtered.length;
-    const totalPages = Math.ceil(total / pageSize);
-    const offset = (page - 1) * pageSize;
-    const data = filtered.slice(offset, offset + pageSize);
+    const { data, error, count } = await query;
 
-    return { data, total, totalPages };
+    if (error) throw error;
+
+    // Deduplicar por provider.id (seguridad: uniqueness constraint en provider_warehouses ya lo garantiza)
+    const seen = new Set<string>();
+    const uniqueData = ((data ?? []) as any[])
+      .map(({ provider_warehouses: _pw, ...p }: any) => p as Provider)
+      .filter((p: Provider) => {
+        if (seen.has(p.id)) return false;
+        seen.add(p.id);
+        return true;
+      });
+
+    const total = count ?? 0;
+
+    return { data: uniqueData, total, totalPages: Math.ceil(total / pageSize) };
   },
 
   /**
@@ -736,56 +740,25 @@ export const providersService = {
       providerSourceMap[p.id] = p.source || null;
     }
 
-    // ── Cache check: si ya tenemos los datos completos de esta org frescos, saltamos los barridos ──
-    const now = Date.now();
-    const cacheValid = assignmentsFullCache
-      && assignmentsFullCache.orgId === orgId
-      && assignmentsFullCache.ts + ASSIGNMENTS_FULL_CACHE_TTL > now;
+    // ── QUIRÚRGICO: consultar SOLO los providerIds visibles (máx 25), no barrer tablas completas ──
+    const [pwResult, cpResult] = await Promise.all([
+      supabase
+        .from('provider_warehouses')
+        .select('provider_id, warehouse_id, warehouses(name)')
+        .eq('org_id', orgId)
+        .in('provider_id', providerIds),
+      supabase
+        .from('client_providers')
+        .select('provider_id, client_id, clients(name)')
+        .eq('org_id', orgId)
+        .in('provider_id', providerIds),
+    ]);
 
-    let allPwRows: any[];
-    let allCpRows: any[];
+    if (pwResult.error) throw pwResult.error;
+    if (cpResult.error) throw cpResult.error;
 
-    if (cacheValid) {
-      allPwRows = assignmentsFullCache!.allPwRows;
-      allCpRows = assignmentsFullCache!.allCpRows;
-    } else {
-      const pageSize = 1000;
-
-      // ── PARALELO: los dos barridos son independientes, los disparamos juntos ──
-      async function fetchAllPages(
-        table: string,
-        select: string,
-        eqField: string,
-        eqValue: string
-      ): Promise<any[]> {
-        let from = 0;
-        const rows: any[] = [];
-        while (true) {
-          const { data, error } = await supabase
-            .from(table)
-            .select(select)
-            .eq(eqField, eqValue)
-            .order('created_at', { ascending: true })
-            .range(from, from + pageSize - 1);
-          if (error) throw error;
-          rows.push(...(data ?? []));
-          if ((data ?? []).length < pageSize) break;
-          from += pageSize;
-        }
-        return rows;
-      }
-
-      const [pwResult, cpResult] = await Promise.all([
-        fetchAllPages('provider_warehouses', 'provider_id, warehouse_id, warehouses(name)', 'org_id', orgId),
-        fetchAllPages('client_providers', 'provider_id, client_id, clients(name)', 'org_id', orgId),
-      ]);
-
-      allPwRows = pwResult;
-      allCpRows = cpResult;
-
-      // Guardar en cache
-      assignmentsFullCache = { orgId, allPwRows, allCpRows, ts: now };
-    }
+    const allPwRows = pwResult.data ?? [];
+    const allCpRows = cpResult.data ?? [];
 
     // ── Filtrado en memoria (rápido, son operaciones sobre arrays) ──
     const pwRows = allPwRows.filter((r: any) => providerSet.has(r.provider_id));
@@ -896,7 +869,6 @@ export const providersService = {
         if (matchingClients.length > 0) {
           return `${warehouseName}: (${matchingClients.join(', ')})`;
         }
-        // Fallback: si no hay matching clients via warehouse_clients, pero hay clientes directos del proveedor, mostrarlos
         const allClients = [...providerClientIds]
           .map(cid => clientNames[cid] ?? cid)
           .sort();
