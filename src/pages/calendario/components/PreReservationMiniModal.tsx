@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import type { CargoType, Provider } from '../../../types/catalog';
 import { saveGenericDraft, readGenericDraft, clearGenericDraft } from '../../../hooks/useReservationDraft';
 import { cargoTypesService } from '../../../services/cargoTypesService';
@@ -9,6 +9,7 @@ import { dockAllocationService } from '../../../services/dockAllocationService';
 import { useAuth } from '../../../contexts/AuthContext';
 import SearchSelect from '../../../components/base/SearchSelect';
 import { formatProviderLabel } from '../../../utils/providerFormat';
+import { supabase } from '../../../lib/supabase';
 
 interface PreReservationMiniModalProps {
   isOpen: boolean;
@@ -19,6 +20,7 @@ interface PreReservationMiniModalProps {
   onConfirm: (data: {
     cargoTypeId: string;
     providerId: string;
+    providerName?: string;
     clientId: string;
     clientIds: string[];
     requiredMinutes: number;
@@ -43,8 +45,10 @@ export default function PreReservationMiniModal({
   const [selectedCargoTypeId, setSelectedCargoTypeId] = useState<string>('');
   const [selectedProviderId, setSelectedProviderId] = useState<string>('');
   const [cargoTypes, setCargoTypes] = useState<CargoType[]>([]);
+  // ── providers ahora es lazy: resultados de búsqueda server-side, NO la lista completa ──
   const [providers, setProviders] = useState<Provider[]>([]);
   const [loading, setLoading] = useState(false);
+  const [providerSearchLoading, setProviderSearchLoading] = useState(false);
 
   // duración calculada por perfil o fallback
   const [requiredMinutes, setRequiredMinutes] = useState<number>(30);
@@ -79,6 +83,10 @@ export default function PreReservationMiniModal({
   // Evita race conditions (cambios rápidos de selects)
   const reqKeyRef = useRef<string>('');
 
+  // ── Modo no-privilegiado: IDs de proveedores asignados al usuario ──
+  const [userProviderIds, setUserProviderIds] = useState<Set<string>>(new Set());
+  const [userProviderCount, setUserProviderCount] = useState<number>(-1); // -1 = no cargado aún
+
   // Determinar si el usuario es privilegiado (admin/full_access)
   const isPrivileged =
     canLocal('admin.users.update') ||
@@ -88,6 +96,16 @@ export default function PreReservationMiniModal({
     user?.role === 'admin' ||
     user?.role === 'SUPERADMIN' ||
     user?.role === 'superadmin';
+
+  // ── Fetch rápido de un solo proveedor por ID (para draft restore) ──
+  const fetchSingleProvider = useCallback(async (providerId: string): Promise<Provider | null> => {
+    const { data } = await supabase
+      .from('providers')
+      .select('id, org_id, name, active, provider_type, provider_code, source, source_code, client_id, created_at')
+      .eq('id', providerId)
+      .maybeSingle();
+    return (data as Provider) ?? null;
+  }, []);
 
   // Restaurar draft al abrir
   useEffect(() => {
@@ -100,9 +118,18 @@ export default function PreReservationMiniModal({
       }>(DRAFT_KEY);
       if (draft) {
         if (draft.formData.cargoTypeId) setSelectedCargoTypeId(draft.formData.cargoTypeId);
-        if (draft.formData.providerId) setSelectedProviderId(draft.formData.providerId);
         if (draft.formData.isConsolidated != null) setIsConsolidated(draft.formData.isConsolidated);
         if (draft.formData.consolidatedProviders) setConsolidatedProviders(draft.formData.consolidatedProviders);
+        if (draft.formData.providerId) {
+          setSelectedProviderId(draft.formData.providerId);
+          // Fetch rápido del proveedor para que SearchSelect muestre su label
+          fetchSingleProvider(draft.formData.providerId).then(p => {
+            if (p) setProviders(prev => {
+              const exists = prev.some(x => x.id === p.id);
+              return exists ? prev : [...prev, p];
+            });
+          });
+        }
       }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -120,7 +147,7 @@ export default function PreReservationMiniModal({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedCargoTypeId, selectedProviderId, isOpen, isConsolidated, consolidatedProviders]);
 
-  // Cargar catálogos cuando se abre el modal
+  // ── Carga inicial rápida: solo cargoTypes + (si no es admin) userProviders ──
   useEffect(() => {
     if (isOpen && orgId && user?.id) {
       loadCatalogs();
@@ -129,50 +156,77 @@ export default function PreReservationMiniModal({
   }, [isOpen, orgId, user?.id, warehouseId]);
 
   const loadCatalogs = async () => {
+    console.time('[NewReservation] PreModal ══ TOTAL loadCatalogs ══');
     setLoading(true);
     try {
+      console.time('[NewReservation] PreModal ── cargoTypes ──');
       const cargoTypesData = await cargoTypesService.getByWarehouse(orgId, warehouseId ?? null, true);
-
-      let providersData: Provider[] = [];
-
-      if (isPrivileged) {
-        providersData = await providersService.getByWarehouse(orgId, warehouseId ?? null, true);
-      } else {
-        const [userProviders, warehouseProviders] = await Promise.all([
-          userProvidersService.getUserProviders(orgId, user!.id),
-          providersService.getByWarehouse(orgId, warehouseId ?? null, true),
-        ]);
-
-        const warehouseProviderIds = new Set(warehouseProviders.map((p) => p.id));
-        const warehouseMatched = userProviders.filter((up) => warehouseProviderIds.has(up.id));
-        // Proveedores asignados vía cluster que NO están en provider_warehouses — deben verse igual
-        const clusterOnly = userProviders.filter((up) => !warehouseProviderIds.has(up.id));
-        const filtered = warehouseMatched.concat(clusterOnly);
-
-        providersData = filtered.map(up => ({
-          id: up.id,
-          name: up.name,
-          org_id: orgId,
-          active: true,
-          created_at: '',
-          updated_at: '',
-        }));
-      }
-
+      console.timeEnd('[NewReservation] PreModal ── cargoTypes ──');
       setCargoTypes(cargoTypesData);
-      setProviders(providersData);
 
-      // Auto-seleccionar si hay 1 solo proveedor (solo si no es consolidado)
-      if (providersData.length === 1 && !selectedProviderId && !isConsolidated) {
-        const singleProvider = providersData[0];
-        setSelectedProviderId(singleProvider.id);
+      if (!isPrivileged) {
+        console.time('[NewReservation] PreModal ── userProviders ──');
+        const userProvs = await userProvidersService.getUserProviders(orgId, user!.id);
+        console.timeEnd('[NewReservation] PreModal ── userProviders ──');
+        const ids = new Set(userProvs.map(up => up.id));
+        setUserProviderIds(ids);
+        setUserProviderCount(userProvs.length);
+
+        // Auto-seleccionar si hay exactamente 1 proveedor asignado
+        if (userProvs.length === 1) {
+          const singleProvider = userProvs[0];
+          setSelectedProviderId(singleProvider.id);
+          setProviders([{
+            id: singleProvider.id,
+            name: singleProvider.name,
+            org_id: orgId,
+            active: true,
+            created_at: '',
+            updated_at: '',
+          }]);
+        }
+      } else {
+        setUserProviderCount(-1); // admin: sin restricción
       }
+
+      console.log('[NewReservation] PreModal ── cargoTypes count:', cargoTypesData.length, '| userProviderCount:', isPrivileged ? 'admin' : userProviderCount);
     } catch (error: any) {
       // non-blocking catalog load error
     } finally {
       setLoading(false);
+      console.timeEnd('[NewReservation] PreModal ══ TOTAL loadCatalogs ══');
     }
   };
+
+  // ── Búsqueda server-side de proveedores (debounced por SearchSelect) ──
+  const handleProviderSearch = useCallback(async (query: string) => {
+    if (!query.trim()) {
+      // Sin query: si es no-privilegiado y tiene 1 solo proveedor, mantenerlo visible
+      if (!isPrivileged && userProviderCount === 1 && selectedProviderId) {
+        // mantener el proveedor único en providers para que SearchSelect muestre su label
+        return;
+      }
+      setProviders([]);
+      return;
+    }
+
+    setProviderSearchLoading(true);
+    try {
+      const results = await providersService.searchProviders(orgId, warehouseId ?? null, query, 25, true);
+
+      if (!isPrivileged && userProviderIds.size > 0) {
+        // Filtrar: solo mostrar proveedores asignados al usuario
+        const filtered = results.filter(p => userProviderIds.has(p.id));
+        setProviders(filtered);
+      } else {
+        setProviders(results);
+      }
+    } catch {
+      setProviders([]);
+    } finally {
+      setProviderSearchLoading(false);
+    }
+  }, [orgId, warehouseId, isPrivileged, userProviderIds, userProviderCount, selectedProviderId]);
 
   // Resolver clientId cuando cambia el proveedor seleccionado
   useEffect(() => {
@@ -236,6 +290,9 @@ export default function PreReservationMiniModal({
       setConsolidatedProviderId('');
       setConsolidatedQuantity('');
       setConsolidatedError('');
+      setProviders([]);
+      setUserProviderIds(new Set());
+      setUserProviderCount(-1);
     }
   }, [isOpen]);
 
@@ -416,9 +473,13 @@ export default function PreReservationMiniModal({
 
     clearGenericDraft(DRAFT_KEY);
     const qty = isDynamic && !isConsolidated && quantityValue.trim() ? Number(quantityValue) : null;
+    const providerName = !isConsolidated && selectedProviderId
+      ? providers.find(p => p.id === selectedProviderId)?.name || ''
+      : '';
     onConfirm({
       cargoTypeId: selectedCargoTypeId,
       providerId: selectedProviderId,
+      providerName,
       clientId: resolvedClientId,
       clientIds: resolvedClientIds,
       requiredMinutes,
@@ -442,7 +503,10 @@ export default function PreReservationMiniModal({
 
   if (!isOpen) return null;
 
-  const isProviderDisabled = providers.length === 1 || loading;
+  // ── Determinar estado visible del selector de proveedores ──
+  const isSingleProvider = !isPrivileged && userProviderCount === 1;
+  const isNoProviders = !isPrivileged && userProviderCount === 0;
+  const isProviderDisabled = isSingleProvider || loading;
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
@@ -517,7 +581,7 @@ export default function PreReservationMiniModal({
                   Proveedor / Expedidor <span className="text-red-500">*</span>
                 </label>
 
-                {providers.length === 1 && (
+                {isSingleProvider && (
                   <div className="mb-2 bg-blue-50 border border-blue-200 rounded-md p-2">
                     <div className="flex items-start gap-2">
                       <i className="ri-information-line text-blue-600 text-sm flex-shrink-0 mt-0.5"></i>
@@ -528,18 +592,18 @@ export default function PreReservationMiniModal({
                   </div>
                 )}
 
-                {providers.length > 1 && !isPrivileged && (
+                {!isPrivileged && userProviderCount > 1 && (
                   <div className="mb-2 bg-blue-50 border border-blue-200 rounded-md p-2">
                     <div className="flex items-start gap-2">
                       <i className="ri-information-line text-blue-600 text-sm flex-shrink-0 mt-0.5"></i>
                       <p className="text-xs text-blue-700">
-                        Mostrando {providers.length} proveedores asignados a tu usuario
+                        Mostrando {userProviderCount} proveedores asignados a tu usuario
                       </p>
                     </div>
                   </div>
                 )}
 
-                {providers.length === 0 && !loading && (
+                {isNoProviders && (
                   <div className="mb-2 bg-amber-50 border border-amber-200 rounded-md p-2">
                     <div className="flex items-start gap-2">
                       <i className="ri-alert-line text-amber-600 text-sm flex-shrink-0 mt-0.5"></i>
@@ -556,9 +620,11 @@ export default function PreReservationMiniModal({
                   value={selectedProviderId}
                   onChange={setSelectedProviderId}
                   placeholder={
-                    providers.length === 0 ? 'Sin proveedores asignados' : 'Buscar proveedor...'
+                    isNoProviders ? 'Sin proveedores asignados' : 'Buscar proveedor...'
                   }
-                  disabled={isProviderDisabled || providers.length === 0}
+                  disabled={isProviderDisabled || isNoProviders}
+                  onSearch={handleProviderSearch}
+                  loading={providerSearchLoading}
                 />
 
                 {/* Indicador de resolución de cliente */}
@@ -584,7 +650,7 @@ export default function PreReservationMiniModal({
               )}
 
               {/* Checkbox Reserva Consolidada */}
-              {providers.length > 0 && (
+              {!isNoProviders && (
                 <div className="flex items-center gap-2">
                   <input
                     type="checkbox"
@@ -604,8 +670,8 @@ export default function PreReservationMiniModal({
                         setConsolidatedProviderId('');
                         setConsolidatedQuantity('');
                         setConsolidatedError('');
-                        if (providers.length === 1) {
-                          setSelectedProviderId(providers[0].id);
+                        if (isSingleProvider) {
+                          setSelectedProviderId(providers[0]?.id || '');
                         }
                       }
                     }}
@@ -618,7 +684,7 @@ export default function PreReservationMiniModal({
               )}
 
               {/* Panel Consolidado */}
-              {isConsolidated && providers.length > 0 && (
+              {isConsolidated && !isNoProviders && (
                 <div className="bg-gray-50 border border-gray-200 rounded-md overflow-hidden">
                   <button
                     type="button"
@@ -643,7 +709,9 @@ export default function PreReservationMiniModal({
                             value={consolidatedProviderId}
                             onChange={setConsolidatedProviderId}
                             placeholder="Buscar proveedor..."
-                            disabled={providers.length === 0}
+                            disabled={isNoProviders}
+                            onSearch={handleProviderSearch}
+                            loading={providerSearchLoading}
                           />
                         </div>
                         <div className="w-24 flex-shrink-0">
@@ -841,7 +909,7 @@ export default function PreReservationMiniModal({
           </button>
           <button
             onClick={handleConfirm}
-            disabled={!canContinue || loading || loadingDuration || providers.length === 0}
+            disabled={!canContinue || loading || loadingDuration || isNoProviders}
             className="px-4 py-2 text-sm font-medium text-white bg-teal-600 rounded-md hover:bg-teal-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors whitespace-nowrap"
           >
             Elegir espacio en calendario

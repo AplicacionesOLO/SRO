@@ -96,6 +96,55 @@ function resolveClientBySource(source: string | null | undefined, orgMap: Record
 
 export const providersService = {
   /**
+   * Buscar proveedores server-side con ILIKE, paginado.
+   * Solo devuelve los primeros `limit` resultados que coinciden con el término de búsqueda.
+   * Si warehouseId es null → busca en toda la org.
+   */
+  async searchProviders(
+    orgId: string,
+    warehouseId: string | null,
+    searchTerm: string,
+    limit = 25,
+    activeOnly = true,
+  ): Promise<Provider[]> {
+    const term = searchTerm.trim();
+    if (!term) return [];
+
+    if (!warehouseId) {
+      let query = supabase
+        .from('providers')
+        .select('id, org_id, name, active, provider_type, provider_code, source, source_code, client_id, created_at')
+        .eq('org_id', orgId)
+        .ilike('name', `%${term}%`)
+        .order('name', { ascending: true })
+        .limit(limit);
+
+      if (activeOnly) query = query.eq('active', true);
+
+      const { data, error } = await query;
+      if (error) throw error;
+      return (data ?? []) as Provider[];
+    }
+
+    // Warehouse-specific: JOIN con provider_warehouses para filtrar por almacén
+    let query = supabase
+      .from('providers')
+      .select('id, org_id, name, active, provider_type, provider_code, source, source_code, client_id, created_at, provider_warehouses!inner(warehouse_id)')
+      .eq('org_id', orgId)
+      .eq('provider_warehouses.warehouse_id', warehouseId)
+      .ilike('name', `%${term}%`)
+      .order('name', { ascending: true })
+      .limit(limit);
+
+    if (activeOnly) query = query.eq('active', true);
+
+    const { data, error } = await query;
+    if (error) throw error;
+
+    return ((data ?? []) as any[]).map(({ provider_warehouses: _pw, ...p }: any) => p as Provider);
+  },
+
+  /**
    * Contar reservas de un proveedor (shipper_provider + reservation_consolidated_providers).
    */
   async getReservationCount(orgId: string, providerId: string): Promise<number> {

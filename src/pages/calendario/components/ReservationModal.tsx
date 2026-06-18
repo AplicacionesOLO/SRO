@@ -139,9 +139,11 @@ export default function ReservationModal({
   const [allowedProviders, setAllowedProviders] = useState<UserProvider[]>([]);
   const [loadingProviders, setLoadingProviders] = useState(false);
   const [providersError, setProvidersError] = useState<string>('');
+  const [hasAccessToReservationProvider, setHasAccessToReservationProvider] = useState(false);
+  const [checkingProviderAccess, setCheckingProviderAccess] = useState(false);
 
   const hasSameProvider = reservation && reservation.shipper_provider
-    ? allowedProviders.some(p => p.id === reservation.shipper_provider)
+    ? allowedProviders.some(p => p.id === reservation.shipper_provider) || hasAccessToReservationProvider
     : false;
 
   const canEditReservation = !reservation || isOwner || isPrivileged || hasSameProvider;
@@ -196,6 +198,140 @@ export default function ReservationModal({
     if (isOpen && orgId) loadCatalogs();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, orgId, warehouseId]);
+
+  // ══ Fast provider access check (before catalogs load) ══
+  useEffect(() => {
+    if (!isOpen || !reservation?.shipper_provider || !user?.id || !orgId) {
+      setHasAccessToReservationProvider(false);
+      setCheckingProviderAccess(false);
+      return;
+    }
+
+    if (isOwner || isPrivileged) {
+      setHasAccessToReservationProvider(true);
+      setCheckingProviderAccess(false);
+      return;
+    }
+
+    const providerId = reservation.shipper_provider;
+    setCheckingProviderAccess(true);
+
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const { data: direct } = await supabase
+          .from('user_providers')
+          .select('provider_id')
+          .eq('org_id', orgId)
+          .eq('user_id', user!.id)
+          .eq('provider_id', providerId)
+          .maybeSingle();
+
+        if (direct) {
+          if (!cancelled) {
+            setHasAccessToReservationProvider(true);
+            setCheckingProviderAccess(false);
+          }
+          return;
+        }
+
+        const { data: userClusters } = await supabase
+          .from('user_provider_clusters')
+          .select('cluster_id')
+          .eq('org_id', orgId)
+          .eq('user_id', user!.id);
+
+        if (userClusters && userClusters.length > 0) {
+          const clusterIds = userClusters.map((r: any) => r.cluster_id);
+          const { data: clusterProvider } = await supabase
+            .from('provider_cluster_items')
+            .select('provider_id')
+            .in('cluster_id', clusterIds)
+            .eq('provider_id', providerId)
+            .maybeSingle();
+
+          if (clusterProvider) {
+            if (!cancelled) {
+              setHasAccessToReservationProvider(true);
+              setCheckingProviderAccess(false);
+            }
+            return;
+          }
+        }
+
+        if (!cancelled) {
+          setHasAccessToReservationProvider(false);
+          setCheckingProviderAccess(false);
+        }
+      } catch {
+        if (!cancelled) {
+          setHasAccessToReservationProvider(false);
+          setCheckingProviderAccess(false);
+        }
+      }
+    })();
+
+    return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, reservation?.shipper_provider, user?.id, orgId, isOwner, isPrivileged]);
+
+  // ══ Fast display: carga puntual del provider y cargo type de la reserva ══
+  // Se ejecuta en paralelo con loadCatalogs para que providerName y cargoTypeName
+  // estén disponibles en <500ms sin esperar el catálogo completo.
+  useEffect(() => {
+    if (!isOpen || !reservation) return;
+
+    const providerId = reservation.shipper_provider;
+    const cargoTypeId = reservation.cargo_type;
+
+    if (!providerId && !cargoTypeId) return;
+
+    let cancelled = false;
+
+    (async () => {
+      try {
+        await Promise.all([
+          providerId
+            ? (async () => {
+                const { data } = await supabase
+                  .from('providers')
+                  .select('*')
+                  .eq('id', providerId)
+                  .maybeSingle();
+                if (!cancelled && data) {
+                  setProviders(prev => {
+                    if (prev.some(p => p.id === data.id)) return prev;
+                    return [data as Provider, ...prev];
+                  });
+                }
+              })()
+            : Promise.resolve(),
+
+          cargoTypeId
+            ? (async () => {
+                const { data } = await supabase
+                  .from('cargo_types')
+                  .select('*')
+                  .eq('id', cargoTypeId)
+                  .maybeSingle();
+                if (!cancelled && data) {
+                  setCargoTypes(prev => {
+                    if (prev.some(ct => ct.id === data.id)) return prev;
+                    return [data as CargoType, ...prev];
+                  });
+                }
+              })()
+            : Promise.resolve(),
+        ]);
+      } catch {
+        // Non-blocking — loadCatalogs se encarga como fallback
+      }
+    })();
+
+    return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, reservation?.id]);
 
   const initNewForm = useCallback(() => {
     const now = defaults?.start_datetime ? new Date(defaults.start_datetime) : new Date();
@@ -252,13 +388,17 @@ export default function ReservationModal({
   }, [defaults, statuses, tz]);
 
   const loadCatalogs = async () => {
+    console.time('[NewReservation] Modal ══ TOTAL loadCatalogs ══');
     try {
       setLoadingProviders(true);
       setProvidersError('');
+      console.time('[NewReservation] Modal ── providers + cargoTypes (parallel) ──');
       const [allProvidersData, cargoTypesData] = await Promise.all([
         providersService.getByWarehouse(orgId, warehouseId ?? null, true),
         cargoTypesService.getByWarehouse(orgId, warehouseId ?? null, true),
       ]);
+      console.timeEnd('[NewReservation] Modal ── providers + cargoTypes (parallel) ──');
+      console.log('[NewReservation] Modal ── providers count:', allProvidersData.length, '| cargoTypes count:', cargoTypesData.length);
       setProviders(allProvidersData);
       setCargoTypes(cargoTypesData);
       let visibleProviders: Provider[] | UserProvider[] = [];
@@ -266,7 +406,9 @@ export default function ReservationModal({
         visibleProviders = allProvidersData;
       } else if (user?.id) {
         try {
+          console.time('[NewReservation] Modal ── userProviders ──');
           const rawUserProviders = await userProvidersService.getUserProviders(orgId, user.id);
+          console.timeEnd('[NewReservation] Modal ── userProviders ──');
           if (warehouseId) {
             const warehouseProviderIds = new Set(allProvidersData.map((p) => p.id));
             // Solo proveedores que realmente pertenecen al almacén activo
@@ -286,6 +428,7 @@ export default function ReservationModal({
           } else {
             // Provider is not in active list — fetch directly from DB (may be inactive)
             try {
+              console.time('[NewReservation] Modal ── inactive provider fetch ──');
               const { data: inactiveProvider } = await supabase
                 .from('providers')
                 .select('id, org_id, name, active, provider_type, provider_code, source, source_code, client_id, created_at')
@@ -298,13 +441,14 @@ export default function ReservationModal({
                 });
                 visibleProviders = [...visibleProviders, inactiveProvider as Provider] as UserProvider[];
               }
+              console.timeEnd('[NewReservation] Modal ── inactive provider fetch ──');
             } catch { /* non-blocking — will show ID as fallback */ }
           }
         }
       }
       setAllowedProviders(visibleProviders as UserProvider[]);
     } catch (error) { /* non-blocking */ }
-    finally { setLoadingProviders(false); }
+    finally { setLoadingProviders(false); console.timeEnd('[NewReservation] Modal ══ TOTAL loadCatalogs ══'); }
   };
 
   useEffect(() => {
@@ -806,7 +950,7 @@ export default function ReservationModal({
     const cargoLabel = ct?.name || 'Pendiente';
     let providerLabel: string;
     if (isConsolidated) { providerLabel = 'Consolidado'; }
-    else if (formData.shipperProvider) { providerLabel = providers.find(p => p.id === formData.shipperProvider)?.name || 'Pendiente'; }
+    else if (formData.shipperProvider) { providerLabel = providers.find(p => p.id === formData.shipperProvider)?.name || defaults?.provider_name || 'Pendiente'; }
     else { providerLabel = 'Pendiente'; }
     return `Tipo de carga: ${cargoLabel} · Proveedor: ${providerLabel}`;
   };
@@ -824,7 +968,9 @@ export default function ReservationModal({
 
   const dockName = docks.find(d => d.id === formData.dockId)?.name || '';
   const statusName = statuses.find(s => s.id === formData.statusId)?.name || '';
-  const providerName = providers.find(p => p.id === formData.shipperProvider)?.name || '';
+  const providerName = providers.find(p => p.id === formData.shipperProvider)?.name
+    || defaults?.provider_name
+    || '';
   const cargoTypeName = cargoTypes.find(ct => ct.id === formData.cargoType)?.name || '';
 
   const OPERATION_TYPE_LABELS: Record<string, { label: string; icon: string }> = {
@@ -977,7 +1123,7 @@ export default function ReservationModal({
                     </div>
                   )}
 
-                  {isReadOnly && !isStatusBlocked && !canViewSensitive && <RestrictedBanner />}
+                  {isReadOnly && !isStatusBlocked && !canViewSensitive && !checkingProviderAccess && <RestrictedBanner />}
                   {isReadOnly && !isStatusBlocked && canViewSensitive && (
                     <div className="mb-6 bg-amber-50 border border-amber-200 rounded-xl p-4">
                       <div className="flex items-start gap-3">
@@ -1000,7 +1146,7 @@ export default function ReservationModal({
                   </div>
 
                   <div className="space-y-5">
-                    {!isReadOnly && hasNoProviders && (
+                    {!isReadOnly && !loadingProviders && hasNoProviders && (
                       <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-4">
                         <div className="flex items-start gap-3">
                           <i className="ri-alert-line text-yellow-700 text-xl w-5 h-5 flex items-center justify-center flex-shrink-0 mt-0.5"></i>

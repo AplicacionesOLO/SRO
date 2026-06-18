@@ -12,6 +12,10 @@ interface SearchSelectProps {
   placeholder?: string;
   disabled?: boolean;
   className?: string;
+  /** Async search callback — when provided, client-side filtering is skipped and options are expected to come from the parent */
+  onSearch?: (query: string) => void;
+  /** Show a spinner while async search is in progress */
+  loading?: boolean;
 }
 
 const MAX_VISIBLE = 50;
@@ -25,6 +29,8 @@ export default function SearchSelect({
   placeholder = 'Buscar...',
   disabled = false,
   className = '',
+  onSearch,
+  loading = false,
 }: SearchSelectProps) {
   const [query, setQuery] = useState('');
   const [isOpen, setIsOpen] = useState(false);
@@ -39,12 +45,18 @@ export default function SearchSelect({
   // Sync display label when value changes externally
   useEffect(() => {
     if (!value) {
-      setQuery('');
+      // Async mode (server-side search): never clear the user's typed text
+      // just because options changed. query === what user is typing,
+      // value === selected ID. Clearing query on options change would
+      // wipe the input every time search results arrive from the server.
+      if (!onSearch) {
+        setQuery('');
+      }
       return;
     }
     const found = options.find(o => o.id === value);
     if (found) setQuery(found.label);
-  }, [value, options]);
+  }, [value, options, onSearch]);
 
   // Debounce query → debouncedQuery
   useEffect(() => {
@@ -57,18 +69,30 @@ export default function SearchSelect({
     };
   }, [query]);
 
+  // Fire onSearch when debouncedQuery changes (async mode)
+  useEffect(() => {
+    if (onSearch) {
+      onSearch(debouncedQuery);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [debouncedQuery]);
+
   // Reset highlight when filtered list changes
   useEffect(() => {
     setHighlightedIndex(-1);
-  }, [debouncedQuery]);
+  }, [debouncedQuery, options]);
 
   const filteredOptions = useCallback((): SearchSelectOption[] => {
+    // Async mode: options are already server-filtered, just slice
+    if (onSearch) return options.slice(0, MAX_VISIBLE);
+
+    // Client-side filtering (legacy)
     const q = debouncedQuery.trim().toLowerCase();
     if (!q) return options.slice(0, MAX_VISIBLE);
     return options
       .filter(o => o.label.toLowerCase().includes(q))
       .slice(0, MAX_VISIBLE);
-  }, [debouncedQuery, options])();
+  }, [debouncedQuery, options, onSearch])();
 
   const selectOption = (option: SearchSelectOption) => {
     onChange(option.id);
@@ -176,7 +200,9 @@ export default function SearchSelect({
           className="w-full px-3 py-2 pr-8 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent disabled:bg-gray-100 disabled:cursor-not-allowed"
         />
         <span className="absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none text-gray-400">
-          {value && selectedLabel ? (
+          {loading ? (
+            <i className="ri-loader-4-line animate-spin text-sm"></i>
+          ) : value && selectedLabel ? (
             <i className="ri-check-line text-teal-600 text-sm"></i>
           ) : (
             <i className="ri-search-line text-sm"></i>
@@ -192,7 +218,9 @@ export default function SearchSelect({
           style={{ boxShadow: '0 4px 12px rgba(0,0,0,0.10)' }}
         >
           {filteredOptions.length === 0 ? (
-            <li className="px-3 py-2 text-sm text-gray-400 select-none">Sin resultados</li>
+            <li className="px-3 py-2 text-sm text-gray-400 select-none">
+              {loading ? 'Buscando...' : 'Sin resultados'}
+            </li>
           ) : (
             filteredOptions.map((option, idx) => (
               <li
