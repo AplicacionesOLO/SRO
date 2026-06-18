@@ -3,8 +3,11 @@ import { usePermissions } from '../../../../hooks/usePermissions';
 import { timeProfilesService } from '../../../../services/timeProfilesService';
 import { providersService } from '../../../../services/providersService';
 import { cargoTypesService } from '../../../../services/cargoTypesService';
+import { supabase } from '../../../../lib/supabase';
 import type { ProviderCargoTimeProfile, ProviderWithClients, CargoType } from '../../../../types/catalog';
 import TimeProfileModal from './TimeProfileModal';
+import TimeProfileBulkImportModal from './TimeProfileBulkImportModal';
+import { exportTimeProfilesToExcel } from '../../../../utils/timeProfileExcelParser';
 
 interface TimeProfilesTabProps {
   orgId: string;
@@ -20,6 +23,7 @@ export default function TimeProfilesTab({ orgId, warehouseId }: TimeProfilesTabP
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingProfile, setEditingProfile] = useState<ProviderCargoTimeProfile | undefined>();
   const [error, setError] = useState<string | undefined>();
+  const [isImportModalOpen, setIsImportModalOpen] = useState(false);
 
   const canRead = can('time_profiles.view');
   const canCreate = can('time_profiles.create');
@@ -44,6 +48,28 @@ export default function TimeProfilesTab({ orgId, warehouseId }: TimeProfilesTabP
       setTimeProfiles(profilesData);
       setProviders(providersData);
       setCargoTypes(cargoTypesData);
+
+      // Rescue inactive providers referenced by time profiles (single batch query)
+      const missingProviderIds = [...new Set(
+        profilesData
+          .map(p => p.provider_id)
+          .filter(pid => !providersData.some(prov => prov.id === pid)),
+      )];
+      if (missingProviderIds.length > 0) {
+        const { data: rescued } = await supabase
+          .from('providers')
+          .select('id, name, active, provider_code, source, source_code, org_id, provider_type')
+          .in('id', missingProviderIds);
+        if (rescued && rescued.length > 0) {
+          setProviders(prev => {
+            const existing = new Set(prev.map(p => p.id));
+            const toAdd: ProviderWithClients[] = rescued
+              .filter((r: any) => !existing.has(r.id))
+              .map((r: any) => ({ ...r, clientNames: [] }));
+            return [...prev, ...toAdd];
+          });
+        }
+      }
     } catch (err: any) {
       setError(err?.message || 'Error al cargar perfiles de tiempo');
     } finally {
@@ -66,7 +92,42 @@ export default function TimeProfilesTab({ orgId, warehouseId }: TimeProfilesTabP
 
   const handleSave = async () => { setIsModalOpen(false); await loadData(); };
 
-  const getProviderName = (id: string) => providers.find(p => p.id === id)?.name || 'Desconocido';
+  const handleExportExcel = async () => {
+    // Resolve warehouse names for all profiles with warehouse_id
+    const warehouseIds = [...new Set(timeProfiles.map(p => p.warehouse_id).filter(Boolean))] as string[];
+    const warehouseNames: Record<string, string> = {};
+    if (warehouseIds.length > 0) {
+      const { data: whData } = await supabase
+        .from('warehouses')
+        .select('id, name')
+        .eq('org_id', orgId)
+        .in('id', warehouseIds);
+      for (const wh of (whData ?? [])) {
+        warehouseNames[wh.id] = wh.name;
+      }
+    }
+
+    const exportRows = timeProfiles.map((profile) => {
+      const pInfo = getProviderInfo(profile.provider_id);
+      return {
+        providerCode: providers.find(p => p.id === profile.provider_id)?.provider_code || '',
+        providerName: pInfo.name,
+        cargoTypeName: getCargoTypeName(profile.cargo_type_id),
+        warehouseName: profile.warehouse_id ? (warehouseNames[profile.warehouse_id] || '') : '',
+        avgMinutes: profile.avg_minutes,
+        secondsPerUnit: profile.seconds_per_unit ?? null,
+        providerActive: pInfo.active === false ? 'No' : 'Sí',
+        source: profile.source || 'manual',
+      };
+    });
+
+    exportTimeProfilesToExcel(exportRows);
+  };
+
+  const getProviderInfo = (id: string) => {
+    const p = providers.find(p => p.id === id);
+    return p ? { name: p.name, active: p.active } : { name: 'Desconocido', active: null as boolean | null };
+  };
   const getCargoTypeName = (id: string) => cargoTypes.find(c => c.id === id)?.name || 'Desconocido';
 
   if (!canRead) return <div className="text-center py-12"><i className="ri-lock-line text-6xl text-red-500 mb-4"></i><p className="text-gray-600">No tienes permisos para ver perfiles de tiempo</p></div>;
@@ -86,12 +147,24 @@ export default function TimeProfilesTab({ orgId, warehouseId }: TimeProfilesTabP
           <h2 className="text-lg font-semibold text-gray-900">Perfiles de tiempo</h2>
           <p className="text-sm text-gray-600 mt-1">Define tiempos promedio por proveedor y tipo de carga</p>
         </div>
-        {canCreate && (
-          <button onClick={handleCreate} className="flex items-center gap-2 px-4 py-2 bg-teal-600 text-white rounded-lg hover:bg-teal-700 transition-colors whitespace-nowrap cursor-pointer">
-            <i className="ri-add-line text-lg w-5 h-5 flex items-center justify-center"></i>
-            Nuevo perfil
+        <div className="flex items-center gap-2">
+          <button onClick={handleExportExcel} className="flex items-center gap-2 px-4 py-2 bg-white border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors whitespace-nowrap cursor-pointer text-sm" title="Descargar Excel">
+            <i className="ri-download-line text-lg w-5 h-5 flex items-center justify-center"></i>
+            Descargar Excel
           </button>
-        )}
+          {canCreate && (
+            <button onClick={() => setIsImportModalOpen(true)} className="flex items-center gap-2 px-4 py-2 bg-white border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors whitespace-nowrap cursor-pointer text-sm" title="Importar Excel">
+              <i className="ri-upload-line text-lg w-5 h-5 flex items-center justify-center"></i>
+              Importar Excel
+            </button>
+          )}
+          {canCreate && (
+            <button onClick={handleCreate} className="flex items-center gap-2 px-4 py-2 bg-teal-600 text-white rounded-lg hover:bg-teal-700 transition-colors whitespace-nowrap cursor-pointer">
+              <i className="ri-add-line text-lg w-5 h-5 flex items-center justify-center"></i>
+              Nuevo perfil
+            </button>
+          )}
+        </div>
       </div>
 
       {error && <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">{error}</div>}
@@ -118,7 +191,20 @@ export default function TimeProfilesTab({ orgId, warehouseId }: TimeProfilesTabP
             <tbody>
               {timeProfiles.map((profile) => (
                 <tr key={profile.id} className="border-b border-gray-100 hover:bg-gray-50">
-                  <td className="py-3 px-4"><div className="flex items-center gap-2"><i className="ri-truck-line text-gray-400 w-5 h-5 flex items-center justify-center"></i><span className="text-sm text-gray-900">{getProviderName(profile.provider_id)}</span></div></td>
+                  <td className="py-3 px-4">
+                    {(() => {
+                      const info = getProviderInfo(profile.provider_id);
+                      return (
+                        <div className="flex items-center gap-2">
+                          <i className="ri-truck-line text-gray-400 w-5 h-5 flex items-center justify-center"></i>
+                          <span className="text-sm text-gray-900">{info.name}</span>
+                          {info.active === false && (
+                            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-amber-50 text-amber-700 border border-amber-200 whitespace-nowrap">Inactivo</span>
+                          )}
+                        </div>
+                      );
+                    })()}
+                  </td>
                   <td className="py-3 px-4"><div className="flex items-center gap-2"><i className="ri-box-3-line text-gray-400 w-5 h-5 flex items-center justify-center"></i><span className="text-sm text-gray-900">{getCargoTypeName(profile.cargo_type_id)}</span></div></td>
                   <td className="py-3 px-4"><span className="text-sm text-gray-900 font-medium">{profile.avg_minutes} min</span></td>
                   <td className="py-3 px-4">
@@ -143,6 +229,15 @@ export default function TimeProfilesTab({ orgId, warehouseId }: TimeProfilesTabP
 
       {isModalOpen && (
         <TimeProfileModal orgId={orgId} profile={editingProfile ?? null} providers={providers} cargoTypes={cargoTypes} onClose={() => setIsModalOpen(false)} onSave={handleSave} />
+      )}
+
+      {isImportModalOpen && (
+        <TimeProfileBulkImportModal
+          orgId={orgId}
+          existingProfiles={timeProfiles}
+          onClose={() => setIsImportModalOpen(false)}
+          onDone={loadData}
+        />
       )}
     </div>
   );

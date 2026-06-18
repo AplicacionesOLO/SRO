@@ -392,15 +392,22 @@ export default function ReservationModal({
     try {
       setLoadingProviders(true);
       setProvidersError('');
-      console.time('[NewReservation] Modal ── providers + cargoTypes (parallel) ──');
-      const [allProvidersData, cargoTypesData] = await Promise.all([
-        providersService.getByWarehouse(orgId, warehouseId ?? null, true),
-        cargoTypesService.getByWarehouse(orgId, warehouseId ?? null, true),
-      ]);
-      console.timeEnd('[NewReservation] Modal ── providers + cargoTypes (parallel) ──');
-      console.log('[NewReservation] Modal ── providers count:', allProvidersData.length, '| cargoTypes count:', cargoTypesData.length);
+      // ══ cargoTypes: carga independiente, no espera a providers (Fase 2A) ══
+      console.time('[NewReservation] Modal ── cargoTypes ──');
+      cargoTypesService.getByWarehouse(orgId, warehouseId ?? null, true)
+        .then(data => {
+          if (!data) return;
+          console.timeEnd('[NewReservation] Modal ── cargoTypes ──');
+          console.log('[NewReservation] Modal ── cargoTypes count:', data.length);
+          setCargoTypes(data);
+        })
+        .catch(() => { /* non-blocking */ });
+
+      console.time('[NewReservation] Modal ── providers ──');
+      const allProvidersData = await providersService.getByWarehouse(orgId, warehouseId ?? null, true);
+      console.timeEnd('[NewReservation] Modal ── providers ──');
+      console.log('[NewReservation] Modal ── providers count:', allProvidersData.length);
       setProviders(allProvidersData);
-      setCargoTypes(cargoTypesData);
       let visibleProviders: Provider[] | UserProvider[] = [];
       if (isPrivileged) {
         visibleProviders = allProvidersData;
@@ -587,6 +594,7 @@ export default function ReservationModal({
 
   const isProviderFieldDisabled = allowedProviders.length === 1;
   const hasNoProviders = allowedProviders.length === 0;
+  const providerMissingForSubmit = !formData.shipperProvider && hasNoProviders;
 
   useEffect(() => {
     const hasValidProvider = isConsolidated
@@ -2149,9 +2157,9 @@ export default function ReservationModal({
               {!isReadOnly && (
                 <button
                   type="submit"
-                  disabled={saving || hasNoProviders || !formData.operationType || (isConsolidated && consolidatedProviders.length === 0)}
+                  disabled={saving || providerMissingForSubmit || !formData.operationType || (isConsolidated && consolidatedProviders.length === 0)}
                   className="px-4 py-2.5 bg-teal-600 text-white text-sm font-semibold rounded-lg hover:bg-teal-700 transition-colors whitespace-nowrap disabled:opacity-50 shadow-sm"
-                  title={hasNoProviders ? 'No podés crear reservas sin proveedores asignados' : !formData.operationType ? 'Seleccioná un tipo de operación para guardar' : (isConsolidated && consolidatedProviders.length === 0) ? 'Agregá al menos un proveedor consolidado' : ''}
+                  title={providerMissingForSubmit ? 'No podés crear reservas sin proveedores asignados' : !formData.operationType ? 'Seleccioná un tipo de operación para guardar' : (isConsolidated && consolidatedProviders.length === 0) ? 'Agregá al menos un proveedor consolidado' : ''}
                 >
                   {saving ? 'Guardando...' : reservation ? 'Guardar Cambios' : 'Crear Reserva'}
                 </button>
