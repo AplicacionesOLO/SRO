@@ -5,6 +5,7 @@ import ProvidersTab from './components/ProvidersTab';
 import CargoTypesTab from './components/CargoTypesTab';
 import TimeProfilesTab from './components/TimeProfilesTab';
 import AsignacionesTab from './components/AsignacionesTab';
+import OrigenProveedoresTab from './components/OrigenProveedoresTab';
 import WarehouseSelectorDropdown from '../../../components/feature/WarehouseSelector';
 
 export default function CatalogosPage() {
@@ -18,7 +19,7 @@ export default function CatalogosPage() {
     loading: whLoading,
   } = useActiveWarehouse();
 
-  const [activeTab, setActiveTab] = useState<'providers' | 'cargo_types' | 'time_profiles' | 'assignments'>('providers');
+  const [activeTab, setActiveTab] = useState<'providers' | 'cargo_types' | 'time_profiles' | 'assignments' | 'origen_proveedores'>('providers');
   const [mountedTabs, setMountedTabs] = useState<Set<string>>(new Set(['providers']));
 
   const switchTab = (tabId: typeof activeTab) => {
@@ -66,6 +67,7 @@ export default function CatalogosPage() {
     { id: 'providers' as const, label: 'Proveedores', icon: 'ri-truck-line', adminOnly: false },
     { id: 'cargo_types' as const, label: 'Tipos de carga', icon: 'ri-box-3-line', adminOnly: false },
     { id: 'time_profiles' as const, label: 'Tiempos (Proveedor x Tipo de carga)', icon: 'ri-time-line', adminOnly: false },
+    { id: 'origen_proveedores' as const, label: 'Orígenes', icon: 'ri-git-branch-line', adminOnly: true },
     { id: 'assignments' as const, label: 'Asignaciones', icon: 'ri-links-line', adminOnly: true },
   ].filter((t) => !t.adminOnly || isAdminOrFull);
 
@@ -100,7 +102,7 @@ export default function CatalogosPage() {
 
         <div className="bg-white rounded-lg shadow-sm border border-gray-200 mb-6">
           <div className="border-b border-gray-200">
-            <div className="flex gap-1 p-2">
+            <div className="flex gap-1 p-2 flex-wrap">
               {tabs.map((tab) => (
                 <button
                   key={tab.id}
@@ -130,6 +132,11 @@ export default function CatalogosPage() {
             {mountedTabs.has('time_profiles') && (
               <div style={{ display: activeTab === 'time_profiles' ? 'block' : 'none' }}>
                 <TimeProfilesTab orgId={orgId} warehouseId={activeWarehouseId} />
+              </div>
+            )}
+            {isAdminOrFull && mountedTabs.has('origen_proveedores') && (
+              <div style={{ display: activeTab === 'origen_proveedores' ? 'block' : 'none' }}>
+                <OrigenProveedoresTab orgId={orgId} />
               </div>
             )}
             {isAdminOrFull && mountedTabs.has('assignments') && (

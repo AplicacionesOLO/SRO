@@ -40,8 +40,23 @@ async function resolveClientBySource(supabase: any, orgId: string, source: strin
     '0029':     'f897b0e2-721f-498d-a5d2-800dd3755139',
     'EPA':      'ae488aaf-706a-46fa-9251-d00a35e78384',
     '0109':     'ae488aaf-706a-46fa-9251-d00a35e78384',
+    'BEVAL':    'ac3a8a5b-3a2b-4d3b-a7ba-63ddd3768c93',
+    '0003':     'ac3a8a5b-3a2b-4d3b-a7ba-63ddd3768c93',
+    '003':      'ac3a8a5b-3a2b-4d3b-a7ba-63ddd3768c93',
   };
-  return legacyMap[normalized] ?? null;
+  const legacy = legacyMap[normalized];
+  if (legacy) return legacy;
+
+  // Fallback: el origen es igual al nombre del cliente. Buscar por nombre.
+  const { data: clientData } = await supabase
+    .from('clients')
+    .select('id')
+    .eq('org_id', orgId)
+    .ilike('name', `%${normalized}%`)
+    .eq('active', true)
+    .maybeSingle();
+
+  return clientData?.id ?? null;
 }
 
 async function linkProviderToWarehouse(supabase: any, orgId: string, providerId: string, warehouseId: string): Promise<void> {
@@ -120,8 +135,6 @@ Deno.serve(async (req) => {
     const existingProviders = await fetchAllProviders(supabase, org_id);
 
     // === MAPA PRINCIPAL: name_normalized + source_normalized → provider ===
-    // El código NO es identificador único. Dos proveedores con mismo código
-    // pero diferente origen SON PROVEEDORES DIFERENTES.
     const existingByNameSource = new Map<string, any>();
     const existingByCode = new Map<string, any[]>();
 
@@ -241,9 +254,7 @@ Deno.serve(async (req) => {
       }
     }
 
-    // === UPSERT: usar columnas reales que existen en el UNIQUE CONSTRAINT ===
-    // CONSTRAINT: providers_name_source_uniq ON (org_id, name_normalized, source_normalized)
-    // name_normalized y source_normalized son columnas generadas — se calculan automáticamente.
+    // === UPSERT ===
     const created: any[] = [];
     const BATCH_SIZE = 100;
 

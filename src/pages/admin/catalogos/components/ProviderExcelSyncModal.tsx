@@ -58,6 +58,7 @@ function normalizeHeader(h: string): string {
 const COMPANY_MAP: Record<number, { name: string; color: string; bg: string; text: string }> = {
   1: { name: 'FEBECA', color: 'bg-teal-50', bg: 'bg-teal-50', text: 'text-teal-700' },
   2: { name: 'SILLACA', color: 'bg-blue-50', bg: 'bg-blue-50', text: 'text-blue-700' },
+  3: { name: 'BEVAL', color: 'bg-amber-50', bg: 'bg-amber-50', text: 'text-amber-700' },
   29: { name: 'EPA', color: 'bg-blue-50', bg: 'bg-blue-50', text: 'text-blue-700' },
   109: { name: 'Cofersa', color: 'bg-teal-50', bg: 'bg-teal-50', text: 'text-teal-700' },
 };
@@ -437,8 +438,10 @@ export default function ProviderExcelSyncModal({ orgId, warehouseId, onClose, on
                   </table>
                 </div>
                 <div className="mt-2 space-y-1">
-                  <p className="text-xs text-gray-500">
-                    <strong>IDCOMPANIA:</strong> 0001 = FEBECA · 0002 = SILLACA · 0029 = EPA · 0109 = Cofersa
+                  <p className="text-xs text-gray-500 mt-2">
+                    <strong>IDCOMPANIA:</strong> 0001 = FEBECA · 0002 = SILLACA · 0003 = BEVAL · 0029 = EPA · 0109 = Cofersa
+                    <br />
+                    Si el ID no está mapeado, se usa el valor de <strong>ORIGEN</strong> como cliente.
                   </p>
                   <p className="text-xs text-gray-500">
                     <strong>IDPROVEEDOR:</strong> puede ser alfanumérico (RIF, cédula, código). No se convierte a número.
@@ -534,7 +537,7 @@ export default function ProviderExcelSyncModal({ orgId, warehouseId, onClose, on
                             {info ? (
                               <span className={`inline-flex px-1.5 py-0.5 ${info.bg} ${info.text} rounded text-xs font-medium`}>{info.name}</span>
                             ) : (
-                              <span className="text-gray-400 text-xs">ID {r.idCompania}</span>
+                              <span className={`inline-flex px-1.5 py-0.5 bg-amber-50 text-amber-700 rounded text-xs font-medium`}>{r.origen || `ID ${r.idCompania}`}</span>
                             )}
                           </td>
                         </tr>
