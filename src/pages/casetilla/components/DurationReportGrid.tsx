@@ -3,6 +3,7 @@ import { casetillaService } from '../../../services/casetillaService';
 import { useSessionStorageState } from '../../../hooks/useSessionStorageState';
 import PhotoViewer from '../../../components/base/PhotoViewer';
 import { formatInWarehouseTimezone } from '../../../utils/timezoneUtils';
+import * as XLSX from 'xlsx';
 
 /**
  * Calcula el offset UTC dinámico de un timezone IANA en el instante actual.
@@ -302,6 +303,41 @@ export default function DurationReportGrid({ orgId, allowedWarehouseIds, clientI
   const handlePrevPage = () => setCurrentPage((prev) => Math.max(1, prev - 1));
   const handleNextPage = () => setCurrentPage((prev) => Math.min(totalPages, prev + 1));
 
+  const handleExportExcel = useCallback(() => {
+    if (filteredData.length === 0) return;
+
+    const tz = filteredData[0]?.warehouse_timezone || 'America/Costa_Rica';
+
+    const rows = filteredData.map((row) => ({
+      'Proveedor': row.provider_name ?? 'Sin proveedor',
+      'Chofer': row.chofer,
+      'Matrícula': row.matricula,
+      'DUA': row.dua || '-',
+      'Inicio cita': row.start_datetime ? formatDateTime(row.start_datetime, row.warehouse_timezone) : '-',
+      'Fin cita': row.end_datetime ? formatDateTime(row.end_datetime, row.warehouse_timezone) : '-',
+      'Ingreso': formatDateTime(row.ingreso_at, row.warehouse_timezone),
+      'Salida': formatDateTime(row.salida_at, row.warehouse_timezone),
+      'Duración esperada': row.expected_duration_formato ?? '-',
+      'Duración real': row.duracion_formato,
+      'Diferencia': row.duration_difference_formato ?? '-',
+    }));
+
+    const ws = XLSX.utils.json_to_sheet(rows);
+
+    // Auto-width aproximado
+    const colWidths = Object.keys(rows[0] || {}).map((key) => ({
+      wch: Math.max(key.length, ...rows.map((r: any) => String(r[key] || '').length)) + 2,
+    }));
+    ws['!cols'] = colWidths;
+
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Duración Punto Control');
+
+    const now = new Date();
+    const dateLabel = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}_${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}`;
+    XLSX.writeFile(wb, `Reporte_Duracion_Punto_Control_${dateLabel}.xlsx`);
+  }, [filteredData]);
+
   const pageSizeOptions: { value: PageSize; label: string }[] = [
     { value: 10, label: '10' }, { value: 30, label: '30' }, { value: 50, label: '50' },
     { value: 100, label: '100' }, { value: 'all', label: 'TODOS' },
@@ -419,6 +455,16 @@ export default function DurationReportGrid({ orgId, allowedWarehouseIds, clientI
               <i className="ri-refresh-line"></i>
               Actualizar
             </button>
+            {filteredData.length > 0 && (
+              <button
+                onClick={handleExportExcel}
+                className="inline-flex items-center gap-2 px-4 py-2 text-sm bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors whitespace-nowrap cursor-pointer"
+                title="Descargar reporte en formato Excel"
+              >
+                <i className="ri-file-excel-2-line"></i>
+                Descargar .xlsx
+              </button>
+            )}
             {timezoneLabel && (
               <span className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-gray-50 border border-gray-200 rounded-lg text-xs text-gray-500 whitespace-nowrap">
                 <i className="ri-time-zone-line text-gray-400"></i>
