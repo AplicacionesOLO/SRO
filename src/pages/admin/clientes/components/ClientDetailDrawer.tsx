@@ -934,58 +934,75 @@ export default function ClientDetailDrawer({
                     <p className="text-sm">No hay proveedores disponibles</p>
                   </div>
                 ) : (
-                  filteredProviders.map((provider) => {
-                    const isSelected = selectedProviders.has(provider.id);
-                    const isDefault = selectedProviders.get(provider.id) || false;
+                  <>
+                    {/* Encabezados de columna */}
+                    <div className="flex items-center gap-3 px-3 py-2 text-xs font-semibold text-gray-500 bg-gray-50 border border-gray-200 rounded-t-lg">
+                      <div className="w-4 flex-shrink-0"></div>
+                      <span className="w-24 flex-shrink-0">Origen</span>
+                      <span className="w-16 flex-shrink-0">Código</span>
+                      <span className="flex-1">Proveedor</span>
+                      <span className="w-[164px] flex-shrink-0"></span>
+                    </div>
 
-                    return (
-                      <div
-                        key={provider.id}
-                        className={`flex items-center gap-3 p-3 border rounded-lg transition-colors ${
-                          isSelected
-                            ? 'bg-teal-50 border-teal-300'
-                            : 'bg-white border-gray-200'
-                        } ${!canManageProviders ? 'opacity-50' : ''}`}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={isSelected}
-                          onChange={() => toggleProvider(provider.id)}
-                          disabled={!canManageProviders || saving}
-                          className="w-4 h-4 text-teal-600 border-gray-300 rounded focus:ring-teal-500"
-                        />
-                        <div className="flex-1">
-                          <p className="text-sm font-medium text-gray-900">{provider.name}</p>
-                          {provider.contact_email && (
-                            <p className="text-xs text-gray-500">{provider.contact_email}</p>
+                    {filteredProviders.map((provider) => {
+                      const isSelected = selectedProviders.has(provider.id);
+                      const isDefault = selectedProviders.get(provider.id) || false;
+
+                      return (
+                        <div
+                          key={provider.id}
+                          className={`flex items-center gap-3 px-3 py-2.5 border border-t-0 last:rounded-b-lg transition-colors ${
+                            isSelected
+                              ? 'bg-teal-50 border-x-teal-300 border-b-teal-300'
+                              : 'bg-white border-x-gray-200 border-b-gray-200'
+                          } ${!canManageProviders ? 'opacity-50' : ''}`}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            onChange={() => toggleProvider(provider.id)}
+                            disabled={!canManageProviders || saving}
+                            className="w-4 h-4 text-teal-600 border-gray-300 rounded focus:ring-teal-500 flex-shrink-0"
+                          />
+                          <span className="w-24 flex-shrink-0 text-sm text-gray-700 truncate">
+                            {provider.source || '—'}
+                          </span>
+                          <span className="w-16 flex-shrink-0 text-sm text-gray-700 truncate">
+                            {provider.provider_code || '—'}
+                          </span>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-medium text-gray-900 truncate">{provider.name}</p>
+                            {provider.contact_email && (
+                              <p className="text-xs text-gray-500 truncate">{provider.contact_email}</p>
+                            )}
+                          </div>
+                          {isSelected && (
+                            <button
+                              onClick={() => toggleProviderDefault(provider.id)}
+                              disabled={!canManageProviders || saving}
+                              className={`px-3 py-1 text-xs font-medium rounded-full transition-colors whitespace-nowrap flex-shrink-0 ${
+                                isDefault
+                                  ? 'bg-amber-100 text-amber-700 border border-amber-300'
+                                  : 'bg-gray-100 text-gray-600 border border-gray-300 hover:bg-gray-200'
+                              } disabled:opacity-50`}
+                            >
+                              {isDefault ? (
+                                <>
+                                  <i className="ri-star-fill mr-1"></i>
+                                  Predeterminado
+                                </>
+                              ) : (
+                                <>
+                                  <i className="ri-star-line mr-1"></i>
+                                  Marcar como predeterminado
+                                </>
+                              )}
+                            </button>
                           )}
                         </div>
-                        {isSelected && (
-                          <button
-                            onClick={() => toggleProviderDefault(provider.id)}
-                            disabled={!canManageProviders || saving}
-                            className={`px-3 py-1 text-xs font-medium rounded-full transition-colors whitespace-nowrap ${
-                              isDefault
-                                ? 'bg-amber-100 text-amber-700 border border-amber-300'
-                                : 'bg-gray-100 text-gray-600 border border-gray-300 hover:bg-gray-200'
-                            } disabled:opacity-50`}
-                          >
-                            {isDefault ? (
-                              <>
-                                <i className="ri-star-fill mr-1"></i>
-                                Predeterminado
-                              </>
-                            ) : (
-                              <>
-                                <i className="ri-star-line mr-1"></i>
-                                Marcar como predeterminado
-                              </>
-                            )}
-                          </button>
-                        )}
-                      </div>
-                    );
-                  })
+                      );
+                    })}
+                  </>
                 )}
               </div>
 

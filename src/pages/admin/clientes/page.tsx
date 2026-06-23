@@ -234,7 +234,7 @@ export default function ClientesPage() {
       const clientDockIds = await clientsService.getClientDocks(orgId!, client.id);
       setSelectedClientDockIds(clientDockIds);
 
-      const providers = await providersService.getActive(orgId!);
+      const providers = await providersService.getByWarehouse(orgId!, activeWarehouseId, true);
       setAllProviders(providers);
 
       const clientProviders = await clientsService.getClientProviders(orgId!, client.id);
