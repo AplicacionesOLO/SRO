@@ -87,6 +87,8 @@ export interface ExitEligibleReservation {
   /** Estado actual de la reserva — solo informativo, no determina elegibilidad */
   status_name?: string | null;
   status_code?: string | null;
+  /** ID del status actual — necesario para el trigger de email en createSalida */
+  status_id?: string | null;
 }
 
 // Reserva marcada como No arribó

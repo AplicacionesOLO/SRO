@@ -185,7 +185,7 @@ export default function CasetillaPage() {
         activeTimezone
       );
       setPendingReservations(data);
-    } catch { showModal('error', 'Error', 'No se pudieron cargar las reservas pendientes'); }
+    } catch (err: any) { console.error('[Casetilla] Error loading pending:', err?.message || err); showModal('error', 'Error', 'No se pudieron cargar las reservas pendientes'); }
     finally { setIsLoadingReservations(false); }
   };
 
@@ -202,7 +202,7 @@ export default function CasetillaPage() {
         activeTimezone
       );
       setExitEligibleReservations(data);
-    } catch { showModal('error', 'Error', 'No se pudieron cargar las reservas elegibles para salida'); }
+    } catch (err: any) { console.error('[Casetilla] Error loading exit eligible:', err?.message || err); showModal('error', 'Error', err?.message || 'No se pudieron cargar las reservas elegibles para salida'); }
     finally { setIsLoadingExitReservations(false); }
   };
 
@@ -219,7 +219,7 @@ export default function CasetillaPage() {
         activeTimezone
       );
       setNoShowReservations(data);
-    } catch { showModal('error', 'Error', 'No se pudieron cargar las reservas No arribó'); }
+    } catch (err: any) { console.error('[Casetilla] Error loading no-show:', err?.message || err); showModal('error', 'Error', 'No se pudieron cargar las reservas No arribó'); }
     finally { setIsLoadingNoShow(false); }
   };
 
@@ -358,7 +358,19 @@ export default function CasetillaPage() {
     if (!orgId || !user?.id || !selectedExitReservation) return;
     setIsSubmitting(true);
     try {
-      await casetillaService.createSalida(orgId, user.id, selectedExitReservation.id, fotosSalida);
+      // Pasar los datos de la reserva que ya tenemos, para evitar el SELECT que falla por RLS
+      await casetillaService.createSalida(
+        orgId,
+        user.id,
+        selectedExitReservation.id,
+        fotosSalida,
+        {
+          chofer: selectedExitReservation.chofer,
+          matricula: selectedExitReservation.matricula,
+          dua: selectedExitReservation.dua,
+          status_id: selectedExitReservation.status_id,
+        }
+      );
       setModal({ isOpen: true, type: 'success', title: 'Éxito', message: 'Salida registrada correctamente', showCancel: false,
         onConfirm: () => { setModal(prev => ({ ...prev, isOpen: false })); setSelectedExitReservation(null); setFotosSalidaRaw([]); clearSession(); setViewModeRaw('HOME'); }, onCancel: undefined });
     } catch (error: any) { showModal('error', 'Error', error.message || 'No se pudo registrar la salida'); }

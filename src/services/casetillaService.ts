@@ -760,11 +760,13 @@ async getExitEligibleReservations(
 ) {
   try {
     // 1) Cargar catálogo completo de estados (para resolver nombre en UI)
-    const { data: allStatuses } = await supabase
+    const { data: allStatuses, error: step1Err } = await supabase
       .from('reservation_statuses')
       .select('id, name, code')
       .eq('org_id', orgId)
       .eq('is_active', true);
+
+    if (step1Err) throw new Error(`[Paso 1 - reservation_statuses] ${step1Err.message} (code: ${step1Err.code})`);
 
     const statusCatalog = new Map<string, { name: string; code: string }>();
     (allStatuses ?? []).forEach((s: any) => {
@@ -778,15 +780,11 @@ async getExitEligibleReservations(
       .eq("org_id", orgId)
       .not("reservation_id", "is", null);
 
-    // NOTE: Se eliminó el filtro por fecha sobre casetilla_ingresos.created_at.
-    // Regla operativa: toda reserva con IN y sin OUT debe aparecer como pendiente
-    // de salida, sin importar la fecha del ingreso ni el status_id.
-
     ingresosQuery = ingresosQuery.order("created_at", { ascending: false });
 
-    const { data: ingresos, error: ingresosError } = await ingresosQuery;
+    const { data: ingresos, error: step2Err } = await ingresosQuery;
 
-    if (ingresosError) throw ingresosError;
+    if (step2Err) throw new Error(`[Paso 2 - casetilla_ingresos] ${step2Err.message} (code: ${step2Err.code})`);
     if (!ingresos || ingresos.length === 0) return [];
 
     // Map: reservation_id -> fecha_ingreso (última)
@@ -799,16 +797,22 @@ async getExitEligibleReservations(
     const reservationIds = [...ingresosMap.keys()];
     if (reservationIds.length === 0) return [];
 
-    // 3) Excluir reservas con salida ya registrada
-    const { data: salidas, error: salidasError } = await supabase
-      .from("casetilla_salidas")
-      .select("reservation_id")
-      .eq("org_id", orgId)
-      .in("reservation_id", reservationIds);
+    // 3) Excluir reservas con salida ya registrada (LOTIFICADO para evitar URL demasiado larga)
+    const BATCH_SIZE = 50;
+    const salidasSet = new Set<string>();
+    for (let i = 0; i < reservationIds.length; i += BATCH_SIZE) {
+      const batch = reservationIds.slice(i, i + BATCH_SIZE);
+      const { data: batchData, error: batchErr } = await supabase
+        .from("casetilla_salidas")
+        .select("reservation_id")
+        .eq("org_id", orgId)
+        .in("reservation_id", batch);
 
-    if (salidasError) throw salidasError;
+      if (batchErr) throw new Error(`[Paso 3 - casetilla_salidas lote ${Math.floor(i / BATCH_SIZE) + 1}] ${batchErr.message} (code: ${batchErr.code})`);
 
-    const salidasSet = new Set((salidas ?? []).map((s: any) => s.reservation_id));
+      (batchData ?? []).forEach((s: any) => salidasSet.add(s.reservation_id));
+    }
+
     const eligibleReservationIds = reservationIds.filter((id) => !salidasSet.has(id));
 
     if (eligibleReservationIds.length === 0) return [];
@@ -817,31 +821,35 @@ async getExitEligibleReservations(
     let allowedDockIds: Set<string> | null = null;
 
     if (allowedWarehouseIds && allowedWarehouseIds.length > 0) {
-      const { data: allowedDocks } = await supabase
+      const { data: allowedDocks, error: segErr } = await supabase
         .from('docks')
         .select('id')
         .eq('org_id', orgId)
         .in('warehouse_id', allowedWarehouseIds);
 
+      if (segErr) throw new Error(`[Paso 4a - docks (segregación)] ${segErr.message} (code: ${segErr.code})`);
+
       allowedDockIds = new Set((allowedDocks ?? []).map((d: any) => d.id as string));
     }
 
     if (clientId) {
-      const clientDockIds = await this.getDockIdsForClient(orgId, clientId);
-      const clientDockSet = new Set(clientDockIds);
+      try {
+        const clientDockIds = await this.getDockIdsForClient(orgId, clientId);
+        const clientDockSet = new Set(clientDockIds);
 
-      if (allowedDockIds !== null) {
-        allowedDockIds = new Set([...allowedDockIds].filter((id) => clientDockSet.has(id)));
-      } else {
-        allowedDockIds = clientDockSet;
+        if (allowedDockIds !== null) {
+          allowedDockIds = new Set([...allowedDockIds].filter((id) => clientDockSet.has(id)));
+        } else {
+          allowedDockIds = clientDockSet;
+        }
+      } catch (clientErr: any) {
+        throw new Error(`[Paso 4b - client_docks] ${clientErr.message}`);
       }
     }
     // ─────────────────────────────────────────────────────────────────────
 
     // 4) Traer reservas elegibles (con ingreso, sin salida, no canceladas)
-    // IMPORTANTE: NO se filtra por status_id — si hay IN sin OUT, siempre aparece
-    // independientemente del estado de la reserva.
-    const { data: reservations, error: reservationsError } = await supabase
+    const { data: reservations, error: step4Err } = await supabase
       .from('reservations')
       .select(`
         id,
@@ -861,7 +869,8 @@ async getExitEligibleReservations(
       .eq('is_cancelled', false)
       .in('id', eligibleReservationIds)
       .order('created_at', { ascending: false });
-    if (reservationsError) throw reservationsError;
+
+    if (step4Err) throw new Error(`[Paso 5 - reservations] ${step4Err.message} (code: ${step4Err.code})`);
     if (!reservations || reservations.length === 0) return [];
 
     // Aplicar filtro de docks si hay restricción
@@ -876,12 +885,12 @@ async getExitEligibleReservations(
     const docksMap = new Map<string, { name?: string; warehouse_id?: string | null }>();
 
     if (dockIds.length > 0) {
-      const { data: docksData, error: docksErr } = await supabase
+      const { data: docksData, error: step5Err } = await supabase
         .from("docks")
         .select("id,name,warehouse_id")
         .in("id", dockIds);
 
-      if (docksErr) throw docksErr;
+      if (step5Err) throw new Error(`[Paso 6 - docks] ${step5Err.message} (code: ${step5Err.code})`);
 
       (docksData ?? []).forEach((d: any) => {
         docksMap.set(d.id, { name: d.name, warehouse_id: d.warehouse_id ?? null });
@@ -896,12 +905,12 @@ async getExitEligibleReservations(
 
     const warehousesMap = new Map<string, { name: string; timezone: string }>();
     if (warehouseIds.length > 0) {
-      const { data: whData, error: whErr } = await supabase
+      const { data: whData, error: step6Err } = await supabase
         .from("warehouses")
         .select("id,name,timezone")
         .in("id", warehouseIds);
 
-      if (whErr) throw whErr;
+      if (step6Err) throw new Error(`[Paso 7 - warehouses] ${step6Err.message} (code: ${step6Err.code})`);
 
       (whData ?? []).forEach((w: any) =>
         warehousesMap.set(w.id, { name: w.name, timezone: w.timezone || 'America/Costa_Rica' })
@@ -923,13 +932,13 @@ async getExitEligibleReservations(
 
     const providersMap = new Map<string, string>();
     if (providerIds.length > 0) {
-      const { data: provData, error: provErr } = await supabase
+      const { data: provData, error: step7Err } = await supabase
         .from("providers")
         .select("id,name")
         .in("id", providerIds);
 
-      // si providers no existe en tu schema, esto puede fallar:
-      if (!provErr) {
+      // si providers no existe o falla, no es crítico — usar fallback
+      if (!step7Err) {
         (provData ?? []).forEach((p: any) => providersMap.set(p.id, p.name));
       }
     }
@@ -970,10 +979,11 @@ async getExitEligibleReservations(
         // Estado actual de la reserva — solo informativo, NO determina elegibilidad
         status_name: statusInfo?.name ?? null,
         status_code: statusInfo?.code ?? null,
+        status_id: r.status_id ?? null,
       };
     });
-  } catch (error) {
-    // console.error("Error fetching exit eligible reservations:", error);
+  } catch (error: any) {
+    console.error('[CasetillaService][getExitEligible] ERROR DETALLADO:', error?.message || error);
     throw error;
   }
 }
@@ -1114,28 +1124,48 @@ async getExitEligibleReservations(
   }
 
 
-  async createSalida(orgId: string, userId: string, reservationId: string, fotos?: string[]) {
+  async createSalida(
+    orgId: string,
+    userId: string,
+    reservationId: string,
+    fotos?: string[],
+    reservationData?: { chofer?: string | null; matricula?: string | null; dua?: string | null; status_id?: string | null }
+  ) {
     try {
-      //console.log('[CasetillaService][createSalida] START', { orgId, userId, reservationId });
+      let chofer: string;
+      let matricula: string;
+      let dua: string;
+      let statusFromId: string | null = null;
 
-      // 1) Verificar que la reserva existe y obtener datos
-      const { data: reservation, error: reservationError } = await supabase
-        .from('reservations')
-        .select('id, driver, truck_plate, dua, status_id')
-        .eq('id', reservationId)
-        .eq('org_id', orgId)
-        .single();
+      // Si el frontend ya nos pasó los datos de la reserva, usarlos directamente
+      // (evita el SELECT que falla por RLS en reservas fuera de PENDING)
+      if (reservationData && reservationData.chofer !== undefined) {
+        chofer = reservationData.chofer ?? '';
+        matricula = reservationData.matricula ?? '';
+        dua = reservationData.dua ?? '';
+        statusFromId = reservationData.status_id ?? null;
+      } else {
+        // Fallback: intentar SELECT (puede fallar si RLS lo bloquea)
+        const { data: reservation, error: reservationError } = await supabase
+          .from('reservations')
+          .select('id, driver, truck_plate, dua, status_id')
+          .eq('id', reservationId)
+          .eq('org_id', orgId)
+          .maybeSingle();
 
-      if (reservationError || !reservation) {
-        throw new Error('Reserva no encontrada');
+        if (reservationError) {
+          throw new Error('No se pudo verificar la reserva. Verificá tu conexión.');
+        }
+
+        if (!reservation) {
+          throw new Error('Reserva no encontrada. Puede que no tengas permisos para verla o que ya fue procesada. Contactá a un administrador si el problema persiste.');
+        }
+
+        chofer = reservation.driver ?? '';
+        matricula = reservation.truck_plate ?? '';
+        dua = reservation.dua ?? '';
+        statusFromId = reservation.status_id;
       }
-
-      const statusFromId = reservation.status_id;
-
-      /**console.log('[CasetillaService][createSalida] Reservation found', {
-        reservationId,
-        statusFromId
-      });*/
 
       // 2) Verificar que no exista ya una salida para esta reserva (unique constraint)
       const { data: existingSalida, error: checkError } = await supabase
@@ -1167,12 +1197,6 @@ async getExitEligibleReservations(
       const statusToId = dispatchedRow.id;
 
       // 4) Actualizar status de la reserva a DISPATCHED
-      /**console.log('[CasetillaService][createSalida] Updating reservation to DISPATCHED', {
-        reservationId,
-        statusFromId,
-        statusToId
-      });*/
-
       const { data: updatedSalidaRows, error: updateStatusError } = await supabase
         .from('reservations')
         .update({
@@ -1198,9 +1222,9 @@ async getExitEligibleReservations(
         .insert({
           org_id: orgId,
           reservation_id: reservationId,
-          chofer: reservation.driver ?? '',
-          matricula: reservation.truck_plate ?? '',
-          dua: reservation.dua ?? '',
+          chofer: chofer,
+          matricula: matricula,
+          dua: dua,
           created_by: userId,
           exit_at: new Date().toISOString(),
           fotos: fotos && fotos.length > 0 ? fotos : null,
@@ -1232,12 +1256,6 @@ async getExitEligibleReservations(
       } catch (triggerError: any) {
         // non-blocking
       }
-
-      /**console.log('[CasetillaService][createSalida] SUCCESS', {
-        salidaId: salida.id,
-        reservationId,
-        statusChanged: statusFromId !== statusToId
-      });*/
 
       return {
         salida,
