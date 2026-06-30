@@ -148,6 +148,10 @@ export default function UsuariosPage() {
   // ✅ guards reales (no se resetean por render)
   const loadUsersRunningRef = useRef(false);
   const loadUsers401RetryRef = useRef(false);
+  // ✅ CRITICAL: flag que indica si loadUserAccess terminó con éxito.
+  // Si es false al guardar, NO se sincronizan países/almacenes/proveedores/clientes
+  // para evitar pisar los datos reales con defaults ([]/false).
+  const accessLoadedRef = useRef(false);
 
   const canCreate = can('admin.users.create') || can('users.create');
   const canEdit = can('admin.users.update') || can('users.update');
@@ -361,6 +365,7 @@ export default function UsuariosPage() {
 
   const loadUserAccess = useCallback(async (targetUserId: string) => {
     if (!orgId || !targetUserId) {
+      accessLoadedRef.current = false;
       return;
     }
 
@@ -375,6 +380,8 @@ export default function UsuariosPage() {
       setSelectedCountryIds(accessData.countryIds);
       setRestrictedByWarehouse(accessData.restricted);
       setSelectedWarehouseIds(accessData.warehouseIds);
+      // ✅ Marcar que la carga de accesos fue exitosa
+      accessLoadedRef.current = true;
 
       try {
         const userProviders = await userProvidersService.getUserProviders(orgId, targetUserId);
@@ -391,6 +398,7 @@ export default function UsuariosPage() {
         // non-blocking
       }
     } catch (error: any) {
+      accessLoadedRef.current = false;
       setAccessError('Error al cargar accesos del usuario');
     } finally {
       setAccessLoading(false);
@@ -586,8 +594,10 @@ export default function UsuariosPage() {
 
         // console.log('[UsersPage] ✅ User updated successfully', { ok: !!data });
 
-        // ✅ Sincronizar países, almacenes y proveedores al actualizar
-        if (canAssignAccess && orgId) {
+        // ✅ Sincronizar países, almacenes, proveedores y clientes al actualizar
+        // ⛔ SOLO si loadUserAccess terminó con éxito. Si falló, los estados
+        // tienen defaults (false/[]) que borrarían el acceso real del usuario.
+        if (canAssignAccess && orgId && accessLoadedRef.current) {
           // Guardar países
           if (selectedCountryIds.length > 0) {
             await userAccessService.setCountries({
@@ -810,6 +820,7 @@ export default function UsuariosPage() {
   };
 
   const handleEdit = async (user: User) => {
+    accessLoadedRef.current = false;
     setEditingUser(user);
     setFormData({
       email: user.email,
@@ -818,10 +829,16 @@ export default function UsuariosPage() {
       password: '',
       phone_e164: user.phone_e164 ?? ''
     });
-    // Limpiar estado de clientes antes de abrir
+    // Limpiar estado de clientes y accesos antes de cargar
+    setSelectedCountryIds([]);
+    setRestrictedByWarehouse(false);
+    setSelectedWarehouseIds([]);
     setSelectedClientIds([]);
     setClientSearchTerm('');
     setAvailableClients([]);
+    setSelectedProviderIds([]);
+    setProviderSearchTerm('');
+    setAccessError(null);
 
     // Primero mostrar el modal, luego cargar accesos
     setShowModal(true);
@@ -1468,6 +1485,7 @@ export default function UsuariosPage() {
                       modalOpen: false,
                     });
                   }
+                  accessLoadedRef.current = false;
                   setShowModal(false);
                 }}
                 className="w-8 h-8 flex items-center justify-center text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100 transition-colors"
@@ -1597,7 +1615,10 @@ export default function UsuariosPage() {
                 {accessError && (
                   <div className="p-3 bg-red-50 border border-red-200 rounded-lg">
                     <p className="text-sm text-red-600">{accessError}</p>
-                    <p className="text-xs text-red-500 mt-1">Podés continuar editando el usuario. Los accesos se pueden configurar después.</p>
+                    <p className="text-xs text-red-500 mt-1">
+                      Los accesos (países, almacenes, clientes y proveedores) NO se modificarán al guardar.
+                      Solo se actualizará el rol y datos básicos. Podés reintentar editando de nuevo.
+                    </p>
                   </div>
                 )}
 
@@ -1951,6 +1972,7 @@ export default function UsuariosPage() {
                       clearUserDraft();
                       fullNameEditedRef.current = false;
                     }
+                    accessLoadedRef.current = false;
                     setShowModal(false);
                     setEditingUser(null);
                     setFormData({ email: '', full_name: '', role_id: '', password: '', phone_e164: '' });
