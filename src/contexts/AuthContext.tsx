@@ -16,6 +16,7 @@ interface AuthContextType {
   user: User | null;
   supabaseUser: SupabaseUser | null;
   login: (email: string, password: string) => Promise<User | null>;
+  loginWithGoogle: () => Promise<void>;
   logout: () => void;
   isAuthenticated: boolean;
   loading: boolean;
@@ -419,6 +420,32 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
+  const loginWithGoogle = async (): Promise<void> => {
+    try {
+      setLoading(true);
+      setPermissionsLoading(true);
+      setPendingAccess(false);
+
+      const basePath = (__BASE_PATH__ as string) || '';
+      const redirectUrl = `${window.location.origin}${basePath}`;
+
+      await supabase.auth.signInWithOAuth({
+        provider: 'google',
+        options: {
+          redirectTo: redirectUrl,
+          queryParams: {
+            access_type: 'offline',
+            prompt: 'consent',
+          },
+        },
+      });
+    } catch (err) {
+      setLoading(false);
+      setPermissionsLoading(false);
+      throw err;
+    }
+  };
+
   const logout = async () => {
     await supabase.auth.signOut();
     setUser(null);
@@ -432,6 +459,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       user, 
       supabaseUser,
       login, 
+      loginWithGoogle,
       logout, 
       isAuthenticated: !!user,
       loading,
