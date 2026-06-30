@@ -826,9 +826,10 @@ export default function CalendarioPage() {
     setAllocationLoading(true); setAllocationError(''); setAllocationRule(null);
     setSameDayCutoffInfo(null);
 
-    // ─── Cargar same-day cutoff para el cliente seleccionado ────────────────
+    // ─── Cargar same-day cutoff SOLO si el rango visible incluye el día de HOY ────────
+    const todayInRange = daysInView.some(d => isSameDayInTimezone(d, nowTz, warehouseTimezone));
     const effectiveClientId = payload.clientId || payload.clientIds?.[0] || null;
-    if (effectiveClientId && orgId && warehouseId) {
+    if (todayInRange && effectiveClientId && orgId && warehouseId) {
       try {
         console.time('[NewReservation] ── sameDayCutoff ──');
         const cutoffResult = await sameDayCutoffService.checkCutoff(
@@ -842,7 +843,6 @@ export default function CalendarioPage() {
         console.timeEnd('[NewReservation] ── sameDayCutoff ──');
         setSameDayCutoffInfo(cutoffResult);
       } catch (_e) {
-        // Si falla la carga, ser conservador: bloquear
         setSameDayCutoffInfo({
           blocked: true,
           cutoffTimeStr: null,
@@ -850,6 +850,9 @@ export default function CalendarioPage() {
           verificationFailed: true,
         });
       }
+    } else {
+      // Fuera del rango de hoy → no aplicar cutoff
+      setSameDayCutoffInfo(null);
     }
 
     // ─── FLUJO CONSOLIDADO ────────────────────────────────────────────────────
@@ -1034,9 +1037,10 @@ export default function CalendarioPage() {
     } else { setAllocationRule(null); }
     setAllocationLoading(false);
     setPreCargoTypeId(sourceReservation.cargo_type || ''); setPreProviderId(sourceReservation.shipper_provider || ''); setRequiredMinutes(durationMinutes > 0 ? durationMinutes : 60); setSelectionMode(true);
-    // ─── Cargar same-day cutoff para el cliente de la reserva copiada ─────
+    // ─── Cargar same-day cutoff SOLO si el rango visible incluye HOY ─────
     const copyClientId = (sourceReservation as any).client_id || null;
-    if (copyClientId && orgId && warehouseId) {
+    const todayInRangeForCopy = daysInView.some(d => isSameDayInTimezone(d, nowTz, warehouseTimezone));
+    if (todayInRangeForCopy && copyClientId && orgId && warehouseId) {
       try {
         const cutoffResult = await sameDayCutoffService.checkCutoff(
           orgId, copyClientId, warehouseId, warehouseTimezone, user?.id || '', false
@@ -1049,11 +1053,19 @@ export default function CalendarioPage() {
           verificationFailed: true,
         });
       }
+    } else {
+      setSameDayCutoffInfo(null);
     }
-  }, [statuses, orgId]);
+  }, [statuses, orgId, daysInView, nowTz, warehouseTimezone, user?.id, warehouseId]);
 
   useEffect(() => {
     if (!selectionMode || !preClientId || !orgId || !warehouseId) {
+      setSameDayCutoffInfo(null);
+      return;
+    }
+    // Solo cargar cutoff si el rango visible incluye HOY
+    const todayInRange = daysInView.some(d => isSameDayInTimezone(d, nowTz, warehouseTimezone));
+    if (!todayInRange) {
       setSameDayCutoffInfo(null);
       return;
     }
@@ -1075,7 +1087,7 @@ export default function CalendarioPage() {
       }
     })();
     return () => { cancelled = true; };
-  }, [selectionMode, preClientId, orgId, warehouseId, warehouseTimezone, user?.id]);
+  }, [selectionMode, preClientId, orgId, warehouseId, warehouseTimezone, user?.id, daysInView, nowTz]);
 
   if (permLoading || loading) {
     return (<div className="flex items-center justify-center h-screen"><div className="text-center"><i className="ri-loader-4-line text-4xl text-teal-600 animate-spin"></i><p className="mt-4 text-gray-600">Cargando calendario...</p></div></div>);
@@ -1200,7 +1212,8 @@ export default function CalendarioPage() {
           )}
           {selectionMode && allocationError && (<div className="bg-amber-500 text-white px-4 py-2 flex items-center gap-2"><i className="ri-alert-line text-base w-4 h-4 flex items-center justify-center"></i><div><p className="font-semibold text-xs">Andenes no disponibles</p><p className="text-[11px] text-amber-100">{allocationError}</p></div></div>)}
           {selectionMode && allocationLoading && (<div className="bg-blue-500 text-white px-4 py-2 flex items-center gap-2"><i className="ri-loader-4-line text-base w-4 h-4 flex items-center justify-center animate-spin"></i><p className="font-medium text-xs">Cargando reglas de asignación de andenes...</p></div>)}
-          {selectionMode && sameDayCutoffInfo?.blocked && (
+      {/* ─── Same-day cutoff banner: solo visible si el rango incluye el día de HOY ─── */}
+          {selectionMode && sameDayCutoffInfo?.blocked && daysInView.some(d => isSameDayInTimezone(d, nowTz, warehouseTimezone)) && (
             <div className="bg-red-50 border-b border-red-200 px-4 py-2 flex items-center gap-2">
               <i className="ri-time-line text-red-600 text-base w-4 h-4 flex items-center justify-center"></i>
               <div>
@@ -1209,7 +1222,7 @@ export default function CalendarioPage() {
               </div>
             </div>
           )}
-          {selectionMode && sameDayCutoffInfo?.verificationFailed && !sameDayCutoffInfo?.blocked && (
+          {selectionMode && sameDayCutoffInfo?.verificationFailed && !sameDayCutoffInfo?.blocked && daysInView.some(d => isSameDayInTimezone(d, nowTz, warehouseTimezone)) && (
             <div className="bg-amber-50 border-b border-amber-200 px-4 py-2 flex items-center gap-2">
               <i className="ri-alert-line text-amber-600 text-base w-4 h-4 flex items-center justify-center"></i>
               <div>
