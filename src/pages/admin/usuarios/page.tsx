@@ -103,6 +103,9 @@ export default function UsuariosPage() {
   const [accessLoading, setAccessLoading] = useState(false);
   const [accessError, setAccessError] = useState<string | null>(null);
 
+  // ✅ Forzar refresh de warehouseUsers después de crear/editar/eliminar usuarios
+  const [usersRefreshTrigger, setUsersRefreshTrigger] = useState(0);
+
   // ✅ NUEVO: Estados para proveedores
   const [providers, setProviders] = useState<Provider[]>([]);
   const [selectedProviderIds, setSelectedProviderIds] = useState<string[]>([]);
@@ -252,7 +255,7 @@ export default function UsuariosPage() {
     } catch {
       setWarehouseUserIds(null);
     }
-  }, [orgId, activeWarehouseId]);
+  }, [orgId, activeWarehouseId, usersRefreshTrigger]);
 
   // Filtrar usuarios según almacén activo — HARDENING ESTRICTO:
   // Nunca mostrar todos por fallback cuando hay almacén activo
@@ -639,6 +642,7 @@ export default function UsuariosPage() {
         setNewlyCreatedUserId(null);
         loadUsers401RetryRef.current = false;
         loadUsers();
+        setUsersRefreshTrigger(c => c + 1);
 
         // ✅ Mostrar popup de éxito
         setPopup({
@@ -796,6 +800,7 @@ export default function UsuariosPage() {
         setNewlyCreatedUserId(null);
         loadUsers401RetryRef.current = false;
         loadUsers();
+        setUsersRefreshTrigger(c => c + 1);
 
         // ✅ Mostrar popup de éxito
         setPopup({
@@ -883,6 +888,7 @@ export default function UsuariosPage() {
       // console.log('[UsersPage] ✅ User deleted successfully', { ok: !!data });
       loadUsers401RetryRef.current = false;
       loadUsers();
+      setUsersRefreshTrigger(c => c + 1);
 
       // ✅ Mostrar popup de éxito
       setPopup({

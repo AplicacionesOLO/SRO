@@ -2,7 +2,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const VERSION = "admin-users@v2026-05-04.1-PAGINATED-LIST";
+const VERSION = "admin-users@v2026-06-30.1-FAST-CREATE";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -93,36 +93,50 @@ serve(async (req) => {
     if (action === "create") {
       if (!orgId) return json({ error: "Bad Request", details: "Missing orgId", reqId: id, version: VERSION }, 400);
       if (!email) return json({ error: "Bad Request", details: "Missing email", reqId: id, version: VERSION }, 400);
+      if (!password) return json({ error: "Bad Request", details: "Missing password for new user", reqId: id, version: VERSION }, 400);
 
-      // ✅ PAGINACIÓN: buscar en TODOS los usuarios de auth para detectar duplicados
-      const allAuthUsers = await listAllAuthUsers(supabaseAdmin);
-      const existingUser = allAuthUsers.find((u: any) => u.email?.toLowerCase() === email.toLowerCase());
+      // ⚡ FAST PATH: crear directamente sin escanear TODOS los usuarios de auth.
+      // Supabase auth.admin.createUser() ya rechaza emails duplicados con error 422.
+      const { data: authData, error: authError } = await supabaseAdmin.auth.admin.createUser({
+        email,
+        password,
+        email_confirm: true,
+        user_metadata: metadata || {},
+      });
 
-      let createdUserId: string;
-      let alreadyExisted = false;
+      if (authError) {
+        const errMsg = authError.message ?? '';
+        const errStatus = (authError as any)?.status ?? 0;
 
-      if (existingUser) {
-        createdUserId = existingUser.id;
-        alreadyExisted = true;
-        if (full_name || phone_e164) {
-          const updateData: any = {};
-          if (full_name) updateData.name = full_name;
-          if (phone_e164 !== undefined) updateData.phone_e164 = phone_e164;
-          await supabaseAdmin.from("profiles").update(updateData).eq("id", createdUserId);
+        if (errStatus === 422 || errMsg.toLowerCase().includes('already') || errMsg.toLowerCase().includes('duplicate') || errMsg.toLowerCase().includes('been registered')) {
+          return json({
+            error: "DUPLICATE_EMAIL",
+            details: "Ese email ya está registrado en Auth. Usá otro email o editá el usuario existente.",
+            reqId: id,
+            version: VERSION,
+          }, 409);
         }
-      } else {
-        if (!password) return json({ error: "Bad Request", details: "Missing password for new user", reqId: id, version: VERSION }, 400);
-        const { data: authData, error: authError } = await supabaseAdmin.auth.admin.createUser({ email, password, email_confirm: true, user_metadata: metadata || {} });
-        if (authError) return json({ error: "Admin createUser failed", details: authError.message, reqId: id, version: VERSION }, 500);
-        createdUserId = authData.user.id;
-        await supabaseAdmin.from("profiles").upsert({ id: createdUserId, name: full_name ?? null, email, phone_e164: phone_e164 ?? null }, { onConflict: "id" });
+
+        return json({ error: "Admin createUser failed", details: authError.message, reqId: id, version: VERSION }, 500);
       }
 
+      const createdUserId = authData.user.id;
+
+      // Upsert del perfil
+      await supabaseAdmin.from("profiles").upsert(
+        { id: createdUserId, name: full_name ?? null, email, phone_e164: phone_e164 ?? null },
+        { onConflict: "id" }
+      );
+
+      // Asignar rol si se especificó
       if (roleId) {
-        await supabaseAdmin.from("user_org_roles").upsert({ user_id: createdUserId, org_id: orgId, role_id: roleId, assigned_by: createdUserId, assigned_at: new Date().toISOString() }, { onConflict: "user_id,org_id" }).select();
+        await supabaseAdmin.from("user_org_roles").upsert(
+          { user_id: createdUserId, org_id: orgId, role_id: roleId, assigned_by: createdUserId, assigned_at: new Date().toISOString() },
+          { onConflict: "user_id,org_id" }
+        ).select();
       }
 
-      return json({ userId: createdUserId, user_id: createdUserId, alreadyExisted, reqId: id, version: VERSION }, 200);
+      return json({ userId: createdUserId, user_id: createdUserId, alreadyExisted: false, reqId: id, version: VERSION }, 200);
     }
 
     if (action === "update_role") {
