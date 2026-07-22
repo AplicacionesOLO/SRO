@@ -34,6 +34,7 @@ export interface DashboardStats {
   todayCount: number;
   weekCount: number;
   monthCount: number;
+  yearCount: number;
   periodCount: number;
   activeDocks: number;
   totalDocks: number;
@@ -338,6 +339,19 @@ export const dashboardService = {
     monthQuery = applyDockFilter(monthQuery, dockIds);
     const { data: monthReservations } = await monthQuery;
 
+    // ── Query 7: Año actual ─────────────────────────────────────────────────
+    const thisYearStart = startOfYear(now);
+    const thisYearEnd = endOfYear(now);
+    let yearQuery = supabase
+      .from('reservations')
+      .select('id, dock_id')
+      .eq('org_id', orgId)
+      .eq('is_cancelled', false)
+      .gte('start_datetime', thisYearStart.toISOString())
+      .lte('start_datetime', thisYearEnd.toISOString());
+    yearQuery = applyDockFilter(yearQuery, dockIds);
+    const { data: yearReservations } = await yearQuery;
+
     // ── Catálogos ─────────────────────────────────────────────────────────────
     const { data: statuses } = await supabase
       .from('reservation_statuses')
@@ -539,6 +553,7 @@ export const dashboardService = {
       todayCount: todayReservations?.length || 0,
       weekCount: weekReservations?.length || 0,
       monthCount: monthReservations?.length || 0,
+      yearCount: yearReservations?.length || 0,
       periodCount: periodData.length,
       activeDocks: docks?.filter(d => d.is_active).length || 0,
       totalDocks: docks?.length || 0,
