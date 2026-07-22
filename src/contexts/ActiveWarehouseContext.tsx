@@ -87,7 +87,13 @@ export function ActiveWarehouseProvider({ children }: { children: React.ReactNod
       if (saved === 'null' || saved === '') {
         resolved = null;
       } else if (saved && availableWarehouses.some((w) => w.id === saved)) {
-        resolved = saved;
+        // Doble validación: también contra allowedWarehouseIds para prevenir fugas
+        // cuando el cache de useUserScope está stale (ej: acceso revocado en los últimos 5 min)
+        if (allowedWarehouseIds === null || allowedWarehouseIds.includes(saved)) {
+          resolved = saved;
+        }
+        // Si allowedWarehouseIds no incluye el ID guardado, resolved queda null
+        // y cae al paso 3 (forzar primer warehouse disponible)
       }
     }
 
@@ -106,7 +112,7 @@ export function ActiveWarehouseProvider({ children }: { children: React.ReactNod
 
     setActiveWarehouseIdRaw(resolved);
     setInitialized(true);
-  }, [scopeLoading, availableWarehouses, isGlobalAccess, storageKey, initialized]);
+  }, [scopeLoading, availableWarehouses, allowedWarehouseIds, isGlobalAccess, storageKey, initialized]);
 
   const setActiveWarehouseId = useCallback(
     (id: string | null) => {
@@ -131,7 +137,10 @@ export function ActiveWarehouseProvider({ children }: { children: React.ReactNod
     if (activeWarehouseId === null) return;
 
     // Verificar si el warehouse activo sigue siendo válido
-    const isStillValid = availableWarehouses.some((w) => w.id === activeWarehouseId);
+    // Doble check: availableWarehouses + allowedWarehouseIds
+    const inAvailable = availableWarehouses.some((w) => w.id === activeWarehouseId);
+    const inAllowed = allowedWarehouseIds === null || allowedWarehouseIds.includes(activeWarehouseId);
+    const isStillValid = inAvailable && inAllowed;
 
     if (!isStillValid) {
       // FIX: Si solo queda 1 warehouse disponible, saltar directo a ese
@@ -154,7 +163,7 @@ export function ActiveWarehouseProvider({ children }: { children: React.ReactNod
         setSelectionInvalidated(true);
       }
     }
-  }, [initialized, scopeLoading, activeWarehouseId, availableWarehouses, storageKey, isGlobalAccess]);
+  }, [initialized, scopeLoading, activeWarehouseId, availableWarehouses, allowedWarehouseIds, storageKey, isGlobalAccess]);
 
   const allowedWarehouses: ActiveWarehouseInfo[] = useMemo(
     () =>

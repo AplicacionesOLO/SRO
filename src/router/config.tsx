@@ -24,6 +24,7 @@ const ClientesPage = lazyWithRetry(() => import('../pages/admin/clientes/page'))
 const CorrespondenciaPage = lazyWithRetry(() => import('../pages/admin/correspondencia/page'));
 const ManpowerPage = lazyWithRetry(() => import('../pages/manpower/page'));
 const CasetillaPage = lazyWithRetry(() => import('../pages/casetilla/page'));
+const MigracionPage = lazyWithRetry(() => import('../pages/admin/migracion/page'));
 
 const PerfilPage = lazyWithRetry(() => import('../pages/perfil/page'));
 const ConocimientoPage = lazyWithRetry(() => import('../pages/conocimiento/page'));
@@ -169,6 +170,16 @@ const routes: RouteObject[] = [
       <ProtectedRoute>
         <RequirePermission permission="correspondence.view">
           <CorrespondenciaPage />
+        </RequirePermission>
+      </ProtectedRoute>
+    )
+  },
+  { 
+    path: '/admin/migracion', 
+    element: (
+      <ProtectedRoute>
+        <RequirePermission requireAnyAdmin>
+          <MigracionPage />
         </RequirePermission>
       </ProtectedRoute>
     )

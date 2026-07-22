@@ -1598,17 +1598,21 @@ async getExitEligibleReservations(
       const providersMap = new Map<string, string>();
       const providersTypeMap = new Map<string, string>();
       const providersCodeMap = new Map<string, string | null>();
+      const providersSourceMap = new Map<string, string | null>();
+      const providersActiveMap = new Map<string, boolean>();
       const providersClientMap = new Map<string, string | null>();
       if (providerIds.length > 0) {
         const { data: provData } = await supabase
           .from('providers')
-          .select('id, name, provider_type, provider_code, client_id')
+          .select('id, name, provider_type, provider_code, source, active, client_id')
           .in('id', providerIds);
 
         (provData ?? []).forEach((p: any) => {
           providersMap.set(p.id as string, p.name as string);
           providersTypeMap.set(p.id as string, (p.provider_type as string) || 'almacenaje');
           providersCodeMap.set(p.id as string, (p.provider_code as string) || null);
+          providersSourceMap.set(p.id as string, (p.source as string) || null);
+          providersActiveMap.set(p.id as string, (p.active as boolean) ?? false);
           providersClientMap.set(p.id as string, (p.client_id as string) || null);
         });
       }
@@ -1658,6 +1662,27 @@ async getExitEligibleReservations(
         return null;
       };
 
+      // Helper: resolver provider_source (origen)
+      const resolveProviderSource = (shipper: string | null): string | null => {
+        if (!shipper) return null;
+        const isUUID = String(shipper).match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+        if (isUUID) {
+          return providersSourceMap.get(shipper) ?? null;
+        }
+        return null;
+      };
+
+      // Helper: resolver provider_active
+      const resolveProviderActive = (shipper: string | null): boolean | null => {
+        if (!shipper) return null;
+        const isUUID = String(shipper).match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+        if (isUUID) {
+          return providersActiveMap.get(shipper) ?? null;
+        }
+        // Texto plano: no sabemos si está activo → null
+        return null;
+      };
+
       // Helper: resolver client_name
       const resolveClientName = (shipper: string | null): string | null => {
         if (!shipper) return null;
@@ -1700,6 +1725,8 @@ async getExitEligibleReservations(
         const ptype = resolveProviderType(r.shipper_provider ?? null);
         // Excluir proveedores que no están asignados al almacén activo
         if (pname === null || ptype === null) continue;
+        // NOTA: NO excluimos proveedores inactivos — si tienen datos históricos reales,
+        // deben aparecer en el reporte. Se marcan visualmente con badge "Inactivo" en la UI.
 
         let g = groups.get(pname);
         if (!g) {
@@ -1778,10 +1805,14 @@ async getExitEligibleReservations(
         // para obtener el code y client_name. Como es un reporte agrupado, buscamos
         // el primer provider_id que coincida.
         let foundProviderCode: string | null = null;
+        let foundProviderSource: string | null = null;
+        let foundProviderActive: boolean | null = null;
         let foundClientName: string | null = null;
         for (const r of rows) {
           if (resolveProviderName(r.shipper_provider ?? null) === provider_name) {
             foundProviderCode = resolveProviderCode(r.shipper_provider ?? null);
+            foundProviderSource = resolveProviderSource(r.shipper_provider ?? null);
+            foundProviderActive = resolveProviderActive(r.shipper_provider ?? null);
             foundClientName = resolveClientName(r.shipper_provider ?? null);
             break;
           }
@@ -1790,6 +1821,8 @@ async getExitEligibleReservations(
         result.push({
           provider_name,
           provider_code: foundProviderCode,
+          provider_source: foundProviderSource,
+          provider_active: foundProviderActive,
           client_name: foundClientName,
           provider_type: g.provider_type || 'almacenaje',
           citas_programadas: g.citas_programadas,

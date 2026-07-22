@@ -130,8 +130,10 @@ export interface DurationReportRow {
 export interface ProviderDistributionRow {
   provider_name: string;
   provider_code?: string | null;
+  provider_source?: string | null;
   client_name?: string | null;
   provider_type: string; // 'almacenaje' | 'pesado'
+  provider_active?: boolean | null;
   citas_programadas: number;
   citas_con_in: number;
   citas_con_out: number;
