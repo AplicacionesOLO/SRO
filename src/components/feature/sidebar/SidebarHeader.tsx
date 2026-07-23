@@ -7,7 +7,7 @@ interface SidebarHeaderProps {
   onLogoClick: () => void;
 }
 
-const logoUrl = 'https://static.readdy.ai/image/96746b7ba583c55b81aa58d37fd022fd/d30ecbfba1611915e8b0a7d420f0fa0c.png';
+const logoUrl = 'https://public.readdy.ai/ai/img_res/fd160613-607e-4879-85f2-e61c798a4540.png';
 
 export default function SidebarHeader({ isExpanded, isCollapsed, onLogoClick }: SidebarHeaderProps) {
   if (isCollapsed) {

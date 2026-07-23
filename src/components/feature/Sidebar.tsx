@@ -434,7 +434,7 @@ export default function Sidebar() {
                 <div className="flex flex-col gap-4">
                   <div className="relative w-16 h-16 flex items-center justify-center rounded-2xl bg-gradient-to-br from-white/[0.05] to-white/[0.02] border border-white/[0.08]">
                     <img
-                      src="https://static.readdy.ai/image/96746b7ba583c55b81aa58d37fd022fd/d30ecbfba1611915e8b0a7d420f0fa0c.png"
+                      src="https://public.readdy.ai/ai/img_res/fd160613-607e-4879-85f2-e61c798a4540.png"
                       alt="SRO"
                       className="h-12 w-auto object-contain brightness-110"
                     />
