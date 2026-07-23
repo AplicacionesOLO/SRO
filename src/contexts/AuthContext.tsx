@@ -10,6 +10,7 @@ export interface User {
   email: string;
   role: UserRole;
   orgId: string | null;
+  avatarUrl: string | null;
 }
 
 interface AuthContextType {
@@ -257,7 +258,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           name: profile?.name || userEmail.split('@')[0] || 'Usuario',
           email: profile?.email || userEmail,
           role: 'OPERADOR',
-          orgId: null
+          orgId: null,
+          avatarUrl: null
         };
         setUser(fallbackUser);
         
@@ -273,7 +275,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         
         const { data: profile } = await supabase
           .from('profiles')
-          .select('name, email')
+          .select('name, email, avatar_url')
           .eq('id', userId)
           .maybeSingle();
 
@@ -282,7 +284,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           name: profile?.name || userEmail.split('@')[0] || 'Usuario',
           email: profile?.email || userEmail,
           role: roleName as UserRole,
-          orgId: userOrgRole.org_id
+          orgId: userOrgRole.org_id,
+          avatarUrl: profile?.avatar_url || null
         };
         setUser(loadedUser);
 

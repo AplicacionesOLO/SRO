@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { usePermissions } from '../../hooks/usePermissions';
@@ -10,6 +10,7 @@ import { ConfirmModal } from '../../components/base/ConfirmModal';
 interface ProfileData {
   name: string;
   email: string;
+  avatarUrl: string | null;
   createdAt: string;
   updatedAt: string;
   roleName: string;
@@ -23,14 +24,19 @@ export default function PerfilPage() {
   const { user, supabaseUser, logout, loading: authLoading } = useAuth();
   const { orgId } = usePermissions();
   const navigate = useNavigate();
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [profile, setProfile] = useState<ProfileData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [uploadingAvatar, setUploadingAvatar] = useState(false);
+  const [avatarError, setAvatarError] = useState('');
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
   const [showPasswordModal, setShowPasswordModal] = useState(false);
   const [passwordForm, setPasswordForm] = useState({ current: '', newPass: '', confirm: '' });
   const [passwordError, setPasswordError] = useState('');
   const [passwordSuccess, setPasswordSuccess] = useState(false);
+  const [providersPage, setProvidersPage] = useState(1);
+  const PROVIDERS_PER_PAGE = 12;
   const [changingPassword, setChangingPassword] = useState(false);
 
   // Redirige al login si no hay usuario autenticado
@@ -54,7 +60,7 @@ export default function PerfilPage() {
       // ---------- Perfil básico ----------
       const { data: profileData } = await supabase
         .from('profiles')
-        .select('name, email, created_at, updated_at, country_id')
+        .select('name, email, avatar_url, created_at, updated_at, country_id')
         .eq('id', supabaseUser.id)
         .maybeSingle();
 
@@ -104,15 +110,6 @@ export default function PerfilPage() {
         .eq('org_id', orgId)
         .eq('user_id', supabaseUser.id);
 
-      // Debug temporal (comentar después de verificar)
-      // console.log('[PerfilPage] Warehouse Access Query:', {
-      //   orgId,
-      //   userId: supabaseUser.id,
-      //   accessError,
-      //   accessData: warehouseAccess,
-      //   accessCount: warehouseAccess?.length || 0
-      // });
-
       if (!accessError && warehouseAccess && warehouseAccess.length > 0) {
         // Verificar si tiene acceso restringido o no
         const isRestricted = warehouseAccess[0]?.restricted === true;
@@ -123,9 +120,6 @@ export default function PerfilPage() {
             .map((wa: any) => wa.warehouse_id)
             .filter(Boolean);
 
-          // Debug temporal
-          // console.log('[PerfilPage] Restricted Access - Warehouse IDs:', warehouseIds);
-
           if (warehouseIds.length > 0) {
             const { data: warehouseData, error: whError } = await supabase
               .from('warehouses')
@@ -133,13 +127,6 @@ export default function PerfilPage() {
               .eq('org_id', orgId)
               .in('id', warehouseIds)
               .order('name', { ascending: true });
-
-            // Debug temporal
-            // console.log('[PerfilPage] Warehouses Query (Restricted):', {
-            //   whError,
-            //   warehouseData,
-            //   count: warehouseData?.length || 0
-            // });
 
             if (!whError && warehouseData) {
               warehouses = warehouseData.map((w: any) => ({
@@ -156,13 +143,6 @@ export default function PerfilPage() {
             .eq('org_id', orgId)
             .order('name', { ascending: true });
 
-          // Debug temporal
-          // console.log('[PerfilPage] Warehouses Query (Unrestricted):', {
-          //   allWhError,
-          //   allWarehouses,
-          //   count: allWarehouses?.length || 0
-          // });
-
           if (!allWhError && allWarehouses) {
             warehouses = allWarehouses.map((w: any) => ({
               id: w.id,
@@ -172,16 +152,11 @@ export default function PerfilPage() {
         }
       }
 
-      // Debug temporal - resultado final
-      // console.log('[PerfilPage] Final Warehouses:', {
-      //   count: warehouses.length,
-      //   warehouses: warehouses.map(w => ({ id: w.id, name: w.name }))
-      // });
-
       // ---------- Seteo del estado ----------
       setProfile({
         name: profileData?.name || user.name,
         email: profileData?.email || user.email,
+        avatarUrl: profileData?.avatar_url || null,
         createdAt: profileData?.created_at || '',
         updatedAt: profileData?.updated_at || '',
         roleName: (uorData?.roles as any)?.name || user.role,
@@ -194,6 +169,74 @@ export default function PerfilPage() {
       // silenced
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleAvatarClick = () => {
+    fileInputRef.current?.click();
+  };
+
+  const handleAvatarUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !supabaseUser) return;
+
+    // Validar tipo
+    const allowedTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+    if (!allowedTypes.includes(file.type)) {
+      setAvatarError('Solo se permiten imágenes JPG, PNG, WebP o GIF.');
+      return;
+    }
+
+    // Validar tamaño (5 MB)
+    if (file.size > 5 * 1024 * 1024) {
+      setAvatarError('La imagen no puede superar los 5 MB.');
+      return;
+    }
+
+    setAvatarError('');
+    setUploadingAvatar(true);
+
+    try {
+      const fileExt = file.name.split('.').pop() || 'jpg';
+      const filePath = `${supabaseUser.id}/avatar.${fileExt}`;
+
+      // Subir a Storage
+      const { error: uploadError } = await supabase.storage
+        .from('avatars')
+        .upload(filePath, file, { upsert: true, contentType: file.type });
+
+      if (uploadError) throw uploadError;
+
+      // Obtener URL pública
+      const { data: urlData } = supabase.storage
+        .from('avatars')
+        .getPublicUrl(filePath);
+
+      const publicUrl = urlData.publicUrl;
+
+      // Actualizar profiles
+      const { error: updateError } = await supabase
+        .from('profiles')
+        .update({ avatar_url: publicUrl, updated_at: new Date().toISOString() })
+        .eq('id', supabaseUser.id);
+
+      if (updateError) throw updateError;
+
+      // Actualizar estado local
+      setProfile(prev => prev ? { ...prev, avatarUrl: publicUrl } : null);
+
+      // También actualizar el contexto de usuario para que el sidebar se refresque
+      if (user) {
+        user.avatarUrl = publicUrl;
+      }
+    } catch (err: any) {
+      setAvatarError(err.message || 'Error al subir la imagen.');
+    } finally {
+      setUploadingAvatar(false);
+      // Limpiar el input para permitir re-subir el mismo archivo
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
     }
   };
 
@@ -290,11 +333,41 @@ export default function PerfilPage() {
           {/* Avatar + Nombre */}
           <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-6 mb-4">
             <div className="flex items-center gap-5">
-              <div className="w-16 h-16 rounded-full bg-teal-100 flex items-center justify-center flex-shrink-0">
-                <span className="text-2xl font-bold text-teal-600">
-                  {profile.name.charAt(0).toUpperCase()}
-                </span>
-              </div>
+              <button
+                onClick={handleAvatarClick}
+                disabled={uploadingAvatar}
+                className="relative group cursor-pointer flex-shrink-0"
+                title="Hacé clic para cambiar tu foto de perfil"
+              >
+                {profile.avatarUrl ? (
+                  <img
+                    src={profile.avatarUrl}
+                    alt={profile.name}
+                    className="w-16 h-16 rounded-full object-cover border-2 border-gray-100 group-hover:border-teal-300 transition-colors"
+                  />
+                ) : (
+                  <div className="w-16 h-16 rounded-full bg-teal-100 flex items-center justify-center group-hover:bg-teal-200 transition-colors">
+                    <span className="text-2xl font-bold text-teal-600">
+                      {profile.name.charAt(0).toUpperCase()}
+                    </span>
+                  </div>
+                )}
+                {/* Overlay hover */}
+                <div className="absolute inset-0 rounded-full bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                  {uploadingAvatar ? (
+                    <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                  ) : (
+                    <i className="ri-camera-line text-white text-xl w-5 h-5 flex items-center justify-center"></i>
+                  )}
+                </div>
+              </button>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/jpeg,image/png,image/webp,image/gif"
+                onChange={handleAvatarUpload}
+                className="hidden"
+              />
               <div className="flex-1 min-w-0">
                 <h2 className="text-xl font-semibold text-gray-900 truncate">{profile.name}</h2>
                 <p className="text-sm text-gray-500 truncate">{profile.email}</p>
@@ -310,6 +383,12 @@ export default function PerfilPage() {
                 </div>
               </div>
             </div>
+            {avatarError && (
+              <div className="mt-3 flex items-center gap-2 p-2.5 bg-red-50 border border-red-200 rounded-lg">
+                <i className="ri-error-warning-line text-red-600 w-4 h-4 flex items-center justify-center flex-shrink-0"></i>
+                <p className="text-sm text-red-700">{avatarError}</p>
+              </div>
+            )}
           </div>
 
           {/* Información General */}
@@ -363,17 +442,91 @@ export default function PerfilPage() {
                 </p>
               </div>
             ) : (
-              <div className="flex flex-wrap gap-2">
-                {profile.providers.map(p => (
-                  <span
-                    key={p.id}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium bg-teal-50 text-teal-700 border border-teal-100"
-                  >
-                    <i className="ri-truck-line text-xs w-3 h-3 flex items-center justify-center"></i>
-                    {p.name}
-                  </span>
-                ))}
-              </div>
+              <>
+                <div className="flex flex-wrap gap-2">
+                  {profile.providers
+                    .slice((providersPage - 1) * PROVIDERS_PER_PAGE, providersPage * PROVIDERS_PER_PAGE)
+                    .map(p => (
+                      <span
+                        key={p.id}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium bg-teal-50 text-teal-700 border border-teal-100"
+                      >
+                        <i className="ri-truck-line text-xs w-3 h-3 flex items-center justify-center"></i>
+                        {p.name}
+                      </span>
+                    ))}
+                </div>
+                {profile.providers.length > PROVIDERS_PER_PAGE && (
+                  <>
+                    {(() => {
+                      const totalPages = Math.ceil(profile.providers.length / PROVIDERS_PER_PAGE);
+                      const getVisiblePages = (): (number | string)[] => {
+                        const pages: (number | string)[] = [];
+                        const maxVisible = 5;
+                        if (totalPages <= maxVisible + 2) {
+                          for (let i = 1; i <= totalPages; i++) pages.push(i);
+                          return pages;
+                        }
+                        pages.push(1);
+                        let start = Math.max(2, providersPage - 1);
+                        let end = Math.min(totalPages - 1, providersPage + 1);
+                        if (providersPage <= 3) {
+                          start = 2;
+                          end = Math.min(totalPages - 1, 4);
+                        } else if (providersPage >= totalPages - 2) {
+                          start = Math.max(2, totalPages - 3);
+                          end = totalPages - 1;
+                        }
+                        if (start > 2) pages.push('...');
+                        for (let i = start; i <= end; i++) pages.push(i);
+                        if (end < totalPages - 1) pages.push('...');
+                        pages.push(totalPages);
+                        return pages;
+                      };
+                      const visiblePages = getVisiblePages();
+                      return (
+                        <div className="flex items-center justify-center gap-1 mt-4 pt-3 border-t border-gray-100">
+                          <button
+                            onClick={() => setProvidersPage(p => Math.max(1, p - 1))}
+                            disabled={providersPage === 1}
+                            className="w-7 h-7 flex items-center justify-center rounded-md text-xs text-gray-500 hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors cursor-pointer flex-shrink-0"
+                          >
+                            <i className="ri-arrow-left-s-line w-4 h-4 flex items-center justify-center"></i>
+                          </button>
+                          <div className="flex items-center gap-1 overflow-x-auto max-w-[280px] sm:max-w-[340px] scrollbar-hide">
+                            {visiblePages.map((page, idx) =>
+                              typeof page === 'string' ? (
+                                <span key={`ellipsis-${idx}`} className="w-7 h-7 flex items-center justify-center text-gray-400 text-xs flex-shrink-0">
+                                  ...
+                                </span>
+                              ) : (
+                                <button
+                                  key={page}
+                                  onClick={() => setProvidersPage(page)}
+                                  className={`w-7 h-7 flex items-center justify-center rounded-md text-xs font-medium transition-colors cursor-pointer whitespace-nowrap flex-shrink-0 ${
+                                    providersPage === page
+                                      ? 'bg-teal-600 text-white'
+                                      : 'text-gray-600 hover:bg-gray-100'
+                                  }`}
+                                >
+                                  {page}
+                                </button>
+                              )
+                            )}
+                          </div>
+                          <button
+                            onClick={() => setProvidersPage(p => Math.min(totalPages, p + 1))}
+                            disabled={providersPage === totalPages}
+                            className="w-7 h-7 flex items-center justify-center rounded-md text-xs text-gray-500 hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors cursor-pointer flex-shrink-0"
+                          >
+                            <i className="ri-arrow-right-s-line w-4 h-4 flex items-center justify-center"></i>
+                          </button>
+                        </div>
+                      );
+                    })()}
+                  </>
+                )}
+              </>
             )}
           </div>
 

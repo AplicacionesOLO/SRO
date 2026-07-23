@@ -1113,27 +1113,6 @@ export default function CalendarioPage() {
 
   return (
     <div className="h-screen flex flex-col bg-gray-50 w-full overflow-hidden" style={{ fontSize: 'clamp(11px, 0.78vw, 13px)' }}>
-      {/* Header con título del almacén activo */}
-      <div className="bg-white border-b border-gray-200">
-        <div className="flex items-center justify-between" style={{ paddingLeft: 'clamp(12px, 1.2vw, 20px)', paddingRight: 'clamp(12px, 1.2vw, 20px)', paddingTop: '6px', paddingBottom: '6px' }}>
-          <div className="flex items-center gap-2">
-            <h1 className="font-semibold text-gray-900" style={{ fontSize: 'clamp(11px, 0.8vw, 13px)' }}>
-              {selectedWarehouse ? (
-                <span className="flex items-center gap-1.5"><i className="ri-building-2-line text-teal-600 w-4 h-4 flex items-center justify-center"></i>{selectedWarehouse.name}<span className="text-xs font-normal text-gray-500">({getUtcOffsetLabel(warehouseTimezone)})</span></span>
-              ) : (
-                <span className="flex items-center gap-1.5 text-gray-600"><i className="ri-stack-line w-4 h-4 flex items-center justify-center"></i>Todos los almacenes</span>
-              )}
-            </h1>
-            {selectedWarehouse && <span className="px-1.5 py-0.5 bg-teal-50 text-teal-700 text-[11px] font-medium rounded-full">Almacén activo</span>}
-          </div>
-          {warehouses.length > 1 && (
-            <button onClick={() => setWarehouseModalOpen(true)} className="text-xs text-teal-600 hover:text-teal-700 font-medium flex items-center gap-1">
-              <i className="ri-exchange-line w-3.5 h-3.5 flex items-center justify-center"></i>Cambiar almacén
-            </button>
-          )}
-        </div>
-      </div>
-
       {conflictBanner && (
         <div className="bg-amber-50 border-b border-amber-200 px-4 py-2 flex items-center justify-between gap-3">
           <div className="flex items-center gap-2"><i className="ri-alert-line text-amber-600 text-base w-4 h-4 flex items-center justify-center"></i><p className="text-xs text-amber-900"><span className="font-semibold">Esta reserva fue actualizada mientras la editabas.</span><span className="text-amber-700 ml-1">Guardar podría sobrescribir cambios hechos por otro usuario.</span></p></div>

@@ -1,12 +1,49 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { ConfirmModal } from '../base/ConfirmModal';
+
+const PAGE_TITLES: Record<string, string> = {
+  '/': 'Inicio',
+  '/dashboard': 'Dashboard',
+  '/calendario': 'Calendario',
+  '/reservas': 'Reservas',
+  '/andenes': 'Andenes',
+  '/manpower': 'Manpower',
+  '/casetilla': 'Punto de Control',
+  '/perfil': 'Mi Perfil',
+  '/admin': 'Administración',
+  '/admin/usuarios': 'Usuarios',
+  '/admin/roles': 'Roles',
+  '/admin/matriz-permisos': 'Matriz de Permisos',
+  '/admin/catalogos': 'Catálogos',
+  '/admin/almacenes': 'Almacenes',
+  '/admin/clientes': 'Clientes',
+  '/admin/correspondencia': 'Correspondencia',
+  '/conocimiento': 'Base de Conocimiento',
+  '/chat/auditoria': 'Auditoría Chat',
+  '/access-pending': 'Acceso Pendiente',
+};
+
+function resolvePageTitle(pathname: string): string {
+  if (PAGE_TITLES[pathname]) return PAGE_TITLES[pathname];
+  const segments = pathname.split('/').filter(Boolean);
+  const parent = '/' + segments.slice(0, 2).join('/');
+  if (PAGE_TITLES[parent]) return PAGE_TITLES[parent];
+  if (segments.length >= 1) {
+    const root = '/' + segments[0];
+    if (PAGE_TITLES[root]) return PAGE_TITLES[root];
+  }
+  return '';
+}
 
 export default function Navbar() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
+
+  const pageTitle = useMemo(() => resolvePageTitle(location.pathname), [location.pathname]);
 
   const handleLogout = () => {
     try {
@@ -17,57 +54,74 @@ export default function Navbar() {
     }
   };
 
-  const handleLogoClick = () => {
-    navigate('/');
-  };
-
   return (
-    <nav className="bg-white border-b border-gray-200 sticky top-0 z-40">
+    <nav className="sticky top-0 z-40 bg-[#0A0F1C] border-b border-white/[0.06]">
       <div className="px-4 sm:px-6 lg:px-8">
-        <div className="flex justify-between h-16">
-          <div className="flex items-center">
-            <button
-              onClick={() => navigate('/')}
-              className="flex items-center ml-2 lg:ml-0 cursor-pointer hover:opacity-80 transition-opacity"
-            >
-              <img
-                src="https://static.readdy.ai/image/96746b7ba583c55b81aa58d37fd022fd/894bf9da2b8030a7b0ba3c4dadd1585d.png"
-                alt="SRO Logo"
-                className="h-12 w-auto object-contain"
-              />
-            </button>
+        <div className="flex justify-between items-center h-14">
+          {/* Left: Page Title — CONTEXTO, sin retroceder */}
+          <div className="flex items-center gap-2 min-w-0">
+            {pageTitle && (
+              <h1 className="text-[15px] font-semibold text-white/90 truncate">
+                {pageTitle}
+              </h1>
+            )}
           </div>
 
-          {/* User info y logout */}
-          <div className="flex items-center gap-2 sm:gap-4 ml-auto">
-            <div className="text-right hidden sm:block">
-              <div className="text-sm font-medium text-gray-900">
+          {/* Right: User + Logout */}
+          <div className="flex items-center gap-2 flex-shrink-0">
+            {/* Desktop user info */}
+            <div className="hidden sm:flex items-center gap-3 px-3 py-1.5 rounded-xl bg-[#111827] border border-white/[0.06]">
+              <div className="relative w-7 h-7 flex-shrink-0">
+                {user?.avatarUrl ? (
+                  <img
+                    src={user.avatarUrl}
+                    alt={user.name}
+                    className="w-7 h-7 rounded-full object-cover border border-white/[0.08]"
+                  />
+                ) : (
+                  <div className="w-7 h-7 rounded-full bg-white/[0.04] border border-white/[0.08] flex items-center justify-center">
+                    <span className="text-xs font-bold text-teal-300">
+                      {user?.name?.charAt(0).toUpperCase()}
+                    </span>
+                  </div>
+                )}
+                <span className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-emerald-500 border-2 border-[#111827]" />
+              </div>
+              <span className="text-[13px] font-medium text-white/80 max-w-[120px] truncate">
                 {user?.name}
-              </div>
-              <div className="text-xs text-gray-500 capitalize">
-                {user?.role}
-              </div>
-            </div>
-            
-            {/* Avatar en móvil */}
-            <div className="sm:hidden w-8 h-8 rounded-full bg-teal-100 flex items-center justify-center">
-              <span className="text-sm font-medium text-teal-600">
-                {user?.name?.charAt(0).toUpperCase()}
               </span>
             </div>
 
+            {/* Mobile avatar */}
+            <div className="sm:hidden relative w-7 h-7 flex-shrink-0">
+              {user?.avatarUrl ? (
+                <img
+                  src={user.avatarUrl}
+                  alt={user.name}
+                  className="w-7 h-7 rounded-full object-cover border border-white/[0.08]"
+                />
+              ) : (
+                <div className="w-7 h-7 rounded-full bg-white/[0.04] border border-white/[0.08] flex items-center justify-center">
+                  <span className="text-xs font-bold text-teal-300">
+                    {user?.name?.charAt(0).toUpperCase()}
+                  </span>
+                </div>
+              )}
+            </div>
+
+            {/* Logout */}
             <button
               onClick={() => setShowLogoutConfirm(true)}
-              className="flex items-center gap-2 px-3 sm:px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 rounded-lg transition-colors whitespace-nowrap"
+              className="flex items-center gap-1.5 px-2.5 py-1.5 text-[12px] font-medium text-gray-400 hover:text-red-400 hover:bg-red-500/8 rounded-lg transition-all duration-200 whitespace-nowrap cursor-pointer"
+              title="Cerrar sesión"
             >
-              <i className="ri-logout-box-line text-lg w-5 h-5 flex items-center justify-center"></i>
-              <span className="hidden sm:inline">Cerrar Sesión</span>
+              <i className="ri-logout-box-r-line text-sm w-4 h-4 flex items-center justify-center" />
+              <span className="hidden sm:inline">Salir</span>
             </button>
           </div>
         </div>
       </div>
 
-      {/* Modal de confirmación para cerrar sesión */}
       <ConfirmModal
         isOpen={showLogoutConfirm}
         type="warning"

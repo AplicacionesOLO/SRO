@@ -74,3 +74,73 @@
   background: rgba(13, 148, 136, 0.2);
   border-radius: 4px;
 }
+
+/* Hide scrollbar utility */
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
+
+/* =============================================
+   SIDEBAR DYNAMIC BACKGROUND ANIMATIONS
+   ============================================= */
+
+@keyframes sidebar-bg-drift {
+  0%   { background-position: 0 0; }
+  100% { background-position: 80px 80px; }
+}
+
+@keyframes sidebar-ambient-sweep {
+  0%   { opacity: 0.15; transform: translate(-40%, -30%) scale(1); }
+  33%  { opacity: 0.35; transform: translate(-20%, -10%) scale(1.05); }
+  66%  { opacity: 0.20; transform: translate(-50%, -25%) scale(0.98); }
+  100% { opacity: 0.15; transform: translate(-40%, -30%) scale(1); }
+}
+
+@keyframes sidebar-node-pulse {
+  0%, 100% { opacity: 0.25; }
+  50%      { opacity: 0.65; }
+}
+
+@keyframes sidebar-line-travel {
+  0%   { background-position: 0% 0%; }
+  100% { background-position: 0% 300%; }
+}
+
+@keyframes sidebar-edge-glow {
+  0%, 100% { opacity: 0.4; }
+  50%      { opacity: 0.8; }
+}
+
+.sidebar-bg-animate {
+  animation: sidebar-bg-drift 28s linear infinite;
+}
+
+.sidebar-ambient-animate {
+  animation: sidebar-ambient-sweep 22s ease-in-out infinite;
+}
+
+.sidebar-node-pulse-animate {
+  animation: sidebar-node-pulse 7s ease-in-out infinite;
+}
+
+.sidebar-line-animate {
+  animation: sidebar-line-travel 20s linear infinite;
+}
+
+.sidebar-edge-animate {
+  animation: sidebar-edge-glow 8s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sidebar-bg-animate,
+  .sidebar-ambient-animate,
+  .sidebar-node-pulse-animate,
+  .sidebar-line-animate,
+  .sidebar-edge-animate {
+    animation: none !important;
+  }
+}
