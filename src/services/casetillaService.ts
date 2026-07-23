@@ -1350,13 +1350,13 @@ async getExitEligibleReservations(
         .filter((ing: any) => ing.reservation_id && salidasMap.has(ing.reservation_id))
         .map((ing: any) => ing.reservation_id as string);
 
-      let reservationsMap = new Map<string, { start_datetime: string | null; end_datetime: string | null; shipper_provider: string | null }>();
+      let reservationsMap = new Map<string, { start_datetime: string | null; end_datetime: string | null; shipper_provider: string | null; order_request_number: string | null }>();
       let providersMap = new Map<string, string>();
 
       if (reservationIdsWithSalida.length > 0) {
         const { data: reservationsData } = await supabase
           .from('reservations')
-          .select('id, start_datetime, end_datetime, shipper_provider')
+          .select('id, start_datetime, end_datetime, shipper_provider, order_request_number')
           .in('id', reservationIdsWithSalida)
           .eq('org_id', orgId);
 
@@ -1365,6 +1365,7 @@ async getExitEligibleReservations(
             start_datetime: r.start_datetime ?? null,
             end_datetime: r.end_datetime ?? null,
             shipper_provider: r.shipper_provider ?? null,
+            order_request_number: r.order_request_number ?? null,
           });
         });
 
@@ -1436,6 +1437,7 @@ async getExitEligibleReservations(
             chofer: ing.chofer ?? '',
             matricula: ing.matricula ?? '',
             dua: ing.dua ?? '',
+            order_request_number: resInfo?.order_request_number ?? null,
             provider_name: providerName,
             start_datetime: startStr,
             end_datetime: endStr,

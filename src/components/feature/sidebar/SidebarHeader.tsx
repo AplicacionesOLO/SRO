@@ -5,11 +5,39 @@ interface SidebarHeaderProps {
   isExpanded: boolean;
   isCollapsed: boolean;
   onLogoClick: () => void;
+  variant?: 'desktop' | 'drawer';
 }
 
 const logoUrl = 'https://public.readdy.ai/ai/img_res/fd160613-607e-4879-85f2-e61c798a4540.png';
 
-export default function SidebarHeader({ isExpanded, isCollapsed, onLogoClick }: SidebarHeaderProps) {
+export default function SidebarHeader({ isExpanded, isCollapsed, onLogoClick, variant = 'desktop' }: SidebarHeaderProps) {
+  // ───── DRAWER VARIANT ─────
+  if (variant === 'drawer') {
+    return (
+      <div className="relative flex-shrink-0">
+        {/* Ambient glow behind logo */}
+        <div className="absolute top-6 left-1/2 -translate-x-1/2 w-48 h-48 rounded-full bg-teal-500/[0.04] blur-3xl sidebar-ambient-animate pointer-events-none" />
+
+        <div className="relative px-5 pt-7 pb-4">
+          <div className="flex flex-col gap-4">
+            <div className="relative w-[72px] h-[72px] flex items-center justify-center rounded-2xl bg-gradient-to-br from-white/[0.06] to-transparent border border-white/[0.10] shadow-[0_0_30px_rgba(13,148,136,0.06)]">
+              <img
+                src={logoUrl}
+                alt="SRO"
+                className="h-[54px] w-auto object-contain brightness-110"
+              />
+            </div>
+            <div>
+              <div className="text-xl font-bold text-white tracking-tight">SRO</div>
+              <div className="text-[13px] text-gray-400 font-medium">Sistema de Reservas OLO</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ───── DESKTOP COLLAPSED ─────
   if (isCollapsed) {
     return (
       <div className="flex-shrink-0 flex flex-col items-center pt-6 pb-2 relative">
@@ -36,10 +64,11 @@ export default function SidebarHeader({ isExpanded, isCollapsed, onLogoClick }: 
     );
   }
 
+  // ───── DESKTOP EXPANDED ─────
   return (
     <div className="flex-shrink-0 relative">
       {/* Ambient radial glow behind logo */}
-      <div className="absolute top-0 left-1/2 -translate-x-1/2 w-48 h-48 rounded-full bg-teal-500/[0.04] blur-3xl sidebar-ambient-animate pointer-events-none" />
+      <div className="absolute top-0 left-1/2 -translate-x-1/2 w-56 h-56 rounded-full bg-teal-500/[0.04] blur-3xl sidebar-ambient-animate pointer-events-none" />
 
       <div className="relative px-5 pt-8 pb-4">
         <button
@@ -47,16 +76,16 @@ export default function SidebarHeader({ isExpanded, isCollapsed, onLogoClick }: 
           className="flex flex-col items-center gap-4 cursor-pointer group w-full"
           aria-label="Ir al inicio"
         >
-          {/* Logo container with integrated glow */}
+          {/* Logo container with integrated ambient glow */}
           <div className="relative">
             {/* Outer glow ring */}
-            <div className="absolute inset-0 rounded-2xl bg-teal-500/10 blur-md scale-125 sidebar-node-pulse-animate" />
+            <div className="absolute inset-0 rounded-2xl bg-teal-500/8 blur-lg scale-125 sidebar-node-pulse-animate" />
 
-            <div className="relative w-[72px] h-[72px] flex items-center justify-center rounded-2xl bg-gradient-to-br from-white/[0.05] to-white/[0.02] border border-white/[0.08] group-hover:border-white/[0.16] group-hover:from-white/[0.08] group-hover:to-white/[0.04] transition-all duration-400 shadow-[0_0_30px_rgba(13,148,136,0.08)] group-hover:shadow-[0_0_40px_rgba(13,148,136,0.15)]">
+            <div className="relative w-20 h-20 flex items-center justify-center rounded-2xl bg-gradient-to-br from-white/[0.06] to-transparent border border-white/[0.10] group-hover:border-white/[0.18] group-hover:from-white/[0.08] group-hover:to-white/[0.02] transition-all duration-400 shadow-[0_0_40px_rgba(13,148,136,0.08)] group-hover:shadow-[0_0_50px_rgba(13,148,136,0.15)]">
               <img
                 src={logoUrl}
                 alt="SRO"
-                className="h-[54px] w-auto object-contain brightness-110 group-hover:brightness-125 transition-all duration-400"
+                className="h-[60px] w-auto object-contain brightness-110 group-hover:brightness-125 transition-all duration-400"
               />
             </div>
           </div>
@@ -82,7 +111,6 @@ export default function SidebarHeader({ isExpanded, isCollapsed, onLogoClick }: 
       {/* Decorative bottom line — flows into connection line system */}
       <div className="relative mx-5 mb-2">
         <div className="h-px bg-gradient-to-r from-transparent via-teal-400/25 to-transparent" />
-        {/* Node dot centered on the line */}
         <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-1.5 h-1.5 rounded-full bg-teal-400/50 sidebar-node-pulse-animate" />
       </div>
     </div>

@@ -111,6 +111,7 @@ export interface DurationReportRow {
   chofer: string;
   matricula: string;
   dua?: string | null;
+  order_request_number?: string | null;
   provider_name?: string | null;
   start_datetime?: string | null;
   end_datetime?: string | null;

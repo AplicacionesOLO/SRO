@@ -32,6 +32,7 @@ interface DurationReportRow {
   chofer: string;
   matricula: string;
   dua: string | null;
+  order_request_number?: string | null;
   provider_name?: string | null;
   start_datetime?: string | null;
   end_datetime?: string | null;
@@ -209,6 +210,7 @@ export default function DurationReportGrid({ orgId, allowedWarehouseIds, clientI
           row.chofer.toLowerCase().includes(term) ||
           row.matricula.toLowerCase().includes(term) ||
           (row.dua && row.dua.toLowerCase().includes(term)) ||
+          (row.order_request_number && row.order_request_number.toLowerCase().includes(term)) ||
           (row.provider_name && row.provider_name.toLowerCase().includes(term))
       );
     }
@@ -313,6 +315,7 @@ export default function DurationReportGrid({ orgId, allowedWarehouseIds, clientI
       'Chofer': row.chofer,
       'Matrícula': row.matricula,
       'DUA': row.dua || '-',
+      'Número de Pedido': row.order_request_number || '-',
       'Inicio cita': row.start_datetime ? formatDateTime(row.start_datetime, row.warehouse_timezone) : '-',
       'Fin cita': row.end_datetime ? formatDateTime(row.end_datetime, row.warehouse_timezone) : '-',
       'Ingreso': formatDateTime(row.ingreso_at, row.warehouse_timezone),
@@ -413,7 +416,7 @@ export default function DurationReportGrid({ orgId, allowedWarehouseIds, clientI
                   type="text"
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
-                  placeholder="Chofer, Matrícula o DUA..."
+                  placeholder="Chofer, Matrícula, DUA o Pedido..."
                   className="w-full pl-10 pr-4 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent"
                 />
               </div>
@@ -509,6 +512,7 @@ export default function DurationReportGrid({ orgId, allowedWarehouseIds, clientI
                       <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Chofer</th>
                       <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Matrícula</th>
                       <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">DUA</th>
+                      <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">N° Pedido</th>
                       <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Inicio cita</th>
                       <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Fin cita</th>
                       <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Ingreso</th>
@@ -529,6 +533,7 @@ export default function DurationReportGrid({ orgId, allowedWarehouseIds, clientI
                           <td className="px-4 py-3 text-sm text-gray-900">{row.chofer}</td>
                           <td className="px-4 py-3 text-sm font-medium text-gray-900">{row.matricula}</td>
                           <td className="px-4 py-3 text-sm text-gray-600">{row.dua || '-'}</td>
+                          <td className="px-4 py-3 text-sm text-gray-900">{row.order_request_number || '-'}</td>
                           <td className="px-4 py-3 text-sm text-gray-600">
                             {row.start_datetime ? formatDateTime(row.start_datetime, row.warehouse_timezone) : '-'}
                           </td>
@@ -645,10 +650,25 @@ export default function DurationReportGrid({ orgId, allowedWarehouseIds, clientI
                   )}
 
                   {row.dua && (
-                    <div className="flex items-center gap-2 mb-3 pb-3 border-b border-gray-100">
+                    <div className="flex items-center gap-2 mb-2">
                       <i className="ri-file-text-line text-gray-400"></i>
                       <span className="text-sm text-gray-600">DUA: {row.dua}</span>
                     </div>
+                  )}
+
+                  {row.order_request_number && (
+                    <div className="flex items-center gap-2 mb-3 pb-3 border-b border-gray-100">
+                      <i className="ri-file-list-3-line text-gray-400"></i>
+                      <span className="text-sm text-gray-600">Pedido: {row.order_request_number}</span>
+                    </div>
+                  )}
+
+                  {!row.order_request_number && row.dua && (
+                    <div className="mb-3 pb-3 border-b border-gray-100"></div>
+                  )}
+
+                  {!row.dua && !row.order_request_number && (
+                    <div className="mb-3 pb-3 border-b border-gray-100"></div>
                   )}
 
                   <div className="space-y-2 text-sm">

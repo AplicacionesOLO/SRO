@@ -10,6 +10,7 @@ interface SidebarItemProps {
   isCollapsed: boolean;
   onClick: () => void;
   isDisabled?: boolean;
+  layoutNamespace?: string;
 }
 
 export default function SidebarItem({
@@ -20,7 +21,11 @@ export default function SidebarItem({
   isCollapsed,
   onClick,
   isDisabled,
+  layoutNamespace,
 }: SidebarItemProps) {
+  const activeBarId = layoutNamespace ? `${layoutNamespace}-active-bar` : 'sidebar-active-bar';
+  const activeBgId = layoutNamespace ? `${layoutNamespace}-active-bg` : 'sidebar-active-bg';
+
   const content = (
     <motion.button
       onClick={onClick}
@@ -44,7 +49,7 @@ export default function SidebarItem({
       {/* Active glow bar */}
       {isActive && (
         <motion.div
-          layoutId="sidebar-active-bar"
+          layoutId={activeBarId}
           className="absolute left-0 top-2.5 bottom-2.5 w-[3px] rounded-full bg-teal-400 shadow-[0_0_14px_rgba(45,212,191,0.6),0_0_4px_rgba(45,212,191,0.3)]"
           transition={{ type: 'spring', stiffness: 420, damping: 28, mass: 0.8 }}
         />
@@ -53,7 +58,7 @@ export default function SidebarItem({
       {/* Active background depth */}
       {isActive && (
         <motion.div
-          layoutId="sidebar-active-bg"
+          layoutId={activeBgId}
           className="absolute inset-0 rounded-[10px] bg-gradient-to-r from-teal-500/18 via-teal-400/8 to-teal-400/2 border border-teal-500/12 shadow-[inset_0_1px_0_rgba(45,212,191,0.08)]"
           transition={{ type: 'spring', stiffness: 420, damping: 28, mass: 0.8 }}
         />

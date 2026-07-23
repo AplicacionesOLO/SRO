@@ -1,12 +1,6 @@
 import { motion, AnimatePresence } from 'framer-motion';
 import SidebarTooltip from './SidebarTooltip';
-
-interface SubMenuChild {
-  path: string;
-  label: string;
-  icon: string;
-  permission?: string;
-}
+import type { MenuItem } from './types';
 
 interface SidebarSubmenuProps {
   label: string;
@@ -16,10 +10,11 @@ interface SidebarSubmenuProps {
   isOpen: boolean;
   isActive: boolean;
   onToggle: () => void;
-  children: SubMenuChild[];
+  children: MenuItem[];
   activeChildPath: string | null;
   onChildClick: (path: string) => void;
   isDisabled?: boolean;
+  layoutNamespace?: string;
 }
 
 export default function SidebarSubmenu({
@@ -34,7 +29,10 @@ export default function SidebarSubmenu({
   activeChildPath,
   onChildClick,
   isDisabled,
+  layoutNamespace,
 }: SidebarSubmenuProps) {
+  const activeBarId = layoutNamespace ? `${layoutNamespace}-active-bar` : 'sidebar-active-bar';
+  const activeBgId = layoutNamespace ? `${layoutNamespace}-active-bg` : 'sidebar-active-bg';
   const hasActiveChild = children.some((child) => child.path === activeChildPath);
 
   if (isCollapsed) {
@@ -53,7 +51,7 @@ export default function SidebarSubmenu({
         >
           {(isActive || hasActiveChild) && (
             <motion.div
-              layoutId="sidebar-active-bar"
+              layoutId={activeBarId}
               className="absolute left-0 top-2.5 bottom-2.5 w-[3px] rounded-full bg-teal-400 shadow-[0_0_14px_rgba(45,212,191,0.6)]"
               transition={{ type: 'spring', stiffness: 420, damping: 28 }}
             />
@@ -103,7 +101,7 @@ export default function SidebarSubmenu({
         {/* Active bar when section is active but not open */}
         {isSectionActive && (
           <motion.div
-            layoutId="sidebar-active-bar"
+            layoutId={activeBarId}
             className="absolute left-0 top-2.5 bottom-2.5 w-[3px] rounded-full bg-teal-400 shadow-[0_0_14px_rgba(45,212,191,0.6),0_0_4px_rgba(45,212,191,0.3)]"
             transition={{ type: 'spring', stiffness: 420, damping: 28, mass: 0.8 }}
           />
@@ -160,7 +158,7 @@ export default function SidebarSubmenu({
               <div className="absolute left-[21px] top-4 bottom-4 w-px bg-gradient-to-b from-teal-400/25 via-white/[0.08] to-teal-400/25 sidebar-line-animate" />
 
               <div className="py-2 space-y-0.5">
-                {children.map((child, index) => {
+                {children.map((child) => {
                   const childActive = activeChildPath === child.path;
                   return (
                     <motion.button
@@ -179,7 +177,7 @@ export default function SidebarSubmenu({
                       {/* Active child bar */}
                       {childActive && (
                         <motion.div
-                          layoutId="sidebar-active-bar"
+                          layoutId={activeBarId}
                           className="absolute left-0 top-2 bottom-2 w-[3px] rounded-full bg-teal-400 shadow-[0_0_10px_rgba(45,212,191,0.6)]"
                           transition={{ type: 'spring', stiffness: 420, damping: 28, mass: 0.8 }}
                         />
@@ -188,7 +186,7 @@ export default function SidebarSubmenu({
                       {/* Active child bg */}
                       {childActive && (
                         <motion.div
-                          layoutId="sidebar-active-bg"
+                          layoutId={activeBgId}
                           className="absolute inset-0 rounded-[10px] bg-gradient-to-r from-teal-500/14 via-teal-400/5 to-transparent border border-teal-500/10 shadow-[inset_0_1px_0_rgba(45,212,191,0.06)]"
                           transition={{ type: 'spring', stiffness: 420, damping: 28, mass: 0.8 }}
                         />

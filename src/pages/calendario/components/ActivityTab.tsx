@@ -309,7 +309,62 @@ function getActivityDescription(
   statusById: Map<string, { name: string; color: string }>
 ): { title: string; subtitle?: JSX.Element } {
   if (log.action === 'created') {
-    return { title: 'Reserva creada' };
+    const meta = log.metadata || {};
+
+    // ── Resolver nombres desde IDs ──
+    const dockLabel = meta.dock_id ? (dockNameById.get(meta.dock_id) || meta.dock_id) : null;
+    const statusLabel = meta.status_id ? (statusById.get(meta.status_id)?.name || meta.status_id) : null;
+
+    // ── Datos visibles del formulario ──
+    const visibleFields: { label: string; value: string | null }[] = [];
+    if (meta.driver) visibleFields.push({ label: 'Chofer', value: meta.driver });
+    if (meta.truck_plate) visibleFields.push({ label: 'Matrícula', value: meta.truck_plate });
+    if (meta.purchase_order) visibleFields.push({ label: 'OC', value: meta.purchase_order });
+    if (meta.order_request_number) visibleFields.push({ label: 'Pedido', value: meta.order_request_number });
+    if (meta.shipper_provider) visibleFields.push({ label: 'Proveedor', value: meta.shipper_provider });
+    if (meta.dua) visibleFields.push({ label: 'DUA', value: meta.dua });
+    if (meta.invoice) visibleFields.push({ label: 'Factura', value: meta.invoice });
+    if (meta.notes) visibleFields.push({ label: 'Notas', value: meta.notes });
+
+    // ── Info técnica (andén, estado, tipo de carga) ──
+    const techTags: string[] = [];
+    if (dockLabel) techTags.push(dockLabel);
+    if (statusLabel) techTags.push(statusLabel);
+    if (meta.cargo_type) techTags.push(meta.cargo_type);
+    if (meta.operation_type) techTags.push(meta.operation_type);
+    if (meta.transport_type) techTags.push(meta.transport_type);
+    if (meta.is_imported === true) techTags.push('Importado');
+    if (meta.is_consolidated === true) techTags.push('Consolidado');
+
+    if (visibleFields.length === 0 && techTags.length === 0) {
+      return { title: 'Reserva creada' };
+    }
+
+    const subtitle = (
+      <div className="space-y-2 mt-0.5">
+        {techTags.length > 0 && (
+          <div className="flex flex-wrap gap-1.5">
+            {techTags.map((tag) => (
+              <span key={tag} className="px-2 py-0.5 rounded-full bg-gray-100 border border-gray-200 text-xs text-gray-700 font-medium">
+                {tag}
+              </span>
+            ))}
+          </div>
+        )}
+        {visibleFields.length > 0 && (
+          <div className="space-y-1">
+            {visibleFields.map((f) => (
+              <div key={f.label} className="flex items-start gap-1.5 text-xs">
+                <span className="font-medium text-gray-600 whitespace-nowrap">{f.label}:</span>
+                <span className="text-gray-900 break-all">{f.value}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+
+    return { title: 'Reserva creada', subtitle };
   }
 
   if (log.action === 'cancelled') {

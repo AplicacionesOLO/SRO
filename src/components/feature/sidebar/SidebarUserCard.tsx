@@ -9,9 +9,42 @@ interface SidebarUserCardProps {
   isExpanded: boolean;
   isCollapsed: boolean;
   onClick: () => void;
+  variant?: 'desktop' | 'drawer';
 }
 
-export default function SidebarUserCard({ name, role, initial, avatarUrl, isExpanded, isCollapsed, onClick }: SidebarUserCardProps) {
+export default function SidebarUserCard({ name, role, initial, avatarUrl, isExpanded, isCollapsed, onClick, variant = 'desktop' }: SidebarUserCardProps) {
+  // ───── DRAWER VARIANT ─────
+  if (variant === 'drawer') {
+    return (
+      <div className="flex-shrink-0 p-4 border-t border-white/[0.08] relative">
+        <button
+          onClick={onClick}
+          className="flex items-center gap-3.5 p-4 rounded-2xl bg-[#0e1625] border border-white/[0.10] hover:border-white/[0.16] hover:bg-[#111b2c] transition-all duration-300 cursor-pointer w-full"
+        >
+          <div className="relative w-11 h-11 flex-shrink-0">
+            {avatarUrl ? (
+              <img
+                src={avatarUrl}
+                alt={name}
+                className="w-11 h-11 rounded-full object-cover border border-white/[0.10]"
+              />
+            ) : (
+              <div className="w-11 h-11 rounded-full bg-white/[0.04] border border-white/[0.10] flex items-center justify-center">
+                <span className="text-base font-bold text-teal-300">{initial}</span>
+              </div>
+            )}
+          </div>
+          <div className="flex-1 min-w-0 text-left">
+            <div className="text-sm font-semibold text-white truncate leading-tight">{name}</div>
+            <div className="text-xs text-gray-500 font-medium capitalize mt-0.5">{role}</div>
+          </div>
+          <i className="ri-arrow-right-s-line text-gray-500 w-5 h-5 flex items-center justify-center group-hover:text-gray-300 transition-colors" />
+        </button>
+      </div>
+    );
+  }
+
+  // ───── DESKTOP COLLAPSED ─────
   if (isCollapsed) {
     return (
       <div className="px-2 py-3 flex justify-center">
@@ -20,7 +53,7 @@ export default function SidebarUserCard({ name, role, initial, avatarUrl, isExpa
             onClick={onClick}
             whileHover={{ scale: 1.05 }}
             whileTap={{ scale: 0.95 }}
-            className="relative w-12 h-12 flex items-center justify-center rounded-xl bg-[#111827] border border-white/[0.06] hover:border-teal-400/30 transition-all duration-200 cursor-pointer"
+            className="relative w-12 h-12 flex items-center justify-center rounded-xl bg-[#0e1625] border border-white/[0.10] hover:border-teal-400/30 transition-all duration-200 cursor-pointer"
             aria-label="Mi perfil"
           >
             {avatarUrl ? (
@@ -34,16 +67,13 @@ export default function SidebarUserCard({ name, role, initial, avatarUrl, isExpa
                 <span className="text-sm font-bold text-teal-300">{initial}</span>
               </div>
             )}
-            <span className="absolute -bottom-0.5 -right-0.5 flex h-3 w-3">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-40" />
-              <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500 border-2 border-[#0A0F1C]" />
-            </span>
           </motion.button>
         </SidebarTooltip>
       </div>
     );
   }
 
+  // ───── DESKTOP EXPANDED ─────
   return (
     <motion.button
       onClick={onClick}
@@ -51,7 +81,7 @@ export default function SidebarUserCard({ name, role, initial, avatarUrl, isExpa
       whileTap={{ scale: 0.99 }}
       className="w-full flex-shrink-0 px-3 py-3"
     >
-      <div className="relative flex items-center gap-3.5 p-4 rounded-2xl bg-[#0e1625] border border-white/[0.10] hover:border-white/[0.16] hover:bg-[#111b2c] transition-all duration-300 cursor-pointer group overflow-hidden shadow-[0_0_24px_rgba(0,0,0,0.35)]">
+      <div className="relative flex items-center gap-3.5 p-4 rounded-2xl bg-[#0e1625] border border-white/[0.10] hover:border-white/[0.16] hover:bg-[#111b2c] transition-all duration-300 cursor-pointer group overflow-hidden">
         {/* Shimmer hover */}
         <div className="absolute inset-0 bg-gradient-to-r from-transparent via-teal-400/[0.04] to-transparent -translate-x-full group-hover:translate-x-full transition-transform duration-1000 ease-out" />
 
@@ -61,17 +91,13 @@ export default function SidebarUserCard({ name, role, initial, avatarUrl, isExpa
             <img
               src={avatarUrl}
               alt={name}
-              className="w-11 h-11 rounded-full object-cover border border-white/[0.08]"
+              className="w-11 h-11 rounded-full object-cover border border-white/[0.10]"
             />
           ) : (
-            <div className="w-11 h-11 rounded-full bg-white/[0.04] border border-white/[0.08] flex items-center justify-center">
+            <div className="w-11 h-11 rounded-full bg-white/[0.04] border border-white/[0.10] flex items-center justify-center">
               <span className="text-base font-bold text-teal-300">{initial}</span>
             </div>
           )}
-          <span className="absolute -bottom-0.5 -right-0.5 flex h-3.5 w-3.5">
-            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-40" />
-            <span className="relative inline-flex rounded-full h-3.5 w-3.5 bg-emerald-500 border-2 border-[#111827]" />
-          </span>
         </div>
 
         {/* Info */}
@@ -79,23 +105,13 @@ export default function SidebarUserCard({ name, role, initial, avatarUrl, isExpa
           <div className="text-[14px] font-semibold text-white truncate leading-tight">
             {name}
           </div>
-          <div className="flex items-center gap-2 mt-1">
-            <span className="text-[12px] text-gray-500 font-medium capitalize truncate">
-              {role}
-            </span>
-            <span className="text-[11px] text-emerald-500/80 font-semibold whitespace-nowrap">
-              En línea
-            </span>
+          <div className="text-[12px] text-gray-500 font-medium capitalize truncate mt-0.5">
+            {role}
           </div>
         </div>
 
-        {/* Iconos derecha */}
-        <div className="flex items-center gap-2 flex-shrink-0">
-          <span className="w-7 h-7 flex items-center justify-center rounded-lg bg-white/[0.03] border border-white/[0.04]">
-            <i className="ri-shield-check-line text-teal-500/40 text-sm w-4 h-4 flex items-center justify-center" />
-          </span>
-          <i className="ri-arrow-right-s-line text-gray-600 w-5 h-5 flex items-center justify-center group-hover:text-gray-400 transition-colors" />
-        </div>
+        {/* Arrow */}
+        <i className="ri-arrow-right-s-line text-gray-500 w-5 h-5 flex items-center justify-center group-hover:text-gray-300 transition-colors flex-shrink-0" />
       </div>
     </motion.button>
   );

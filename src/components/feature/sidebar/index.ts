@@ -6,3 +6,7 @@ export { default as SidebarSubmenu } from './SidebarSubmenu';
 export { default as SidebarUserCard } from './SidebarUserCard';
 export { default as SidebarToggle } from './SidebarToggle';
 export { default as SidebarTooltip } from './SidebarTooltip';
+export { default as SidebarMobileDrawer } from './SidebarMobileDrawer';
+export { default as SidebarMobileBottomNav } from './SidebarMobileBottomNav';
+export { menuItems, TECH_PATTERN } from './constants';
+export type { MenuItem } from './types';
