@@ -18,6 +18,7 @@ import { casetillaService } from '../../services/casetillaService';
 import { supabase } from '../../lib/supabase';
 import { toWarehouseDateString, DEFAULT_TIMEZONE } from '../../utils/timezoneUtils';
 import type { PendingReservation, ExitEligibleReservation, NoShowReservation } from '../../types/casetilla';
+import { useNavigate } from 'react-router-dom';
 
 const SESSION_KEY = 'casetilla_ui_state';
 const FOTOS_INGRESO_KEY = 'casetilla_fotos_ingreso';
@@ -54,6 +55,7 @@ const clearSession = () => {
 export default function CasetillaPage() {
   const { user } = useAuth();
   const { can, orgId: currentOrgId } = usePermissions();
+  const navigate = useNavigate();
 
   // ── SCOPE CENTRALIZADO ─ usa user_warehouse_access (tabla real) ──────────
   const {
@@ -766,31 +768,45 @@ export default function CasetillaPage() {
                 </div>
               </div>
             )}
-            <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 hover:shadow-md transition-shadow">
-              <div className="flex items-start gap-4">
-                <div className="flex-shrink-0 w-12 h-12 sm:w-14 sm:h-14 bg-blue-100 rounded-lg flex items-center justify-center">
-                  <i className="ri-bar-chart-box-line text-2xl sm:text-3xl text-blue-600"></i>
-                </div>
-                <div className="flex-1 min-w-0">
-                  <h2 className="text-lg sm:text-xl font-bold text-gray-900 mb-2">Reportes y Análisis</h2>
-                  <p className="text-sm text-gray-600 mb-4">
-                    {canViewProviderDistribution
-                      ? 'Duración en Punto Control y distribución de tiempos por proveedor'
-                      : 'Reporte de tiempos de permanencia en el almacén'}
-                  </p>
-                  <button
-                    onClick={() => {
-                      if (canViewProviderDistribution) {
+            {canViewProviderDistribution && (
+              <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 hover:shadow-md transition-shadow">
+                <div className="flex items-start gap-4">
+                  <div className="flex-shrink-0 w-12 h-12 sm:w-14 sm:h-14 bg-blue-100 rounded-lg flex items-center justify-center">
+                    <i className="ri-bar-chart-box-line text-2xl sm:text-3xl text-blue-600"></i>
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <h2 className="text-lg sm:text-xl font-bold text-gray-900 mb-2">Reportes y Análisis</h2>
+                    <p className="text-sm text-gray-600 mb-4">
+                      Duración en Punto Control y distribución de tiempos por proveedor
+                    </p>
+                    <button
+                      onClick={() => {
                         setReportTab('duration');
                         setViewMode('REPORTES');
-                      } else {
-                        setViewMode('DURACION');
-                      }
-                    }}
-                    className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-5 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors whitespace-nowrap cursor-pointer"
+                      }}
+                      className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-5 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors whitespace-nowrap cursor-pointer"
+                    >
+                      <i className="ri-bar-chart-line"></i>
+                      Ver Reportes
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+            {/* Compliance Center */}
+            <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 hover:shadow-md transition-shadow border-l-4 border-l-teal-500">
+              <div className="flex items-start gap-4">
+                <div className="flex-shrink-0 w-12 h-12 sm:w-14 sm:h-14 bg-teal-100 rounded-lg flex items-center justify-center">
+                  <i className="ri-shield-check-line text-2xl sm:text-3xl text-teal-700"></i>
+                </div>
+                <div className="flex-1 min-w-0">
+                  <h2 className="text-lg sm:text-xl font-bold text-gray-900 mb-2">Compliance Center</h2>
+                  <p className="text-sm text-gray-600 mb-4">Monitoreo, reglas, incidencias y auditoría del flujo IN/OUT</p>
+                  <button
+                    onClick={() => navigate('/casetilla/compliance')}
+                    className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-5 py-2.5 bg-teal-600 text-white rounded-lg hover:bg-teal-700 transition-colors whitespace-nowrap cursor-pointer"
                   >
-                    <i className="ri-bar-chart-line"></i>
-                    {canViewProviderDistribution ? 'Ver Reportes' : 'Ver Reporte'}
+                    <i className="ri-shield-check-line"></i>Abrir Compliance
                   </button>
                 </div>
               </div>

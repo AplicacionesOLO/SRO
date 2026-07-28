@@ -24,6 +24,7 @@ const ClientesPage = lazyWithRetry(() => import('../pages/admin/clientes/page'))
 const CorrespondenciaPage = lazyWithRetry(() => import('../pages/admin/correspondencia/page'));
 const ManpowerPage = lazyWithRetry(() => import('../pages/manpower/page'));
 const CasetillaPage = lazyWithRetry(() => import('../pages/casetilla/page'));
+const ComplianceCenterPage = lazyWithRetry(() => import('../pages/casetilla/compliance/page'));
 const MigracionPage = lazyWithRetry(() => import('../pages/admin/migracion/page'));
 
 const PerfilPage = lazyWithRetry(() => import('../pages/perfil/page'));
@@ -90,6 +91,16 @@ const routes: RouteObject[] = [
       <ProtectedRoute>
         <RequirePermission permission="casetilla.view">
           <CasetillaPage />
+        </RequirePermission>
+      </ProtectedRoute>
+    )
+  },
+  { 
+    path: '/casetilla/compliance', 
+    element: (
+      <ProtectedRoute>
+        <RequirePermission permission="casetilla.view">
+          <ComplianceCenterPage />
         </RequirePermission>
       </ProtectedRoute>
     )

@@ -43,6 +43,7 @@ Sistema de gestión de reservas de andenes para operaciones logísticas (bodegas
 - [x] Estados operativos configurables
 - [x] Zona de carga y preselección de reservas
 - [x] Cutoff times para recepción
+- [ ] Centro de Cumplimiento Logístico (IN/OUT Flow)
 
 ## 4. Modelo de Datos
 ### Tablas principales
@@ -116,3 +117,24 @@ Sistema de gestión de reservas de andenes para operaciones logísticas (bodegas
 - [x] LastLoadKey: evita recargar cacheKey ya cargado recientemente
 - [x] Realtime: respeta in-flight, no duplica recargas
 - [x] Build limpio
+
+### Fase 6: Centro de Cumplimiento Logístico (IN/OUT Flow)
+- [x] Documentos de arquitectura (RULE_ENGINE_ARCHITECTURE.md, STATE_MACHINE_SPEC.md, FLOW_RULE_CATALOG.md)
+- [x] Plan de migración SQL (INOUT_FLOW_MIGRATION_PLAN.md + INOUT_FLOW_MIGRATION_SQL_SPECS.md)
+- [x] SQLs Fase 6.1 revisados y corregidos (001-007 + 010) — PENDIENTE EJECUCIÓN
+- [ ] Ejecución de migración 001-007 (Fase 6.1 — BASE ESTRUCTURAL PASIVA)
+- [ ] Implementación de RPC `transition_reservation_status()` (Fase 6.2)
+- [ ] Trigger `block_unauthorized_status_update` (Fase 6.5)
+- [ ] Migración de callers a la RPC (Fase 6.4)
+- [ ] Siembra y validación de las 16 reglas iniciales del sistema
+- [ ] Módulo visual: Dashboard de cumplimiento, Tab de incidencias, Tab de reglas, Tab de reportes
+- [ ] Integración con Notification Dispatcher
+
+### Documentos de Arquitectura
+- [x] `ARCHITECTURE.md` — Arquitectura general del sistema
+- [x] `RULE_ENGINE_ARCHITECTURE.md` v1.2 — Motor de reglas con 5 componentes internos, modelo canónico `dock_id → docks.warehouse_id`, prerrequisitos `DISCHARGED`
+- [x] `STATE_MACHINE_SPEC.md` v1.0 — Máquina de estados (12 estados documentados; 3 estados pendientes decisión de negocio)
+- [x] `FLOW_RULE_CATALOG.md` v1.1 — Catálogo funcional de 16 reglas, con notas técnicas de warehouse y DISCHARGED
+- [x] `DATA_MODEL_ALIGNMENT.md` v1.0 — Modelo canónico de datos, fuente oficial de la relación `reservation → dock → warehouse`
+- [x] `INOUT_FLOW_MIGRATION_PLAN.md` v2.0 — Plan de migración: Fase 6.1 base estructural pasiva (sin RPC), 005 provisioning, 008 RPC en 6.2
+- [x] `INOUT_FLOW_MIGRATION_SQL_SPECS.md` v2.0 — Especificaciones SQL: 001-007 ejecutables en 6.1, 008 como especificación futura

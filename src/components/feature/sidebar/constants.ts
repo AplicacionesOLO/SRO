@@ -48,6 +48,10 @@ export const menuItems: MenuItem[] = [
     icon: 'ri-door-open-line',
     permission: 'menu.casetilla.view',
     section: 'Operaciones',
+    children: [
+      { label: 'Registro IN/OUT', path: '/casetilla', icon: 'ri-door-open-line', permission: 'menu.casetilla.view' },
+      { label: 'Compliance Center', path: '/casetilla/compliance', icon: 'ri-shield-check-line', permission: 'menu.casetilla.view' },
+    ],
   },
   {
     label: 'Administración',

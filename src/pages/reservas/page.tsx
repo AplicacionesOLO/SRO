@@ -232,6 +232,15 @@ export default function ReservasPage() {
     [providers]
   );
 
+  const getProviderSource = useCallback(
+    (value: string | null | undefined) => {
+      if (!value) return '-';
+      const p = providers.find((x: any) => x.id === value);
+      return p?.source || p?.source_code || '-';
+    },
+    [providers]
+  );
+
   const getCargoTypeName = useCallback(
     (value: string | null | undefined) => {
       if (!value) return '';
@@ -413,7 +422,8 @@ export default function ReservasPage() {
         'Razon Cancelacion': r.cancel_reason || '',
         'Orden de Compra': r.purchase_order || '',
         'Proveedor': getProviderName(r.shipper_provider),
-        'Reversa Cliente': getClientName(r.shipper_provider),
+        'Origen': getProviderSource(r.shipper_provider),
+        'Reserva Cliente': getClientName(r.shipper_provider),
         'Chofer': r.driver || '',
         'DUA': r.dua || '',
         'Factura': r.invoice || '',
@@ -429,7 +439,7 @@ export default function ReservasPage() {
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, 'Reservas');
     XLSX.writeFile(workbook, 'Reservas.xlsx');
-  }, [filteredReservations, getStatusInfo, getDockName, getProviderName, getClientName, getCargoTypeName, formatDateTime]);
+  }, [filteredReservations, getStatusInfo, getDockName, getProviderName, getProviderSource, getClientName, getCargoTypeName, formatDateTime]);
 
   if (permLoading || loading) {
     return (
@@ -596,7 +606,8 @@ export default function ReservasPage() {
                   <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Estado</th>
                   <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Orden Compra</th>
                   <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Proveedor</th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Reversa Cliente</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Origen</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Reserva Cliente</th>
                   <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Chofer</th>
                   <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">DUA</th>
                   <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Placa</th>
@@ -606,7 +617,7 @@ export default function ReservasPage() {
               <tbody className="divide-y divide-gray-200">
                 {paginatedReservations.length === 0 ? (
                   <tr>
-                    <td colSpan={11} className="px-4 py-12 text-center">
+                    <td colSpan={12} className="px-4 py-12 text-center">
                       <div className="w-10 h-10 flex items-center justify-center mx-auto mb-2">
                         <i className="ri-inbox-line text-4xl text-gray-300"></i>
                       </div>
@@ -662,6 +673,9 @@ export default function ReservasPage() {
                         </td>
                         <td className={`px-4 py-3 text-sm ${isCancelled ? 'text-gray-400' : 'text-gray-900'}`}>
                           {getProviderName(reservation.shipper_provider)}
+                        </td>
+                        <td className={`px-4 py-3 text-sm ${isCancelled ? 'text-gray-400' : 'text-gray-900'}`}>
+                          {getProviderSource(reservation.shipper_provider)}
                         </td>
                         <td className={`px-4 py-3 text-sm ${isCancelled ? 'text-gray-400' : 'text-gray-900'}`}>
                           {getClientName(reservation.shipper_provider)}
