@@ -84,6 +84,11 @@
   display: none;
 }
 
+/* Safe area inset for mobile bottom navigation — prevents notch/gesture bar overlap */
+.safe-area-bottom {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
 /* =============================================
    SIDEBAR DYNAMIC BACKGROUND ANIMATIONS
    ============================================= */

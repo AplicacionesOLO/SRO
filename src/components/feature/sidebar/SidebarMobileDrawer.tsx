@@ -46,7 +46,7 @@ export default function SidebarMobileDrawer({
     for (const item of menuItems) {
       if (item.label === 'Administración' && item.children) {
         adm = item;
-      } else if (!item.children) {
+      } else {
         ops.push(item);
       }
     }
