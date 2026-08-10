@@ -1,7 +1,7 @@
 // ─── Tipos para el submódulo Compliance Center ──────────────────────────
 
 /** Feature flag: modo demo mientras el backend no está implementado */
-export const INOUT_COMPLIANCE_DEMO_MODE = true;
+export const INOUT_COMPLIANCE_DEMO_MODE = false;
 
 /** Modo de fuente de datos: cuando se conectan datos reales pero Rule Engine sigue en demo */
 export type ComplianceDataSource = 'demo' | 'hybrid' | 'live';
