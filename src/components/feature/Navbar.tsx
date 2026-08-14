@@ -20,6 +20,7 @@ const PAGE_TITLES: Record<string, string> = {
   '/admin/almacenes': 'Almacenes',
   '/admin/clientes': 'Clientes',
   '/admin/correspondencia': 'Correspondencia',
+  '/admin/mensajeria': 'Mensajería',
   '/conocimiento': 'Base de Conocimiento',
   '/chat/auditoria': 'Auditoría Chat',
   '/access-pending': 'Acceso Pendiente',

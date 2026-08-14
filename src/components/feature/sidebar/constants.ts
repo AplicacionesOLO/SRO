@@ -67,6 +67,7 @@ export const menuItems: MenuItem[] = [
       { label: 'Almacenes', path: '/admin/almacenes', icon: 'ri-building-2-line', permission: 'menu.admin.almacenes.view' },
       { label: 'Clientes', path: '/admin/clientes', icon: 'ri-user-star-line', permission: 'menu.admin.clientes.view' },
       { label: 'Correspondencia', path: '/admin/correspondencia', icon: 'ri-mail-line', permission: 'menu.admin.correspondencia.view' },
+      { label: 'Mensajería', path: '/admin/mensajeria', icon: 'ri-chat-1-line', permission: 'chat.messages.admin' },
       { label: 'Base de Conocimiento', path: '/conocimiento', icon: 'ri-book-open-line', permission: 'chat.documents.manage' },
       { label: 'Auditoría Chat', path: '/chat/auditoria', icon: 'ri-shield-check-line', permission: 'chat.audit.view' },
     ],

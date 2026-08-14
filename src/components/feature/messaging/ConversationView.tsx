@@ -1,0 +1,287 @@
+import { useState, useEffect, useRef } from 'react';
+import type { MessagingThread, MessagingMessage, MessagingAttachment } from '@/types/messaging';
+import { getFileUrl } from '@/services/messagingService';
+import Avatar from './Avatar';
+
+interface ConversationViewProps {
+  thread: MessagingThread | null;
+  loading: boolean;
+  sending: boolean;
+  currentUserId: string | null;
+  onlineUserIds: Set<string>;
+  onBack: () => void;
+  onSendText: (text: string) => void;
+  onSendFile: (file: File) => void;
+}
+
+function formatTime(dateStr: string): string {
+  return new Date(dateStr).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' });
+}
+
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function AttachmentChip({ attachment }: { attachment: MessagingAttachment }) {
+  const [loading, setLoading] = useState(false);
+
+  const isImage = attachment.file_type?.startsWith('image/');
+
+  const handleOpen = async () => {
+    setLoading(true);
+    try {
+      const { url } = await getFileUrl(attachment.id);
+      window.open(url, '_blank', 'noopener');
+    } catch {
+      // ignore — user gets no feedback but link fails silently
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <button
+      onClick={handleOpen}
+      className="flex items-center gap-2 px-3 py-2 rounded-lg border border-emerald-200 bg-emerald-50 hover:bg-emerald-100 transition-colors cursor-pointer max-w-full"
+      title={attachment.file_name}
+    >
+      {isImage ? (
+        <i className="ri-image-line text-emerald-600 flex-shrink-0"></i>
+      ) : (
+        <i className="ri-file-3-line text-emerald-600 flex-shrink-0"></i>
+      )}
+      <span className="text-xs text-emerald-800 truncate max-w-[180px]">{attachment.file_name}</span>
+      <span className="text-[10px] text-emerald-600 flex-shrink-0">{formatFileSize(attachment.file_size)}</span>
+      {loading ? (
+        <i className="ri-loader-4-line animate-spin text-xs text-emerald-600 flex-shrink-0"></i>
+      ) : (
+        <i className="ri-download-2-line text-xs text-emerald-600 flex-shrink-0"></i>
+      )}
+    </button>
+  );
+}
+
+function MessageItem({
+  message,
+  isMine,
+}: {
+  message: MessagingMessage;
+  isMine: boolean;
+}) {
+  const hasFiles = message.attachments.length > 0;
+
+  if (isMine) {
+    return (
+      <div className="flex justify-end mb-3">
+        <div className="max-w-[78%]">
+          {message.content && (
+            <div className="bg-emerald-600 text-white px-3 py-2 rounded-2xl rounded-tr-sm text-sm leading-relaxed whitespace-pre-wrap break-words">
+              {message.content}
+            </div>
+          )}
+          {hasFiles && (
+            <div className="mt-1 flex flex-col items-end gap-1.5">
+              {message.attachments.map((a) => (
+                <AttachmentChip key={a.id} attachment={a} />
+              ))}
+            </div>
+          )}
+          <p className="text-[11px] text-gray-400 mt-0.5 text-right">{formatTime(message.created_at)}</p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex items-start gap-2 mb-3">
+      <div className="mt-0.5 flex-shrink-0">
+        <Avatar name={message.sender_name} url={message.sender_avatar_url} size={28} />
+      </div>
+      <div className="max-w-[78%] min-w-0">
+        <p className="text-[11px] text-gray-400 mb-0.5">{message.sender_name}</p>
+        {message.content && (
+          <div className="bg-white border border-gray-200 rounded-2xl rounded-tl-sm px-3 py-2 text-sm text-gray-800 leading-relaxed whitespace-pre-wrap break-words">
+            {message.content}
+          </div>
+        )}
+        {hasFiles && (
+          <div className="mt-1 flex flex-col gap-1.5">
+            {message.attachments.map((a) => (
+              <AttachmentChip key={a.id} attachment={a} />
+            ))}
+          </div>
+        )}
+        <p className="text-[11px] text-gray-400 mt-0.5">{formatTime(message.created_at)}</p>
+      </div>
+    </div>
+  );
+}
+
+export default function ConversationView({
+  thread,
+  loading,
+  sending,
+  currentUserId,
+  onlineUserIds,
+  onBack,
+  onSendText,
+  onSendFile,
+}: ConversationViewProps) {
+  const [input, setInput] = useState('');
+  const bottomRef = useRef<HTMLDivElement>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  const title = thread?.conversation?.title || 'Conversación';
+  const members = thread?.members || [];
+  const messages = thread?.messages || [];
+  const isGroup = thread?.conversation?.type === 'group';
+  const peer = !isGroup ? members.find((m) => m.user_id !== currentUserId) : null;
+  const headerTitle = isGroup ? (title || 'Grupo') : (peer?.name || title || 'Conversación');
+  const peerOnline = peer ? onlineUserIds.has(peer.user_id) : false;
+  const onlineCount = members.filter((m) => onlineUserIds.has(m.user_id)).length;
+
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages, sending]);
+
+  const handleSubmit = () => {
+    const text = input.trim();
+    if (!text || sending) return;
+    setInput('');
+    onSendText(text);
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      handleSubmit();
+    }
+  };
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) onSendFile(file);
+    e.target.value = '';
+  };
+
+  return (
+    <div className="flex flex-col h-full">
+      {/* Header */}
+      <div className="px-4 py-2.5 bg-emerald-600 flex items-center gap-3 flex-shrink-0">
+        <button
+          onClick={onBack}
+          className="w-7 h-7 flex items-center justify-center rounded-full text-white/80 hover:bg-white/20 transition-colors cursor-pointer"
+          title="Volver"
+        >
+          <i className="ri-arrow-left-line text-base"></i>
+        </button>
+        <div className="flex-1 min-w-0 flex items-center gap-2">
+          {!isGroup && peer && (
+            <div className="flex-shrink-0">
+              <Avatar name={peer.name} url={peer.avatar_url} size={30} />
+            </div>
+          )}
+          <div className="min-w-0">
+            <p className="text-sm font-semibold text-white truncate">{headerTitle}</p>
+            <div className="flex items-center gap-1.5 text-[11px] text-emerald-100 truncate">
+              {isGroup ? (
+                <>
+                  <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${onlineCount > 0 ? 'bg-green-300' : 'bg-white/40'}`}></span>
+                  <span className="truncate">
+                    {onlineCount > 0 ? `${onlineCount} de ${members.length} en línea` : `${members.length} miembros`}
+                  </span>
+                </>
+              ) : (
+                <>
+                  <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${peerOnline ? 'bg-green-300' : 'bg-white/40'}`}></span>
+                  <span className="truncate">
+                    {peerOnline ? 'En línea' : 'Sin conexión'}
+                    {peer?.email ? ` · ${peer.email}` : ''}
+                  </span>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+        {isGroup && (
+          <div className="flex items-center gap-0.5 flex-shrink-0">
+            {members.slice(0, 4).map((m) => (
+              <div key={m.user_id} className="-ml-1 first:ml-0">
+                <Avatar name={m.name} url={m.avatar_url} size={24} />
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Messages */}
+      <div className="flex-1 overflow-y-auto px-4 py-4 bg-gray-50">
+        {loading ? (
+          <div className="flex items-center justify-center py-12">
+            <i className="ri-loader-4-line text-xl text-emerald-500 animate-spin"></i>
+          </div>
+        ) : messages.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-12 text-center">
+            <i className="ri-chat-smile-2-line text-3xl text-gray-200 mb-2"></i>
+            <p className="text-sm text-gray-500">No hay mensajes todavía</p>
+            <p className="text-xs text-gray-400 mt-1">Escribí el primero 👋</p>
+          </div>
+        ) : (
+          <>
+            {messages.map((m) => (
+              <MessageItem key={m.id} message={m} isMine={m.sender_id === currentUserId} />
+            ))}
+            {sending && (
+              <div className="flex justify-end mb-3">
+                <div className="bg-emerald-100 text-emerald-600 px-3 py-2 rounded-2xl text-xs flex items-center gap-2">
+                  <i className="ri-loader-4-line animate-spin"></i>
+                  Enviando...
+                </div>
+              </div>
+            )}
+          </>
+        )}
+        <div ref={bottomRef} />
+      </div>
+
+      {/* Composer */}
+      <div className="px-3 py-3 bg-white border-t border-gray-200 flex-shrink-0">
+        <div className="flex items-end gap-2">
+          <input
+            ref={fileRef}
+            type="file"
+            className="hidden"
+            onChange={handleFileChange}
+          />
+          <button
+            onClick={() => fileRef.current?.click()}
+            disabled={sending}
+            title="Adjuntar archivo"
+            className="w-9 h-9 flex items-center justify-center rounded-xl text-emerald-600 hover:bg-emerald-50 transition-colors cursor-pointer disabled:opacity-40 flex-shrink-0"
+          >
+            <i className="ri-attachment-2 text-lg"></i>
+          </button>
+          <textarea
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={handleKeyDown}
+            placeholder="Escribí un mensaje..."
+            rows={1}
+            disabled={sending}
+            className="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-xl resize-none focus:outline-none focus:border-emerald-500 disabled:opacity-60"
+            style={{ maxHeight: '96px', overflow: 'auto' }}
+          />
+          <button
+            onClick={handleSubmit}
+            disabled={!input.trim() || sending}
+            className="w-9 h-9 flex items-center justify-center bg-emerald-600 text-white rounded-xl hover:bg-emerald-700 disabled:opacity-40 cursor-pointer flex-shrink-0 transition-colors"
+          >
+            <i className="ri-send-plane-fill text-sm"></i>
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}

@@ -13,6 +13,7 @@ import { ErrorBoundary } from "./components/ErrorBoundary";
 import { GmailConnectionGuard } from "./components/guards/GmailConnectionGuard";
 import { useAuth } from "./contexts/AuthContext";
 import SROAssistantWidget from "./components/feature/chat-widget/SROAssistantWidget";
+import MessagingWidget from "./components/feature/messaging/MessagingWidget";
 
 function PageLoader() {
   return (
@@ -54,6 +55,9 @@ function AppContent() {
 
       {/* ✅ Widget flotante de chat — montado una sola vez, visible en toda la app autenticada */}
       {isAuthenticatedLayout && <SROAssistantWidget />}
+
+      {/* ✅ Widget flotante de mensajería interna */}
+      {isAuthenticatedLayout && <MessagingWidget />}
     </>
   );
 }

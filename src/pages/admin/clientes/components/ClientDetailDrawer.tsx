@@ -6,6 +6,7 @@ import ClientPickupRulesTab from './ClientPickupRulesTab';
 import BlockedStatusesConfig from '../../../calendario/components/BlockedStatusesConfig';
 import RuleBlock from './RuleBlock';
 import SameDayCutoffRuleBlock from './SameDayCutoffRuleBlock';
+import ClientOverlapRulesTab from './ClientOverlapRulesTab';
 
 interface ClientDetailDrawerProps {
   isOpen: boolean;
@@ -855,6 +856,26 @@ export default function ClientDetailDrawer({
                 onToggle={() => toggleRule('same-day-cutoff')}
               >
                 <SameDayCutoffRuleBlock
+                  orgId={client.org_id}
+                  clientId={client.id}
+                  canManage={canUpdateRules}
+                />
+              </RuleBlock>
+
+              {/* ── BLOQUE 6: Superposición de citas ── */}
+              <RuleBlock
+                icon="ri-stack-line"
+                iconBg="bg-violet-100"
+                iconColor="text-violet-600"
+                title="Superposición de citas"
+                description="Controla quién puede crear citas que se solapen con reservas existentes. Define los estados que permiten superposición, la diferencia mínima en minutos y los roles/usuarios autorizados."
+                badge="Por cliente"
+                badgeColor="bg-violet-100 text-violet-700"
+                scope="client"
+                isOpen={openRuleId === 'overlap-rules'}
+                onToggle={() => toggleRule('overlap-rules')}
+              >
+                <ClientOverlapRulesTab
                   orgId={client.org_id}
                   clientId={client.id}
                   canManage={canUpdateRules}

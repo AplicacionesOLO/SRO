@@ -26,6 +26,7 @@ const ManpowerPage = lazyWithRetry(() => import('../pages/manpower/page'));
 const CasetillaPage = lazyWithRetry(() => import('../pages/casetilla/page'));
 const ComplianceCenterPage = lazyWithRetry(() => import('../pages/casetilla/compliance/page'));
 const MigracionPage = lazyWithRetry(() => import('../pages/admin/migracion/page'));
+const MensajeriaAdminPage = lazyWithRetry(() => import('../pages/admin/mensajeria/page'));
 
 const PerfilPage = lazyWithRetry(() => import('../pages/perfil/page'));
 const ConocimientoPage = lazyWithRetry(() => import('../pages/conocimiento/page'));
@@ -191,6 +192,16 @@ const routes: RouteObject[] = [
       <ProtectedRoute>
         <RequirePermission requireAnyAdmin>
           <MigracionPage />
+        </RequirePermission>
+      </ProtectedRoute>
+    )
+  },
+  { 
+    path: '/admin/mensajeria', 
+    element: (
+      <ProtectedRoute>
+        <RequirePermission permission="chat.messages.admin">
+          <MensajeriaAdminPage />
         </RequirePermission>
       </ProtectedRoute>
     )

@@ -182,6 +182,7 @@ export default function CalendarioPage() {
     message: string;
     verificationFailed: boolean;
   } | null>(null);
+  const [overlapBypassEnabled, setOverlapBypassEnabled] = useState(false);
 
   const bodyScrollRef = useRef<HTMLDivElement | null>(null);
   const headerInnerRef = useRef<HTMLDivElement | null>(null);
@@ -650,7 +651,11 @@ export default function CalendarioPage() {
       const slotEnd = new Date(slotStart.getTime() + requiredMinutes * 60_000);
       if (allocationRule && !allocationRule.allowAllDocks && allocationRule.clientDocks.length > 0) {
         const enabledForSlot = dockAllocationService.getEnabledDockIdsForSlot(allocationRule.clientDocks, allocationRule.dockAllocationMode, reservations, slotStart, slotEnd);
-        if (!enabledForSlot.has(dockId)) return false;
+        if (!enabledForSlot.has(dockId)) {
+          // Si el bypass de overlap está activo y el dock pertenece al cliente, permitirlo aunque esté ocupado
+          const belongsToClient = allocationRule.clientDocks.some(cd => cd.dockId === dockId);
+          if (!(overlapBypassEnabled && belongsToClient)) return false;
+        }
       } else {
         if (enabledDockIds.size > 0 && !enabledDockIds.has(dockId)) return false;
         if (enabledDockIds.size === 0 && allocationError) return false;
@@ -681,7 +686,8 @@ export default function CalendarioPage() {
         const rEnd = truncateToMinute(new Date(r.end_datetime));
         return slotStart < rEnd && slotEnd > rStart;
       });
-      if (conflictingReservation) return false;
+      // Si el usuario tiene bypass de overlap activado, permitir slots solapados
+      if (!overlapBypassEnabled && conflictingReservation) return false;
       const conflictingBlock = blocks.find((b) => {
         if (b.dock_id !== dockId) return false;
         const bStart = truncateToMinute(new Date(b.start_datetime));
@@ -692,7 +698,7 @@ export default function CalendarioPage() {
       void diagnose;
       return true;
     },
-    [selectionMode, requiredMinutes, reservations, blocks, businessStartMinutes, businessEndMinutes, enabledDockIds, allocationError, allocationRule, warehouseTimezone, truncateToMinute, sameDayCutoffInfo]
+    [selectionMode, requiredMinutes, reservations, blocks, businessStartMinutes, businessEndMinutes, enabledDockIds, allocationError, allocationRule, warehouseTimezone, truncateToMinute, sameDayCutoffInfo, overlapBypassEnabled]
   );
 
   const handleSelectSlot = useCallback((slot: any) => {
@@ -711,6 +717,23 @@ export default function CalendarioPage() {
       if (!eligible) { isSlotEligible(dockId, day, timeSlot, true); return; }
       const calculatedEnd = new Date(cellStart.getTime() + requiredMinutes * 60 * 1000);
       if (!isWithinBusinessHours(day, cellStart, calculatedEnd)) return;
+      // ── Warning de solapamiento cuando el bypass está activo ──────────
+      if (overlapBypassEnabled) {
+        const overlapping = reservations.find((r) => {
+          if (r.dock_id !== dockId) return false;
+          const rStart = truncateToMinute(new Date(r.start_datetime));
+          const rEnd = truncateToMinute(new Date(r.end_datetime));
+          return cellStart < rEnd && calculatedEnd > rStart;
+        });
+        if (overlapping) {
+          setNotifyModal({
+            isOpen: true,
+            type: 'warning',
+            title: 'Cita solapada',
+            message: `Esta cita se solapa con la reserva #${overlapping.id.slice(0, 8)} en el mismo andén. Como usuario autorizado, podés continuar.`,
+          });
+        }
+      }
       if (copyDraft) {
         const { _copyOfId, _durationMinutes, ...copyFields } = copyDraft;
         setReserveModalSlot({ ...copyFields, dock_id: dockId, start_datetime: cellStart.toISOString(), end_datetime: calculatedEnd.toISOString() });
@@ -724,7 +747,7 @@ export default function CalendarioPage() {
       return;
     }
     handleSelectSlot({ dockId, date: day.toISOString(), time: timeSlot.label, eventType: 'free', startTime: cellStart, endTime: cellEnd });
-  }, [handleSelectSlot, selectionMode, isSlotEligible, requiredMinutes, preCargoTypeId, preProviderId, slotInterval, isWithinBusinessHours, copyDraft, warehouseTimezone]);
+  }, [handleSelectSlot, selectionMode, isSlotEligible, requiredMinutes, preCargoTypeId, preProviderId, slotInterval, isWithinBusinessHours, copyDraft, warehouseTimezone, overlapBypassEnabled, reservations, truncateToMinute, preClientId, preProviderName, preQuantityValue, preIsConsolidated, preConsolidatedProviders]);
 
   const handleDragStart = (e: React.DragEvent, event: CalendarEvent) => {
     if (event.type === 'reservation' && canMove) { setDraggedEvent(event); e.dataTransfer.effectAllowed = 'move'; }
@@ -855,6 +878,40 @@ export default function CalendarioPage() {
       setSameDayCutoffInfo(null);
     }
 
+    // ─── Cargar regla de overlap para verificar si el usuario puede bypassear ──
+    if (effectiveClientId && orgId) {
+      try {
+        const { data: overlapRule } = await supabase
+          .from('client_overlap_rules')
+          .select('*')
+          .eq('org_id', orgId)
+          .eq('client_id', effectiveClientId)
+          .maybeSingle();
+        if (overlapRule && overlapRule.enabled === true) {
+          const authorizedUserIds: string[] = overlapRule.authorized_user_ids || [];
+          const authorizedRoleIds: string[] = overlapRule.authorized_role_ids || [];
+          const isUserInList = authorizedUserIds.includes(user?.id || '');
+          let isRoleMatch = false;
+          if (!isUserInList && authorizedRoleIds.length > 0) {
+            const { data: userRoles } = await supabase
+              .from('user_org_roles')
+              .select('role_id')
+              .eq('user_id', user?.id)
+              .eq('org_id', orgId);
+            const roleIds = (userRoles || []).map((r: any) => r.role_id);
+            isRoleMatch = authorizedRoleIds.some((rid: string) => roleIds.includes(rid));
+          }
+          setOverlapBypassEnabled(isUserInList || isRoleMatch);
+        } else {
+          setOverlapBypassEnabled(false);
+        }
+      } catch (_e) {
+        setOverlapBypassEnabled(false);
+      }
+    } else {
+      setOverlapBypassEnabled(false);
+    }
+
     // ─── FLUJO CONSOLIDADO ────────────────────────────────────────────────────
     if (payload.isConsolidated && payload.consolidatedProviders && payload.consolidatedProviders.length > 0) {
       const providerIds = payload.consolidatedProviders.map((cp) => cp.provider_id);
@@ -941,7 +998,7 @@ export default function CalendarioPage() {
   }, [orgId, warehouseId]);
 
   const handleExitSelectionMode = useCallback(() => {
-    setSelectionMode(false); setRequiredMinutes(0); setPreCargoTypeId(''); setPreProviderId(''); setPreProviderName(''); setPreClientId(null); setPreQuantityValue(null); setPreIsConsolidated(false); setPreConsolidatedProviders([]); setAllocationRule(null); setAllocationError(''); setEnabledDockIds(new Set()); setSameDayCutoffInfo(null);
+    setSelectionMode(false); setRequiredMinutes(0); setPreCargoTypeId(''); setPreProviderId(''); setPreProviderName(''); setPreClientId(null); setPreQuantityValue(null); setPreIsConsolidated(false); setPreConsolidatedProviders([]); setAllocationRule(null); setAllocationError(''); setEnabledDockIds(new Set()); setSameDayCutoffInfo(null); setOverlapBypassEnabled(false);
   }, []);
 
   useEffect(() => { if (!orgId) return; providersService.getActive(orgId).then(setProviders).catch(() => {}); }, [orgId]);
@@ -1037,6 +1094,39 @@ export default function CalendarioPage() {
     } else { setAllocationRule(null); }
     setAllocationLoading(false);
     setPreCargoTypeId(sourceReservation.cargo_type || ''); setPreProviderId(sourceReservation.shipper_provider || ''); setRequiredMinutes(durationMinutes > 0 ? durationMinutes : 60); setSelectionMode(true);
+    // ─── Cargar regla de overlap para copia ───────────────────────────────
+    if (copyClientId && orgId) {
+      try {
+        const { data: overlapRuleCopy } = await supabase
+          .from('client_overlap_rules')
+          .select('*')
+          .eq('org_id', orgId)
+          .eq('client_id', copyClientId)
+          .maybeSingle();
+        if (overlapRuleCopy && overlapRuleCopy.enabled === true) {
+          const authUserIdsCopy: string[] = overlapRuleCopy.authorized_user_ids || [];
+          const authRoleIdsCopy: string[] = overlapRuleCopy.authorized_role_ids || [];
+          const isUserInCopy = authUserIdsCopy.includes(user?.id || '');
+          let isRoleInCopy = false;
+          if (!isUserInCopy && authRoleIdsCopy.length > 0) {
+            const { data: userRolesCopy } = await supabase
+              .from('user_org_roles')
+              .select('role_id')
+              .eq('user_id', user?.id)
+              .eq('org_id', orgId);
+            const roleIdsCopy = (userRolesCopy || []).map((r: any) => r.role_id);
+            isRoleInCopy = authRoleIdsCopy.some((rid: string) => roleIdsCopy.includes(rid));
+          }
+          setOverlapBypassEnabled(isUserInCopy || isRoleInCopy);
+        } else {
+          setOverlapBypassEnabled(false);
+        }
+      } catch (_e) {
+        setOverlapBypassEnabled(false);
+      }
+    } else {
+      setOverlapBypassEnabled(false);
+    }
     // ─── Cargar same-day cutoff SOLO si el rango visible incluye HOY ─────
     const copyClientId = (sourceReservation as any).client_id || null;
     const todayInRangeForCopy = daysInView.some(d => isSameDayInTimezone(d, nowTz, warehouseTimezone));
@@ -1172,13 +1262,13 @@ export default function CalendarioPage() {
           )}
 
           {selectionMode && (
-            <div className={`text-white px-4 py-2 flex items-center justify-between ${copyDraft ? 'bg-teal-700' : 'bg-teal-600'}`}>
+            <div className={`text-white px-4 py-2 flex items-center justify-between ${copyDraft ? 'bg-teal-700' : overlapBypassEnabled ? 'bg-amber-600' : 'bg-teal-600'}`}>
               <div className="flex items-center gap-2">
-                <i className={`text-base w-4 h-4 flex items-center justify-center ${copyDraft ? 'ri-file-copy-line' : 'ri-cursor-line'}`}></i>
+                <i className={`text-base w-4 h-4 flex items-center justify-center ${copyDraft ? 'ri-file-copy-line' : overlapBypassEnabled ? 'ri-alert-line' : 'ri-cursor-line'}`}></i>
                 <div>
-                  <p className="font-semibold text-xs">{copyDraft ? `Seleccioná un espacio para ubicar la copia de la reserva #${(copyDraft._copyOfId || '').slice(0, 8)}` : 'Modo selección activo'}</p>
-                  <p className="text-[11px] text-teal-100">
-                    {copyDraft ? `Hacé clic en un espacio disponible (verde) — ${requiredMinutes} min requeridos. La reserva original no se modifica.` : `Seleccioná un espacio disponible en el calendario (${requiredMinutes} min requeridos)`}
+                  <p className="font-semibold text-xs">{copyDraft ? `Seleccioná un espacio para ubicar la copia de la reserva #${(copyDraft._copyOfId || '').slice(0, 8)}` : 'Modo selección activo'}{overlapBypassEnabled && !copyDraft && <span className="ml-1 font-normal opacity-90">— Solapamiento permitido</span>}</p>
+                  <p className="text-[11px] opacity-90">
+                    {copyDraft ? `Hacé clic en un espacio disponible — ${requiredMinutes} min requeridos.` : overlapBypassEnabled ? `Los espacios en naranja se solapan con citas existentes. Podés seleccionarlos igual (${requiredMinutes} min requeridos).` : `Seleccioná un espacio disponible en el calendario (${requiredMinutes} min requeridos)`}
                     {allocationRule && !allocationRule.allowAllDocks && (<span className="ml-2">— Cliente: {allocationRule.clientName} | Modo: {allocationRule.dockAllocationMode === 'ODD_FIRST' ? 'Intercalado' : 'Secuencial'} | Andenes habilitados: {enabledDockIds.size}</span>)}
                   </p>
                 </div>
@@ -1353,12 +1443,49 @@ export default function CalendarioPage() {
                                           const dockBlockedByError = inSelectionMode && !!allocationError && enabledDockIds.size === 0;
                                           const slotMinutes = slot.hour * 60 + slot.minute;
                                           const isOffHours = slotMinutes < businessStartMinutes || slotMinutes >= businessEndMinutes;
+                                          // Detectar si este slot elegible tiene solapamiento con reserva existente (bypass activo)
+                                          const isOverlapSlot = eligible && overlapBypassEnabled && reservations.some((r) => {
+                                            if (r.dock_id !== dock.id) return false;
+                                            const dayStartTz2 = getStartOfDayInTimezone(day, warehouseTimezone);
+                                            const sStart = new Date(dayStartTz2.getTime() + (slot.hour * 60 + slot.minute) * 60_000);
+                                            const sEnd = new Date(sStart.getTime() + requiredMinutes * 60_000);
+                                            const rStart2 = truncateToMinute(new Date(r.start_datetime));
+                                            const rEnd2 = truncateToMinute(new Date(r.end_datetime));
+                                            return sStart < rEnd2 && sEnd > rStart2;
+                                          });
                                           return (
                                             <div key={slot.label}
-                                              className={`h-[60px] border-b transition-colors ${inSelectionMode ? eligible ? 'cursor-pointer border-teal-300' : dockDisabledByRule || dockBlockedByError ? 'bg-red-50/40 cursor-not-allowed border-gray-100' : 'bg-gray-100/50 cursor-not-allowed border-gray-100' : isOffHours ? `cursor-default ${slot.minute === 0 ? 'border-gray-200' : 'border-gray-100'}` : `hover:bg-gray-50/80 cursor-pointer ${slot.minute === 0 ? 'border-gray-300' : 'border-gray-100'}`}`}
-                                              style={inSelectionMode && eligible ? { backgroundColor: 'rgba(20, 184, 166, 0.60)' } : isOffHours && !inSelectionMode ? { backgroundColor: 'rgba(243, 244, 246, 0.85)', backgroundImage: 'repeating-linear-gradient(45deg, transparent, transparent 4px, rgba(209,213,219,0.3) 4px, rgba(209,213,219,0.3) 5px)' } : undefined}
-                                              onMouseEnter={(e) => { if (inSelectionMode && eligible) (e.currentTarget as HTMLDivElement).style.backgroundColor = 'rgba(20, 184, 166, 0.60)'; else if (inSelectionMode && !eligible) isSlotEligible(dock.id, day, slot, true); }}
-                                              onMouseLeave={(e) => { if (inSelectionMode && eligible) (e.currentTarget as HTMLDivElement).style.backgroundColor = 'rgba(20, 184, 166, 0.35)'; }}
+                                              className={`h-[60px] border-b transition-colors ${
+                                                inSelectionMode
+                                                  ? isOverlapSlot
+                                                    ? 'cursor-pointer border-amber-400'
+                                                    : eligible
+                                                    ? 'cursor-pointer border-teal-300'
+                                                    : dockDisabledByRule || dockBlockedByError
+                                                    ? 'bg-red-50/40 cursor-not-allowed border-gray-100'
+                                                    : 'bg-gray-100/50 cursor-not-allowed border-gray-100'
+                                                  : isOffHours
+                                                  ? `cursor-default ${slot.minute === 0 ? 'border-gray-200' : 'border-gray-100'}`
+                                                  : `hover:bg-gray-50/80 cursor-pointer ${slot.minute === 0 ? 'border-gray-300' : 'border-gray-100'}`
+                                              }`}
+                                              style={
+                                                inSelectionMode && isOverlapSlot
+                                                  ? { backgroundColor: 'rgba(245, 158, 11, 0.50)' }
+                                                  : inSelectionMode && eligible
+                                                  ? { backgroundColor: 'rgba(20, 184, 166, 0.60)' }
+                                                  : isOffHours && !inSelectionMode
+                                                  ? { backgroundColor: 'rgba(243, 244, 246, 0.85)', backgroundImage: 'repeating-linear-gradient(45deg, transparent, transparent 4px, rgba(209,213,219,0.3) 4px, rgba(209,213,219,0.3) 5px)' }
+                                                  : undefined
+                                              }
+                                              onMouseEnter={(e) => {
+                                                if (inSelectionMode && isOverlapSlot) (e.currentTarget as HTMLDivElement).style.backgroundColor = 'rgba(245, 158, 11, 0.60)';
+                                                else if (inSelectionMode && eligible) (e.currentTarget as HTMLDivElement).style.backgroundColor = 'rgba(20, 184, 166, 0.75)';
+                                                else if (inSelectionMode && !eligible) isSlotEligible(dock.id, day, slot, true);
+                                              }}
+                                              onMouseLeave={(e) => {
+                                                if (inSelectionMode && isOverlapSlot) (e.currentTarget as HTMLDivElement).style.backgroundColor = 'rgba(245, 158, 11, 0.50)';
+                                                else if (inSelectionMode && eligible) (e.currentTarget as HTMLDivElement).style.backgroundColor = 'rgba(20, 184, 166, 0.60)';
+                                              }}
                                               onClick={(e) => handleCellClick(e, dock.id, day, slot)}
                                               onDragOver={handleDragOver}
                                               onDrop={(e) => handleDrop(e, dock.id, day, slot)}
@@ -1382,8 +1509,8 @@ export default function CalendarioPage() {
                                                 <div
                                                   draggable={canMove && !selectionMode}
                                                   onDragStart={(e) => { if (selectionMode) { e.preventDefault(); return; } handleDragStart(e, { type: 'reservation', id: reservation.id, dockId: dock.id, startTime: start, endTime: end, data: reservation }); }}
-                                                  onClick={(e) => { e.stopPropagation(); if (selectionMode) { setNotifyModal({ isOpen: true, type: 'warning', title: 'Espacio ocupado', message: 'Ese espacio ya está reservado. Seleccioná un espacio disponible (verde).' }); return; } handleSelectSlot({ dockId: dock.id, date: day.toISOString(), time: '', eventType: 'reservation', id: reservation.id, data: reservation, startTime: start, endTime: end }); }}
-                                                  className={`absolute left-1 right-1 rounded-lg border border-l-4 shadow-sm hover:shadow transition-shadow overflow-hidden pointer-events-auto ${selectionMode ? 'cursor-not-allowed opacity-70' : 'cursor-pointer'} ${extendsBeyondBusinessHours ? 'ring-1 ring-amber-400' : ''}`}
+                                                  onClick={(e) => { if (selectionMode && overlapBypassEnabled) { const dateParts = getDatePartsInTimezone(start, warehouseTimezone); const clickSlot: TimeSlot = { hour: dateParts.hour, minute: dateParts.minute, label: '' }; handleCellClick(e, dock.id, day, clickSlot); return; } e.stopPropagation(); if (selectionMode) { setNotifyModal({ isOpen: true, type: 'warning', title: 'Espacio ocupado', message: 'Ese espacio ya está reservado. Seleccioná un espacio disponible (verde).' }); return; } handleSelectSlot({ dockId: dock.id, date: day.toISOString(), time: '', eventType: 'reservation', id: reservation.id, data: reservation, startTime: start, endTime: end }); }}
+                                                  className={`absolute left-1 right-1 rounded-lg border border-l-4 shadow-sm hover:shadow transition-all overflow-hidden pointer-events-auto ${selectionMode && !overlapBypassEnabled ? 'cursor-not-allowed opacity-70' : selectionMode && overlapBypassEnabled ? 'cursor-pointer opacity-100 hover:opacity-35' : 'cursor-pointer'} ${extendsBeyondBusinessHours ? 'ring-1 ring-amber-400' : ''}`}
                                                   title={extendsBeyondBusinessHours ? 'Extiende fuera del horario operativo actual' : undefined}
                                                   style={{ top: `${top}px`, height: `${height}px`, borderLeftColor: reservation.status?.color || '#6B7280', borderColor: hexToTint(reservation.status?.color || '#6B7280', 0.55), borderLeftWidth: '4px', backgroundColor: hexToTint(reservation.status?.color || '#6B7280', 0.84), minHeight: '52px' }}
                                                 >
@@ -1457,7 +1584,7 @@ export default function CalendarioPage() {
           <ReservationModal
             isOpen={reserveModalOpen} reservation={selectedReservation} defaults={reserveModalSlot} docks={docks}
             statuses={hasLimitedStatusView ? statuses.filter(s => s.is_active !== false && (s.code === 'PENDING' || s.code === 'CANCELLED')) : statuses.filter(s => s.is_active !== false)}
-            orgId={orgId!} warehouseId={warehouseId} warehouseTimezone={warehouseTimezone} copyOfId={copyOfReservationId} onCopy={handleCopyReservation}
+            orgId={orgId!} warehouseId={warehouseId} warehouseTimezone={warehouseTimezone} copyOfId={copyOfReservationId} onCopy={handleCopyReservation} overlapBypassEnabled={overlapBypassEnabled}
             onClose={() => { setReserveModalOpen(false); setSelectedReservation(null); setReserveModalSlot(null); setCopyOfReservationId(null); setCopyDraft(null); setConflictBanner(false); }}
             onSave={async () => {
               setReserveModalOpen(false); setSelectedReservation(null); setReserveModalSlot(null); setCopyOfReservationId(null); setCopyDraft(null); setConflictBanner(false); setPendingUpdateBanner(false); pendingRealtimeRefreshRef.current = false; setRefreshErrorBanner(false);

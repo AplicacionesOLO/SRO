@@ -100,3 +100,25 @@ export interface ClientPickupRuleFormData {
   reblock_before_minutes: number;
   is_active: boolean;
 }
+
+// Reglas de Superposición de Citas (Overlap)
+export interface ClientOverlapRule {
+  id: string;
+  org_id: string;
+  client_id: string;
+  enabled: boolean;
+  min_gap_minutes: number;
+  allowed_status_ids: string[];
+  authorized_role_ids: string[];
+  authorized_user_ids: string[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ClientOverlapRuleFormData {
+  enabled: boolean;
+  min_gap_minutes: number;
+  allowed_status_ids: string[];
+  authorized_role_ids: string[];
+  authorized_user_ids: string[];
+}

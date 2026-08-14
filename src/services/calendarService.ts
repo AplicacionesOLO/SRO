@@ -989,36 +989,96 @@ export const calendarService = {
     return (data || []) as Warehouse[];
   },
 
-  async createReservation(reservation: Partial<Reservation>): Promise<Reservation> {
+  async createReservation(reservation: Partial<Reservation>, options?: { overlapBypass?: boolean }): Promise<Reservation> {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) throw new Error('Usuario no autenticado');
 
+    const body: Record<string, unknown> = {
+      ...reservation,
+      created_by: user.id,
+      updated_by: user.id,
+    };
+
+    // Si overlapBypass viene en true, pasarlo a la edge function para que
+    // se salte TODOS los chequeos de solapamiento (frontend ya verificó autorización)
+    if (options?.overlapBypass) {
+      body.overlap_bypass = true;
+    }
+
     // ✅ PASO 1: Crear mediante Edge Function (validación backend same-day cutoff)
     const { data: edgeData, error: edgeError } = await supabase.functions.invoke('create-reservation', {
-      body: {
-        ...reservation,
-        created_by: user.id,
-        updated_by: user.id,
-      },
+      body,
     });
 
     if (edgeError) {
-      const errMsg = (edgeError as any).message || String(edgeError);
+      // ✅ Extraer cuerpo real de la respuesta desde múltiples ubicaciones posibles
+      const rawContext = (edgeError as any).context;
+      let errorBody: Record<string, unknown> = {};
+      
+      // context puede ser un objeto, un string JSON, o no existir
+      if (rawContext && typeof rawContext === 'object' && !Array.isArray(rawContext)) {
+        errorBody = rawContext as Record<string, unknown>;
+      } else if (typeof rawContext === 'string') {
+        try { errorBody = JSON.parse(rawContext); } catch { /* no es JSON */ }
+      }
+      
+      // También revisar edgeError.details (algunas versiones del SDK exponen el body aquí)
+      if (!errorBody.error && (edgeError as any).details) {
+        const details = (edgeError as any).details;
+        if (typeof details === 'object') errorBody = { ...errorBody, ...details };
+      }
+
+      // Intentar leer el body directamente si el SDK lo expone como texto
+      if (!errorBody.error && typeof (edgeError as any).message === 'string') {
+        const rawMsg = (edgeError as any).message;
+        // Algunas versiones del SDK meten el body en el mensaje como JSON
+        try {
+          const maybeJson = JSON.parse(rawMsg);
+          if (maybeJson && typeof maybeJson === 'object' && (maybeJson.error || maybeJson.message)) {
+            errorBody = { ...errorBody, ...maybeJson };
+          }
+        } catch { /* no es JSON, usar el mensaje tal cual */ }
+      }
+
+      const serverError: string = String(errorBody?.error || '');
+      const serverMessage: string = String(errorBody?.message || '');
+      const serverDetail: string = String(errorBody?.detail || '');
+      const serverCode: string = String(errorBody?.code || '');
+      const errMsg = String((edgeError as any).message || edgeError || '');
+
+      // Combinar mensaje más descriptivo posible
+      // Si el mensaje del SDK es genérico ("non-2xx"), priorizar el server message
+      const isGenericSdkMsg = errMsg.includes('non-2xx') || errMsg.includes('status code');
+      const bestMessage = (isGenericSdkMsg ? (serverMessage || serverDetail) : (serverMessage || serverDetail || errMsg)) || 'Error al crear la reserva';
+
       if (
+        serverError === 'OVERLAP_CONFLICT' ||
+        serverMessage.includes('ya está reservado') ||
         errMsg.includes('OVERLAP_CONFLICT') ||
         errMsg.includes('ya está reservado') ||
         errMsg.includes('exclusion constraint')
       ) {
-        const customError = new Error('Ese andén ya está reservado en ese horario. Elegí otro espacio.');
+        const customError = new Error(bestMessage);
         (customError as any).code = 'OVERLAP_CONFLICT';
         throw customError;
       }
-      if (errMsg.includes('SAME_DAY_CUTOFF_BLOCKED')) {
-        const customError = new Error(errMsg);
+      if (serverError === 'OVERLAP_RULE_BLOCKED' || errMsg.includes('OVERLAP_RULE_BLOCKED')) {
+        const customError = new Error(bestMessage);
+        (customError as any).code = 'OVERLAP_RULE_BLOCKED';
+        throw customError;
+      }
+      if (serverError === 'SAME_DAY_CUTOFF_BLOCKED' || errMsg.includes('SAME_DAY_CUTOFF_BLOCKED')) {
+        const customError = new Error(bestMessage);
         (customError as any).code = 'SAME_DAY_CUTOFF_BLOCKED';
         throw customError;
       }
-      throw new Error(errMsg || 'Error al crear la reserva');
+      if (serverError === 'INVALID_TIME_RANGE' || serverError === 'INSERT_ERROR') {
+        const customError = new Error(bestMessage);
+        (customError as any).code = serverError;
+        (customError as any).dbCode = serverCode;
+        throw customError;
+      }
+      throw new Error(bestMessage);
     }
 
     if (!edgeData?.data?.id) {
@@ -1112,6 +1172,8 @@ export const calendarService = {
           msg.includes('exclusion constraint')
         ) {
           reason = 'Conflicto: ese andén ya tiene una reserva en ese horario';
+        } else if (code === 'OVERLAP_RULE_BLOCKED') {
+          reason = err?.message || 'No se permite superponer citas en este andén (regla del cliente)';
         } else if (msg.includes('horario') || msg.includes('business')) {
           reason = 'Fuera del horario hábil';
         } else if (err?.message) {

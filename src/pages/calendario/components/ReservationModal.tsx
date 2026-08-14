@@ -50,6 +50,7 @@ interface ReservationModalProps {
   warehouseId?: string | null;
   warehouseTimezone?: string;
   copyOfId?: string | null;
+  overlapBypassEnabled?: boolean;
 }
 
 interface FileItem {
@@ -82,6 +83,7 @@ export default function ReservationModal({
   warehouseId,
   warehouseTimezone = DEFAULT_TIMEZONE,
   copyOfId,
+  overlapBypassEnabled = false,
 }: ReservationModalProps) {
   const { user, canLocal } = useAuth();
   const tz = warehouseTimezone || DEFAULT_TIMEZONE;
@@ -821,7 +823,7 @@ export default function ReservationModal({
           saved = await calendarService.updateReservation(reservation.id, payload);
         }
       } else {
-        saved = await calendarService.createReservation(payload);
+        saved = await calendarService.createReservation(payload, { overlapBypass: overlapBypassEnabled });
       }
       if (isConsolidated && saved.id) {
         await calendarService.saveConsolidatedProviders(orgId, saved.id, consolidatedProviders.map(cp => ({ provider_id: cp.provider_id, package_quantity: cp.package_quantity })));
