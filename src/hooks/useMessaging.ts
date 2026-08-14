@@ -142,9 +142,11 @@ export function useMessaging(): UseMessagingReturn {
       .channel(`msg-realtime-${userId}`)
       .on(
         'postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'msg_messages', filter: `org_id=eq.${orgId}` },
+        { event: 'INSERT', schema: 'public', table: 'msg_messages' },
         (payload: any) => {
           const newMsg = payload.new;
+          // Filtro del lado del cliente (más confiable que el filtro server-side)
+          if (newMsg?.org_id && newMsg.org_id !== orgId) return;
           const isMine = newMsg?.sender_id === userId;
           const isActive = newMsg?.conversation_id === activeConvRef.current;
 
@@ -156,7 +158,7 @@ export function useMessaging(): UseMessagingReturn {
           if (isActive) {
             fetchThread(newMsg.conversation_id)
               .then(setActiveThread)
-              .catch(() => {});
+              .catch((err: any) => console.error('[msg-realtime] fetchThread error:', err?.message || err));
           } else if (!isMine) {
             // Browser notification for non-active conversation
             const preview = newMsg?.content ? String(newMsg.content).slice(0, 120) : 'Nuevo archivo';
@@ -166,14 +168,15 @@ export function useMessaging(): UseMessagingReturn {
       )
       .on(
         'postgres_changes',
-        { event: 'UPDATE', schema: 'public', table: 'msg_messages', filter: `org_id=eq.${orgId}` },
+        { event: 'UPDATE', schema: 'public', table: 'msg_messages' },
         (payload: any) => {
           const updatedMsg = payload.new;
+          if (updatedMsg?.org_id && updatedMsg.org_id !== orgId) return;
           const isActive = updatedMsg?.conversation_id === activeConvRef.current;
           if (isActive) {
             fetchThread(updatedMsg.conversation_id)
               .then(setActiveThread)
-              .catch(() => {});
+              .catch((err: any) => console.error('[msg-realtime] fetchThread error:', err?.message || err));
           }
           if (debounceRef.current) clearTimeout(debounceRef.current);
           debounceRef.current = setTimeout(() => refresh(), 400);
@@ -181,16 +184,20 @@ export function useMessaging(): UseMessagingReturn {
       )
       .on(
         'postgres_changes',
-        { event: '*', schema: 'public', table: 'msg_conversations', filter: `org_id=eq.${orgId}` },
-        () => {
+        { event: '*', schema: 'public', table: 'msg_conversations' },
+        (payload: any) => {
+          const rec = payload.new || payload.old;
+          if (rec?.org_id && rec.org_id !== orgId) return;
           if (debounceRef.current) clearTimeout(debounceRef.current);
           debounceRef.current = setTimeout(() => refresh(), 400);
         }
       )
       .on(
         'postgres_changes',
-        { event: '*', schema: 'public', table: 'msg_conversation_members', filter: `org_id=eq.${orgId}` },
-        () => {
+        { event: '*', schema: 'public', table: 'msg_conversation_members' },
+        (payload: any) => {
+          const rec = payload.new || payload.old;
+          if (rec?.org_id && rec.org_id !== orgId) return;
           if (debounceRef.current) clearTimeout(debounceRef.current);
           debounceRef.current = setTimeout(() => refresh(), 400);
         }

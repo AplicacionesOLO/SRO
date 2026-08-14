@@ -1,5 +1,6 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import EmojiPicker from './EmojiPicker';
+import CameraCapture from './CameraCapture';
 
 const MAX_FILES = 5;
 const MAX_TEXTAREA_HEIGHT = 120;
@@ -8,6 +9,43 @@ function formatFileSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function PendingFileChip({ file, onRemove }: { file: File; onRemove: () => void }) {
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const isImage = file.type.startsWith('image/');
+
+  useEffect(() => {
+    if (!isImage) return;
+    const url = URL.createObjectURL(file);
+    setPreviewUrl(url);
+    return () => URL.revokeObjectURL(url);
+  }, [file, isImage]);
+
+  return (
+    <div className="flex items-center gap-2 px-2 py-1.5 bg-emerald-50 border border-emerald-200 rounded-lg max-w-full">
+      {isImage && previewUrl ? (
+        <img
+          src={previewUrl}
+          alt={file.name}
+          className="w-10 h-10 rounded-md object-cover flex-shrink-0 border border-emerald-200"
+        />
+      ) : (
+        <span className="w-10 h-10 rounded-md bg-emerald-100 flex items-center justify-center flex-shrink-0">
+          <i className={`text-emerald-600 text-sm ${isImage ? 'ri-image-line' : 'ri-file-3-line'}`}></i>
+        </span>
+      )}
+      <span className="text-xs text-emerald-800 truncate max-w-[120px]">{file.name}</span>
+      <span className="text-[10px] text-emerald-500 flex-shrink-0">{formatFileSize(file.size)}</span>
+      <button
+        onClick={onRemove}
+        title="Quitar archivo"
+        className="w-4 h-4 flex items-center justify-center rounded-full text-emerald-500 hover:text-red-500 hover:bg-emerald-100 transition-colors cursor-pointer flex-shrink-0"
+      >
+        <i className="ri-close-line text-xs"></i>
+      </button>
+    </div>
+  );
 }
 
 interface ChatComposerProps {
@@ -33,6 +71,7 @@ export default function ChatComposer({
   const [recording, setRecording] = useState(false);
   const [recordingSeconds, setRecordingSeconds] = useState(0);
   const [limitNotice, setLimitNotice] = useState(false);
+  const [showCamera, setShowCamera] = useState(false);
 
   const fileRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -216,25 +255,7 @@ export default function ChatComposer({
       {pendingFiles.length > 0 && (
         <div className="mb-2 flex flex-wrap gap-2">
           {pendingFiles.map((f, i) => (
-            <div
-              key={`${f.name}-${f.size}-${i}`}
-              className="flex items-center gap-1.5 px-2.5 py-1.5 bg-emerald-50 border border-emerald-200 rounded-lg max-w-full"
-            >
-              <i
-                className={`text-emerald-600 text-sm flex-shrink-0 ${
-                  f.type.startsWith('image/') ? 'ri-image-line' : 'ri-file-3-line'
-                }`}
-              ></i>
-              <span className="text-xs text-emerald-800 truncate max-w-[120px]">{f.name}</span>
-              <span className="text-[10px] text-emerald-500 flex-shrink-0">{formatFileSize(f.size)}</span>
-              <button
-                onClick={() => removeFile(i)}
-                title="Quitar archivo"
-                className="w-4 h-4 flex items-center justify-center rounded-full text-emerald-500 hover:text-red-500 hover:bg-emerald-100 transition-colors cursor-pointer flex-shrink-0"
-              >
-                <i className="ri-close-line text-xs"></i>
-              </button>
-            </div>
+            <PendingFileChip key={`${f.name}-${f.size}-${i}`} file={f} onRemove={() => removeFile(i)} />
           ))}
         </div>
       )}
@@ -269,6 +290,15 @@ export default function ChatComposer({
         </button>
 
         <button
+          onClick={() => setShowCamera(true)}
+          disabled={sending}
+          title="Tomar o enviar foto"
+          className="w-9 h-9 flex items-center justify-center rounded-xl text-emerald-600 hover:bg-emerald-50 transition-colors cursor-pointer disabled:opacity-40 flex-shrink-0"
+        >
+          <i className="ri-camera-line text-lg"></i>
+        </button>
+
+        <button
           onClick={() => setShowEmoji((v) => !v)}
           disabled={sending}
           title="Emojis"
@@ -299,6 +329,20 @@ export default function ChatComposer({
           <i className="ri-send-plane-fill text-sm"></i>
         </button>
       </div>
+
+      {showCamera && (
+        <CameraCapture
+          onCapture={(file) => {
+            addFiles([file]);
+            setShowCamera(false);
+          }}
+          onClose={() => setShowCamera(false)}
+          onPickFromGallery={() => {
+            setShowCamera(false);
+            fileRef.current?.click();
+          }}
+        />
+      )}
     </div>
   );
 }
