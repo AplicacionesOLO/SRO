@@ -210,6 +210,31 @@ export function useMessaging(): UseMessagingReturn {
     };
   }, [orgId, userId, refresh, notifyIncomingMessage]);
 
+  // Respaldo por sondeo: garantiza que los mensajes entrantes aparezcan
+  // aunque la conexión de tiempo real falle (por permisos del navegador,
+  // bloqueo de WebSocket, etc.). Refresca el hilo abierto cada pocos segundos
+  // y la lista de conversaciones / no leídos con menos frecuencia.
+  useEffect(() => {
+    if (!orgId || !userId) return;
+
+    const threadTimer = setInterval(() => {
+      if (activeConvRef.current) {
+        fetchThread(activeConvRef.current)
+          .then(setActiveThread)
+          .catch(() => { /* se reintenta en el próximo ciclo */ });
+      }
+    }, 4000);
+
+    const bootstrapTimer = setInterval(() => {
+      refresh();
+    }, 10000);
+
+    return () => {
+      clearInterval(threadTimer);
+      clearInterval(bootstrapTimer);
+    };
+  }, [orgId, userId, refresh]);
+
   const openConversation = useCallback((id: string) => {
     setActiveConversationId(id);
     setLoadingThread(true);

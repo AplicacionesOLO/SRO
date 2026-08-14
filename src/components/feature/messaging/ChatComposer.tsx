@@ -1,6 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import EmojiPicker from './EmojiPicker';
-import CameraCapture from './CameraCapture';
 
 const MAX_FILES = 5;
 const MAX_TEXTAREA_HEIGHT = 120;
@@ -71,9 +70,9 @@ export default function ChatComposer({
   const [recording, setRecording] = useState(false);
   const [recordingSeconds, setRecordingSeconds] = useState(0);
   const [limitNotice, setLimitNotice] = useState(false);
-  const [showCamera, setShowCamera] = useState(false);
 
   const fileRef = useRef<HTMLInputElement>(null);
+  const cameraRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const emojiRef = useRef<HTMLDivElement>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -262,6 +261,7 @@ export default function ChatComposer({
 
       <div className="flex items-end gap-2">
         <input ref={fileRef} type="file" multiple className="hidden" onChange={handleFileChange} />
+        <input ref={cameraRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={handleFileChange} />
 
         <button
           onClick={() => {
@@ -290,7 +290,7 @@ export default function ChatComposer({
         </button>
 
         <button
-          onClick={() => setShowCamera(true)}
+          onClick={() => cameraRef.current?.click()}
           disabled={sending}
           title="Tomar o enviar foto"
           className="w-9 h-9 flex items-center justify-center rounded-xl text-emerald-600 hover:bg-emerald-50 transition-colors cursor-pointer disabled:opacity-40 flex-shrink-0"
@@ -329,20 +329,6 @@ export default function ChatComposer({
           <i className="ri-send-plane-fill text-sm"></i>
         </button>
       </div>
-
-      {showCamera && (
-        <CameraCapture
-          onCapture={(file) => {
-            addFiles([file]);
-            setShowCamera(false);
-          }}
-          onClose={() => setShowCamera(false)}
-          onPickFromGallery={() => {
-            setShowCamera(false);
-            fileRef.current?.click();
-          }}
-        />
-      )}
     </div>
   );
 }
