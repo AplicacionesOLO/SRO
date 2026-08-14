@@ -1,23 +1,72 @@
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import EmojiPicker from './EmojiPicker';
+
+const MAX_FILES = 5;
+const MAX_TEXTAREA_HEIGHT = 120;
+
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
 
 interface ChatComposerProps {
   sending: boolean;
-  onSendText: (text: string) => void;
-  onSendFile: (file: File) => void;
+  initialText?: string;
+  initialFiles?: File[];
+  onSend: (text: string, files: File[]) => void;
+  onSendVoiceNote: (file: File) => void;
+  onDraftChange: (text: string, files: File[]) => void;
 }
 
-export default function ChatComposer({ sending, onSendText, onSendFile }: ChatComposerProps) {
-  const [input, setInput] = useState('');
+export default function ChatComposer({
+  sending,
+  initialText = '',
+  initialFiles = [],
+  onSend,
+  onSendVoiceNote,
+  onDraftChange,
+}: ChatComposerProps) {
+  const [input, setInput] = useState(initialText);
+  const [pendingFiles, setPendingFiles] = useState<File[]>(initialFiles);
   const [showEmoji, setShowEmoji] = useState(false);
   const [recording, setRecording] = useState(false);
   const [recordingSeconds, setRecordingSeconds] = useState(0);
+  const [limitNotice, setLimitNotice] = useState(false);
 
   const fileRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const emojiRef = useRef<HTMLDivElement>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const limitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const prevSendingRef = useRef(sending);
+
+  // Persistir el borrador (texto + archivos) hacia el padre en cada cambio.
+  useEffect(() => {
+    onDraftChange(input, pendingFiles);
+  }, [input, pendingFiles, onDraftChange]);
+
+  // Devolver el foco al textarea apenas termina el envío (de disabled a habilitado).
+  useEffect(() => {
+    if (prevSendingRef.current && !sending) {
+      textareaRef.current?.focus();
+    }
+    prevSendingRef.current = sending;
+  }, [sending]);
+
+  // Cerrar el picker de emojis al hacer clic fuera de él.
+  useEffect(() => {
+    if (!showEmoji) return;
+    const handler = (e: MouseEvent) => {
+      if (emojiRef.current && !emojiRef.current.contains(e.target as Node)) {
+        setShowEmoji(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [showEmoji]);
 
   const stopRecording = useCallback(() => {
     const mr = mediaRecorderRef.current;
@@ -50,11 +99,14 @@ export default function ChatComposer({ sending, onSendText, onSendFile }: ChatCo
 
       mr.onstop = () => {
         const blob = new Blob(chunksRef.current, { type: mr.mimeType || 'audio/webm' });
-        const ext = (mr.mimeType || 'audio/webm').includes('mp4') ? 'm4a' : (mr.mimeType || 'audio/webm').includes('ogg') ? 'ogg' : 'webm';
+        const ext = (mr.mimeType || 'audio/webm').includes('mp4')
+          ? 'm4a'
+          : (mr.mimeType || 'audio/webm').includes('ogg')
+          ? 'ogg'
+          : 'webm';
         const file = new File([blob], `nota-de-voz-${Date.now()}.${ext}`, { type: blob.type });
-        // liberar el micrófono
         stream.getTracks().forEach((t) => t.stop());
-        if (file.size > 0) onSendFile(file);
+        if (file.size > 0) onSendVoiceNote(file);
       };
 
       mr.start();
@@ -65,16 +117,46 @@ export default function ChatComposer({ sending, onSendText, onSendFile }: ChatCo
         setRecordingSeconds((s) => s + 1);
       }, 1000);
     } catch {
-      // permiso denegado o sin micrófono
       setRecording(false);
     }
-  }, [onSendFile]);
+  }, [onSendVoiceNote]);
+
+  const addFiles = useCallback((list: FileList | File[]) => {
+    const incoming = Array.from(list);
+    if (incoming.length === 0) return;
+    setPendingFiles((prev) => {
+      const combined = [...prev, ...incoming];
+      if (combined.length > MAX_FILES) {
+        setLimitNotice(true);
+        if (limitTimerRef.current) clearTimeout(limitTimerRef.current);
+        limitTimerRef.current = setTimeout(() => setLimitNotice(false), 3000);
+        return combined.slice(0, MAX_FILES);
+      }
+      return combined;
+    });
+  }, []);
+
+  const removeFile = useCallback((index: number) => {
+    setPendingFiles((prev) => prev.filter((_, i) => i !== index));
+  }, []);
+
+  const autoResize = useCallback(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${Math.min(el.scrollHeight, MAX_TEXTAREA_HEIGHT)}px`;
+  }, []);
+
+  useEffect(() => {
+    autoResize();
+  }, [input, autoResize]);
 
   const handleSubmit = () => {
     const text = input.trim();
-    if (!text || sending) return;
+    if ((!text && pendingFiles.length === 0) || sending) return;
+    onSend(text, pendingFiles);
     setInput('');
-    onSendText(text);
+    setPendingFiles([]);
     textareaRef.current?.focus();
   };
 
@@ -86,8 +168,7 @@ export default function ChatComposer({ sending, onSendText, onSendFile }: ChatCo
   };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) onSendFile(file);
+    if (e.target.files && e.target.files.length > 0) addFiles(e.target.files);
     e.target.value = '';
   };
 
@@ -105,7 +186,18 @@ export default function ChatComposer({ sending, onSendText, onSendFile }: ChatCo
   return (
     <div className="px-3 py-3 bg-white border-t border-gray-200 flex-shrink-0 relative">
       {/* Emoji picker */}
-      {showEmoji && <EmojiPicker onSelect={insertEmoji} />}
+      {showEmoji && (
+        <div ref={emojiRef}>
+          <EmojiPicker onSelect={insertEmoji} />
+        </div>
+      )}
+
+      {limitNotice && (
+        <div className="mb-2 px-3 py-2 bg-amber-50 border border-amber-200 rounded-xl flex items-center gap-2">
+          <i className="ri-error-warning-line text-amber-600 text-sm flex-shrink-0"></i>
+          <span className="text-xs text-amber-700">Solo podés adjuntar hasta {MAX_FILES} archivos por mensaje.</span>
+        </div>
+      )}
 
       {recording && (
         <div className="flex items-center gap-2 mb-2 px-3 py-2 bg-red-50 border border-red-200 rounded-xl">
@@ -120,8 +212,35 @@ export default function ChatComposer({ sending, onSendText, onSendFile }: ChatCo
         </div>
       )}
 
+      {/* Archivos pendientes */}
+      {pendingFiles.length > 0 && (
+        <div className="mb-2 flex flex-wrap gap-2">
+          {pendingFiles.map((f, i) => (
+            <div
+              key={`${f.name}-${f.size}-${i}`}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 bg-emerald-50 border border-emerald-200 rounded-lg max-w-full"
+            >
+              <i
+                className={`text-emerald-600 text-sm flex-shrink-0 ${
+                  f.type.startsWith('image/') ? 'ri-image-line' : 'ri-file-3-line'
+                }`}
+              ></i>
+              <span className="text-xs text-emerald-800 truncate max-w-[120px]">{f.name}</span>
+              <span className="text-[10px] text-emerald-500 flex-shrink-0">{formatFileSize(f.size)}</span>
+              <button
+                onClick={() => removeFile(i)}
+                title="Quitar archivo"
+                className="w-4 h-4 flex items-center justify-center rounded-full text-emerald-500 hover:text-red-500 hover:bg-emerald-100 transition-colors cursor-pointer flex-shrink-0"
+              >
+                <i className="ri-close-line text-xs"></i>
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
       <div className="flex items-end gap-2">
-        <input ref={fileRef} type="file" className="hidden" onChange={handleFileChange} />
+        <input ref={fileRef} type="file" multiple className="hidden" onChange={handleFileChange} />
 
         <button
           onClick={() => {
@@ -143,7 +262,7 @@ export default function ChatComposer({ sending, onSendText, onSendFile }: ChatCo
         <button
           onClick={() => fileRef.current?.click()}
           disabled={sending}
-          title="Adjuntar archivo"
+          title={`Adjuntar archivos (máx ${MAX_FILES})`}
           className="w-9 h-9 flex items-center justify-center rounded-xl text-emerald-600 hover:bg-emerald-50 transition-colors cursor-pointer disabled:opacity-40 flex-shrink-0"
         >
           <i className="ri-attachment-2 text-lg"></i>
@@ -168,13 +287,13 @@ export default function ChatComposer({ sending, onSendText, onSendFile }: ChatCo
           placeholder="Escribí un mensaje..."
           rows={1}
           disabled={sending}
-          className="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-xl resize-none focus:outline-none focus:border-emerald-500 disabled:opacity-60"
-          style={{ maxHeight: '96px', overflow: 'auto' }}
+          className="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-xl resize-none focus:outline-none focus:border-emerald-500 disabled:opacity-60 overflow-y-auto"
+          style={{ maxHeight: `${MAX_TEXTAREA_HEIGHT}px` }}
         />
 
         <button
           onClick={handleSubmit}
-          disabled={!input.trim() || sending}
+          disabled={(!input.trim() && pendingFiles.length === 0) || sending}
           className="w-9 h-9 flex items-center justify-center bg-emerald-600 text-white rounded-xl hover:bg-emerald-700 disabled:opacity-40 cursor-pointer flex-shrink-0 transition-colors"
         >
           <i className="ri-send-plane-fill text-sm"></i>

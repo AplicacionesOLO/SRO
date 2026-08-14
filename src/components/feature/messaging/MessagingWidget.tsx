@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { usePermissions } from '@/hooks/usePermissions';
 import { useMessaging } from '@/hooks/useMessaging';
 import MessagingBubble from './MessagingBubble';
@@ -11,6 +11,8 @@ export default function MessagingWidget() {
   const [showNewChat, setShowNewChat] = useState(false);
   const [permissionRequested, setPermissionRequested] = useState(false);
   const [notice, setNotice] = useState<{ type: 'success' | 'info' | 'warn'; text: string } | null>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [drafts, setDrafts] = useState<Record<string, { text: string; files: File[] }>>({});
 
   const {
     loading,
@@ -26,8 +28,8 @@ export default function MessagingWidget() {
     closeConversation,
     startDirect,
     startGroup,
-    sendText,
-    sendFile,
+    sendFiles,
+    sendVoiceNote,
     toggleExpress,
     deleteMessage,
     deleteConversation,
@@ -71,12 +73,39 @@ export default function MessagingWidget() {
     return () => window.removeEventListener('keydown', handler);
   }, [isOpen]);
 
+  // Cerrar el chat al hacer clic fuera (burbuja, panel y modal incluidos).
+  useEffect(() => {
+    if (!isOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setIsOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [isOpen]);
+
+  const handleDraftChange = useCallback(
+    (text: string, files: File[]) => {
+      setDrafts((prev) => {
+        const next = { ...prev };
+        if (!text && files.length === 0) {
+          if (activeConversationId) delete next[activeConversationId];
+        } else if (activeConversationId) {
+          next[activeConversationId] = { text, files };
+        }
+        return next;
+      });
+    },
+    [activeConversationId]
+  );
+
   if (permsLoading) return null;
   if (!userId) return null;
   if (!can('chat.messages.view')) return null;
 
   return (
-    <>
+    <div ref={containerRef}>
       <MessagingBubble isOpen={isOpen} unreadCount={totalUnread} onClick={handleToggle} />
 
       {isOpen && (
@@ -93,11 +122,13 @@ export default function MessagingWidget() {
           onSelect={openConversation}
           onBack={closeConversation}
           onNewChat={() => setShowNewChat(true)}
-          onSendText={sendText}
-          onSendFile={sendFile}
+          onSend={(text, files) => sendFiles(files, text)}
+          onSendVoiceNote={sendVoiceNote}
           onToggleExpress={toggleExpress}
           onDeleteMessage={deleteMessage}
           onDeleteConversation={deleteConversation}
+          draft={activeConversationId ? drafts[activeConversationId] : undefined}
+          onDraftChange={handleDraftChange}
         />
       )}
 
@@ -152,6 +183,6 @@ export default function MessagingWidget() {
           </button>
         </div>
       )}
-    </>
+    </div>
   );
 }

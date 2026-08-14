@@ -72,16 +72,18 @@ export async function sendTextMessage(
   });
 }
 
-export async function sendFileMessage(
+export async function sendFilesMessage(
   orgId: string,
-  params: { conversation_id?: string; recipient_id?: string; file: File; content?: string }
+  params: { conversation_id?: string; recipient_id?: string; files: File[]; content?: string }
 ): Promise<{ message: MessagingMessage; conversation_id: string }> {
   const form = new FormData();
   form.append('org_id', orgId);
   if (params.conversation_id) form.append('conversation_id', params.conversation_id);
   if (params.recipient_id) form.append('recipient_id', params.recipient_id);
   if (params.content) form.append('content', params.content);
-  form.append('file', params.file);
+  for (const file of params.files) {
+    form.append('files', file);
+  }
 
   const { data, error } = await supabase.functions.invoke('msg-send', { body: form });
   if (error) {

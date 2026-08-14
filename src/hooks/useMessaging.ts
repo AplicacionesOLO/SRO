@@ -10,7 +10,7 @@ import {
   bootstrapMessaging,
   fetchThread,
   sendTextMessage,
-  sendFileMessage,
+  sendFilesMessage,
   createDirectConversation,
   createGroupConversation,
   toggleExpressConversation,
@@ -33,8 +33,8 @@ export interface UseMessagingReturn {
   closeConversation: () => void;
   startDirect: (recipientId: string) => Promise<string | null>;
   startGroup: (title: string, memberIds: string[]) => Promise<string | null>;
-  sendText: (text: string) => Promise<void>;
-  sendFile: (file: File) => Promise<void>;
+  sendFiles: (files: File[], text?: string) => Promise<void>;
+  sendVoiceNote: (file: File) => Promise<void>;
   toggleExpress: () => Promise<void>;
   deleteMessage: (messageId: string) => Promise<void>;
   deleteConversation: (conversationId: string) => Promise<void>;
@@ -249,23 +249,31 @@ export function useMessaging(): UseMessagingReturn {
     }
   }, [orgId, refresh, openConversation]);
 
-  const sendText = useCallback(async (text: string): Promise<void> => {
+  const sendFiles = useCallback(async (files: File[], text?: string): Promise<void> => {
     if (!orgId) return;
-    const trimmed = text.trim();
-    if (!trimmed) return;
+    const trimmed = (text ?? '').trim();
+    if (files.length === 0 && !trimmed) return;
     setSending(true);
     try {
       let convId = activeConversationId;
-      const payload: { conversation_id?: string; recipient_id?: string; content: string } = { content: trimmed };
-      if (convId) payload.conversation_id = convId;
+      let res: { conversation_id: string };
 
-      const res = await sendTextMessage(orgId, payload);
+      if (files.length > 0) {
+        const params: { conversation_id?: string; recipient_id?: string; files: File[]; content?: string } = { files };
+        if (convId) params.conversation_id = convId;
+        if (trimmed) params.content = trimmed;
+        res = await sendFilesMessage(orgId, params);
+      } else {
+        const payload: { conversation_id?: string; recipient_id?: string; content: string } = { content: trimmed };
+        if (convId) payload.conversation_id = convId;
+        res = await sendTextMessage(orgId, payload);
+      }
+
       convId = res.conversation_id;
 
       if (convId && convId !== activeConversationId) {
         openConversation(convId);
       } else if (convId) {
-        // refresh the active thread
         const thread = await fetchThread(convId);
         setActiveThread(thread);
       }
@@ -277,30 +285,9 @@ export function useMessaging(): UseMessagingReturn {
     }
   }, [orgId, activeConversationId, openConversation, refresh]);
 
-  const sendFile = useCallback(async (file: File): Promise<void> => {
-    if (!orgId) return;
-    setSending(true);
-    try {
-      let convId = activeConversationId;
-      const params: { conversation_id?: string; recipient_id?: string; file: File } = { file };
-      if (convId) params.conversation_id = convId;
-
-      const res = await sendFileMessage(orgId, params);
-      convId = res.conversation_id;
-
-      if (convId && convId !== activeConversationId) {
-        openConversation(convId);
-      } else if (convId) {
-        const thread = await fetchThread(convId);
-        setActiveThread(thread);
-      }
-      refresh();
-    } catch (err: any) {
-      setError(err?.message || 'Error al enviar el archivo');
-    } finally {
-      setSending(false);
-    }
-  }, [orgId, activeConversationId, openConversation, refresh]);
+  const sendVoiceNote = useCallback(async (file: File): Promise<void> => {
+    await sendFiles([file]);
+  }, [sendFiles]);
 
   const toggleExpress = useCallback(async (): Promise<void> => {
     if (!orgId || !activeConversationId) return;
@@ -367,8 +354,8 @@ export function useMessaging(): UseMessagingReturn {
     closeConversation,
     startDirect,
     startGroup,
-    sendText,
-    sendFile,
+    sendFiles,
+    sendVoiceNote,
     toggleExpress,
     deleteMessage,
     deleteConversation,

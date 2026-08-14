@@ -78,7 +78,7 @@ Deno.serve(async (req) => {
     let conversationId: string | null = null;
     let recipientId: string | null = null;
     let textContent: string | null = null;
-    let file: File | null = null;
+    let files: File[] = [];
 
     if (contentType.includes('multipart/form-data')) {
       const form = await req.formData();
@@ -86,7 +86,10 @@ Deno.serve(async (req) => {
       conversationId = (form.get('conversation_id') as string) || null;
       recipientId = (form.get('recipient_id') as string) || null;
       textContent = (form.get('content') as string) || null;
-      file = (form.get('file') as File) || null;
+      const single = form.get('file') as File | null;
+      if (single) files.push(single);
+      const multi = form.getAll('files') as File[];
+      if (multi.length > 0) files = files.concat(multi);
     } else {
       const body = await req.json().catch(() => null);
       if (!body) return safeJsonResponse({ error: 'Invalid body' }, 400);
@@ -117,30 +120,32 @@ Deno.serve(async (req) => {
 
     // Validate content
     const hasText = !!textContent && textContent.trim().length > 0;
-    if (!hasText && !file) return safeJsonResponse({ error: 'No hay contenido ni archivo para enviar' }, 400);
+    if (!hasText && files.length === 0) return safeJsonResponse({ error: 'No hay contenido ni archivo para enviar' }, 400);
 
     let msgType = 'text';
     let msgContent = textContent?.trim() ?? '';
     let preview = msgContent;
-    let attachment: any = null;
+    const attachments: any[] = [];
 
-    if (file) {
+    if (files.length > 0) {
       msgType = 'file';
       msgContent = textContent?.trim() || '';
-      preview = msgContent || `📎 ${file.name}`;
-      // sanitize filename
-      const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
-      const unique = crypto.randomUUID();
-      const filePath = `${orgId}/${conversationId}/${unique}_${safeName}`;
-      const bytes = await file.arrayBuffer();
-      const { error: upErr } = await supabase.storage.from('msg-files').upload(filePath, bytes, { contentType: file.type || 'application/octet-stream', upsert: false });
-      if (upErr) return safeJsonResponse({ error: 'UPLOAD_ERROR', message: upErr.message }, 500);
-      attachment = {
-        file_name: file.name,
-        file_path: filePath,
-        file_type: file.type || 'application/octet-stream',
-        file_size: file.size,
-      };
+      preview = msgContent || (files.length === 1 ? `📎 ${files[0].name}` : `📎 ${files[0].name} + ${files.length - 1} más`);
+      for (const file of files) {
+        // sanitize filename
+        const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+        const unique = crypto.randomUUID();
+        const filePath = `${orgId}/${conversationId}/${unique}_${safeName}`;
+        const bytes = await file.arrayBuffer();
+        const { error: upErr } = await supabase.storage.from('msg-files').upload(filePath, bytes, { contentType: file.type || 'application/octet-stream', upsert: false });
+        if (upErr) return safeJsonResponse({ error: 'UPLOAD_ERROR', message: upErr.message }, 500);
+        attachments.push({
+          file_name: file.name,
+          file_path: filePath,
+          file_type: file.type || 'application/octet-stream',
+          file_size: file.size,
+        });
+      }
     }
 
     const now = new Date().toISOString();
@@ -153,15 +158,16 @@ Deno.serve(async (req) => {
     }).select('*').single();
     if (mErr) return safeJsonResponse({ error: mErr.message }, 500);
 
-    if (attachment) {
-      const { error: aErr } = await supabase.from('msg_attachments').insert({
+    if (attachments.length > 0) {
+      const rows = attachments.map((a) => ({
         message_id: msg.id,
         org_id: orgId,
-        file_name: attachment.file_name,
-        file_path: attachment.file_path,
-        file_type: attachment.file_type,
-        file_size: attachment.file_size,
-      });
+        file_name: a.file_name,
+        file_path: a.file_path,
+        file_type: a.file_type,
+        file_size: a.file_size,
+      }));
+      const { error: aErr } = await supabase.from('msg_attachments').insert(rows);
       if (aErr) console.error('[msg-send] attachment insert error:', aErr.message);
     }
 

@@ -16,11 +16,13 @@ interface MessagingPanelProps {
   onSelect: (id: string) => void;
   onBack: () => void;
   onNewChat: () => void;
-  onSendText: (text: string) => void;
-  onSendFile: (file: File) => void;
+  onSend: (text: string, files: File[]) => void;
+  onSendVoiceNote: (file: File) => void;
   onToggleExpress: () => void;
   onDeleteMessage: (messageId: string) => void;
   onDeleteConversation: (id: string) => void;
+  draft?: { text: string; files: File[] };
+  onDraftChange: (text: string, files: File[]) => void;
 }
 
 export default function MessagingPanel({
@@ -36,11 +38,13 @@ export default function MessagingPanel({
   onSelect,
   onBack,
   onNewChat,
-  onSendText,
-  onSendFile,
+  onSend,
+  onSendVoiceNote,
   onToggleExpress,
   onDeleteMessage,
   onDeleteConversation,
+  draft,
+  onDraftChange,
 }: MessagingPanelProps) {
   const [isExpanded, setIsExpanded] = useState(false);
   const showConversation = !!activeConversationId;
@@ -57,6 +61,7 @@ export default function MessagingPanel({
     >
       {showConversation ? (
         <ConversationView
+          key={activeConversationId}
           thread={activeThread}
           loading={loadingThread}
           sending={sending}
@@ -64,12 +69,14 @@ export default function MessagingPanel({
           onlineUserIds={onlineUserIds}
           isExpanded={isExpanded}
           onBack={onBack}
-          onSendText={onSendText}
-          onSendFile={onSendFile}
+          onSend={onSend}
+          onSendVoiceNote={onSendVoiceNote}
           onToggleExpress={onToggleExpress}
           onDeleteMessage={onDeleteMessage}
           onDeleteConversation={onDeleteConversation}
           onToggleExpand={() => setIsExpanded((v) => !v)}
+          draft={draft}
+          onDraftChange={onDraftChange}
         />
       ) : (
         <ConversationList
