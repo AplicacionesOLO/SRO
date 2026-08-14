@@ -19,6 +19,7 @@ interface ConversationViewProps {
   onSendFile: (file: File) => void;
   onToggleExpress: () => void;
   onDeleteMessage: (messageId: string) => void;
+  onDeleteConversation: () => void;
   onToggleExpand: () => void;
 }
 
@@ -170,9 +171,11 @@ export default function ConversationView({
   onSendFile,
   onToggleExpress,
   onDeleteMessage,
+  onDeleteConversation,
   onToggleExpand,
 }: ConversationViewProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   const title = thread?.conversation?.title || 'Conversación';
   const members = thread?.members || [];
@@ -184,6 +187,10 @@ export default function ConversationView({
   const headerTitle = isGroup ? (title || 'Grupo') : (peer?.name || title || 'Conversación');
   const peerOnline = peer ? onlineUserIds.has(peer.user_id) : false;
   const onlineCount = members.filter((m) => onlineUserIds.has(m.user_id)).length;
+
+  const deleteWarning = isGroup
+    ? 'Vas a salir de este grupo y dejar de ver la conversación y todo su contenido. Esta acción no se puede deshacer.'
+    : 'Se eliminará esta conversación y todo su contenido de tu lado. Si la otra persona también la elimina, se borrará definitivamente de la base de datos. Esta acción no se puede deshacer.';
 
   const canDelete = (m: MessagingMessage): boolean => {
     if (!currentUserId || !m.created_at) return false;
@@ -199,7 +206,7 @@ export default function ConversationView({
   }, [messages, sending]);
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="relative flex flex-col h-full">
       {/* Header */}
       <div className="px-4 py-2.5 bg-emerald-600 flex items-center gap-3 flex-shrink-0">
         <button
@@ -246,6 +253,13 @@ export default function ConversationView({
             ))}
           </div>
         )}
+        <button
+          onClick={() => setShowDeleteConfirm(true)}
+          className="w-7 h-7 flex items-center justify-center rounded-full text-white/80 hover:bg-white/20 transition-colors cursor-pointer flex-shrink-0"
+          title="Eliminar conversación"
+        >
+          <i className="ri-delete-bin-6-line text-base"></i>
+        </button>
         <button
           onClick={onToggleExpand}
           className="w-7 h-7 flex items-center justify-center rounded-full text-white/80 hover:bg-white/20 transition-colors cursor-pointer flex-shrink-0"
@@ -314,6 +328,34 @@ export default function ConversationView({
         </div>
         <ChatComposer sending={sending} onSendText={onSendText} onSendFile={onSendFile} />
       </div>
+
+      {showDeleteConfirm && (
+        <div className="absolute inset-0 z-50 flex items-center justify-center p-4 bg-black/40">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-sm p-5">
+            <div className="flex justify-center mb-3">
+              <div className="w-12 h-12 rounded-full bg-red-100 border-2 border-red-200 flex items-center justify-center">
+                <i className="ri-delete-bin-6-line text-xl text-red-600"></i>
+              </div>
+            </div>
+            <h3 className="text-base font-bold text-gray-900 text-center mb-2">Eliminar conversación</h3>
+            <p className="text-sm text-gray-600 text-center leading-relaxed whitespace-pre-line">{deleteWarning}</p>
+            <div className="mt-4 flex flex-col-reverse sm:flex-row gap-2">
+              <button
+                onClick={() => setShowDeleteConfirm(false)}
+                className="flex-1 px-3 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors text-sm font-medium whitespace-nowrap cursor-pointer"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={() => { setShowDeleteConfirm(false); onDeleteConversation(); }}
+                className="flex-1 px-3 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors text-sm font-medium whitespace-nowrap cursor-pointer"
+              >
+                Eliminar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

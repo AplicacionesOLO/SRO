@@ -160,6 +160,36 @@ Deno.serve(async (req) => {
       return safeJsonResponse({ ok: true }, 200);
     }
 
+    if (action === 'delete_conversation') {
+      const { data: conv } = await supabase.from('msg_conversations').select('type').eq('id', conversation_id).maybeSingle();
+      if (!conv) return safeJsonResponse({ error: 'Conversación no encontrada' }, 404);
+
+      // Borrado suave para este usuario: lo sacamos de la conversación.
+      await supabase.from('msg_conversation_members').delete().eq('conversation_id', conversation_id).eq('user_id', userId);
+
+      const { data: remaining } = await supabase.from('msg_conversation_members').select('id').eq('conversation_id', conversation_id);
+
+      // Si no queda ningún miembro (p. ej. chat 1 a 1 donde ambos borraron), se elimina todo de forma definitiva.
+      if ((remaining ?? []).length === 0) {
+        const { data: msgs } = await supabase.from('msg_messages').select('id').eq('conversation_id', conversation_id);
+        const msgIds = (msgs ?? []).map((m: any) => m.id);
+        if (msgIds.length > 0) {
+          const { data: atts } = await supabase.from('msg_attachments').select('file_path').in('message_id', msgIds);
+          const paths = (atts ?? []).map((a: any) => a.file_path).filter(Boolean);
+          if (paths.length > 0) {
+            const { error: rmErr } = await supabase.storage.from('msg-files').remove(paths);
+            if (rmErr) console.error('[msg-conversation] storage remove error:', rmErr.message);
+          }
+          await supabase.from('msg_attachments').delete().in('message_id', msgIds);
+        }
+        await supabase.from('msg_messages').delete().eq('conversation_id', conversation_id);
+        await supabase.from('msg_conversation_members').delete().eq('conversation_id', conversation_id);
+        await supabase.from('msg_conversations').delete().eq('id', conversation_id);
+      }
+
+      return safeJsonResponse({ ok: true, deleted_all: (remaining ?? []).length === 0 }, 200);
+    }
+
     return safeJsonResponse({ error: 'Unknown action' }, 400);
   } catch (error: any) {
     console.error('[msg-conversation] ERROR:', error?.message || error);

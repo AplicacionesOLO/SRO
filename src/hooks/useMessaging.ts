@@ -15,6 +15,7 @@ import {
   createGroupConversation,
   toggleExpressConversation,
   deleteMessage as deleteMessageService,
+  deleteConversation as deleteConversationService,
 } from '@/services/messagingService';
 import { playNotificationSound } from '@/utils/notificationSound';
 
@@ -36,6 +37,7 @@ export interface UseMessagingReturn {
   sendFile: (file: File) => Promise<void>;
   toggleExpress: () => Promise<void>;
   deleteMessage: (messageId: string) => Promise<void>;
+  deleteConversation: (conversationId: string) => Promise<void>;
   refresh: () => void;
   clearError: () => void;
   requestNotificationPermission: () => Promise<string>;
@@ -324,6 +326,19 @@ export function useMessaging(): UseMessagingReturn {
     }
   }, [orgId, activeConversationId, refresh]);
 
+  const deleteConversation = useCallback(async (conversationId: string): Promise<void> => {
+    if (!orgId) return;
+    try {
+      await deleteConversationService(orgId, conversationId);
+      if (activeConversationId === conversationId) {
+        closeConversation();
+      }
+      await refresh();
+    } catch (err: any) {
+      setError(err?.message || 'No se pudo eliminar la conversación');
+    }
+  }, [orgId, activeConversationId, closeConversation, refresh]);
+
   const clearError = useCallback(() => setError(null), []);
 
   const requestNotificationPermission = useCallback(async (): Promise<string> => {
@@ -356,6 +371,7 @@ export function useMessaging(): UseMessagingReturn {
     sendFile,
     toggleExpress,
     deleteMessage,
+    deleteConversation,
     refresh,
     clearError,
     requestNotificationPermission,

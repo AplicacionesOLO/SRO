@@ -30,6 +30,7 @@ export default function MessagingWidget() {
     sendFile,
     toggleExpress,
     deleteMessage,
+    deleteConversation,
     clearError,
     requestNotificationPermission,
     onlineUserIds,
@@ -96,6 +97,7 @@ export default function MessagingWidget() {
           onSendFile={sendFile}
           onToggleExpress={toggleExpress}
           onDeleteMessage={deleteMessage}
+          onDeleteConversation={deleteConversation}
         />
       )}
 

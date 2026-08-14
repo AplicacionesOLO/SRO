@@ -20,6 +20,7 @@ interface MessagingPanelProps {
   onSendFile: (file: File) => void;
   onToggleExpress: () => void;
   onDeleteMessage: (messageId: string) => void;
+  onDeleteConversation: (id: string) => void;
 }
 
 export default function MessagingPanel({
@@ -39,6 +40,7 @@ export default function MessagingPanel({
   onSendFile,
   onToggleExpress,
   onDeleteMessage,
+  onDeleteConversation,
 }: MessagingPanelProps) {
   const [isExpanded, setIsExpanded] = useState(false);
   const showConversation = !!activeConversationId;
@@ -66,6 +68,7 @@ export default function MessagingPanel({
           onSendFile={onSendFile}
           onToggleExpress={onToggleExpress}
           onDeleteMessage={onDeleteMessage}
+          onDeleteConversation={onDeleteConversation}
           onToggleExpand={() => setIsExpanded((v) => !v)}
         />
       ) : (

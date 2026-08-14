@@ -14,7 +14,18 @@ async function extractErrorMessage(error: unknown): Promise<string> {
   const e = error as any;
   if (!e) return 'Error de servidor';
 
-  // FunctionsHttpError expone el body parseado en `context` (objeto plano)
+  // FunctionsHttpError expone el body como un objeto Response en `context`.
+  // Hay que detectarlo ANTES que el objeto plano, porque un Response también es un object.
+  if (e.context && typeof e.context.json === 'function') {
+    try {
+      const parsed = await e.context.json();
+      const msg = parsed?.message || parsed?.error || parsed?.detail;
+      if (msg) return typeof msg === 'string' ? msg : JSON.stringify(msg);
+    } catch {
+      // fall through
+    }
+  }
+
   if (e.context && typeof e.context === 'object' && !Array.isArray(e.context)) {
     const c = e.context;
     return c?.message || c?.error || c?.detail || e.message || 'Error de servidor';
@@ -26,15 +37,6 @@ async function extractErrorMessage(error: unknown): Promise<string> {
       return parsed?.message || parsed?.error || parsed?.detail || e.context;
     } catch {
       return e.context;
-    }
-  }
-
-  if (e.context && typeof e.context.json === 'function') {
-    try {
-      const parsed = await e.context.json();
-      return parsed?.message || parsed?.error || parsed?.detail || 'Error de servidor';
-    } catch {
-      // fall through
     }
   }
 
@@ -132,6 +134,13 @@ export async function deleteMessage(
   messageId: string
 ): Promise<{ ok: boolean }> {
   return invoke('msg-delete-message', { org_id: orgId, conversation_id: conversationId, message_id: messageId });
+}
+
+export async function deleteConversation(
+  orgId: string,
+  conversationId: string
+): Promise<{ ok: boolean }> {
+  return invoke('msg-conversation', { action: 'delete_conversation', org_id: orgId, conversation_id: conversationId });
 }
 
 export async function leaveConversation(
