@@ -13,6 +13,8 @@ import {
   sendFileMessage,
   createDirectConversation,
   createGroupConversation,
+  toggleExpressConversation,
+  deleteMessage as deleteMessageService,
 } from '@/services/messagingService';
 import { playNotificationSound } from '@/utils/notificationSound';
 
@@ -32,6 +34,8 @@ export interface UseMessagingReturn {
   startGroup: (title: string, memberIds: string[]) => Promise<string | null>;
   sendText: (text: string) => Promise<void>;
   sendFile: (file: File) => Promise<void>;
+  toggleExpress: () => Promise<void>;
+  deleteMessage: (messageId: string) => Promise<void>;
   refresh: () => void;
   clearError: () => void;
   requestNotificationPermission: () => Promise<string>;
@@ -160,6 +164,21 @@ export function useMessaging(): UseMessagingReturn {
       )
       .on(
         'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'msg_messages', filter: `org_id=eq.${orgId}` },
+        (payload: any) => {
+          const updatedMsg = payload.new;
+          const isActive = updatedMsg?.conversation_id === activeConvRef.current;
+          if (isActive) {
+            fetchThread(updatedMsg.conversation_id)
+              .then(setActiveThread)
+              .catch(() => {});
+          }
+          if (debounceRef.current) clearTimeout(debounceRef.current);
+          debounceRef.current = setTimeout(() => refresh(), 400);
+        }
+      )
+      .on(
+        'postgres_changes',
         { event: '*', schema: 'public', table: 'msg_conversations', filter: `org_id=eq.${orgId}` },
         () => {
           if (debounceRef.current) clearTimeout(debounceRef.current);
@@ -281,6 +300,30 @@ export function useMessaging(): UseMessagingReturn {
     }
   }, [orgId, activeConversationId, openConversation, refresh]);
 
+  const toggleExpress = useCallback(async (): Promise<void> => {
+    if (!orgId || !activeConversationId) return;
+    try {
+      await toggleExpressConversation(orgId, activeConversationId);
+      const thread = await fetchThread(activeConversationId);
+      setActiveThread(thread);
+      refresh();
+    } catch (err: any) {
+      setError(err?.message || 'No se pudo cambiar el modo de la conversación');
+    }
+  }, [orgId, activeConversationId, refresh]);
+
+  const deleteMessage = useCallback(async (messageId: string): Promise<void> => {
+    if (!orgId || !activeConversationId) return;
+    try {
+      await deleteMessageService(orgId, activeConversationId, messageId);
+      const thread = await fetchThread(activeConversationId);
+      setActiveThread(thread);
+      refresh();
+    } catch (err: any) {
+      setError(err?.message || 'No se pudo eliminar el mensaje');
+    }
+  }, [orgId, activeConversationId, refresh]);
+
   const clearError = useCallback(() => setError(null), []);
 
   const requestNotificationPermission = useCallback(async (): Promise<string> => {
@@ -311,6 +354,8 @@ export function useMessaging(): UseMessagingReturn {
     startGroup,
     sendText,
     sendFile,
+    toggleExpress,
+    deleteMessage,
     refresh,
     clearError,
     requestNotificationPermission,

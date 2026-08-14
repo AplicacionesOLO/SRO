@@ -119,6 +119,21 @@ export async function renameGroup(
   return invoke('msg-conversation', { action: 'rename', org_id: orgId, conversation_id: conversationId, title });
 }
 
+export async function toggleExpressConversation(
+  orgId: string,
+  conversationId: string
+): Promise<{ ok: boolean; is_express: boolean }> {
+  return invoke('msg-conversation', { action: 'toggle_express', org_id: orgId, conversation_id: conversationId });
+}
+
+export async function deleteMessage(
+  orgId: string,
+  conversationId: string,
+  messageId: string
+): Promise<{ ok: boolean }> {
+  return invoke('msg-delete-message', { org_id: orgId, conversation_id: conversationId, message_id: messageId });
+}
+
 export async function leaveConversation(
   orgId: string,
   conversationId: string

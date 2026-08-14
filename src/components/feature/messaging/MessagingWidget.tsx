@@ -28,6 +28,8 @@ export default function MessagingWidget() {
     startGroup,
     sendText,
     sendFile,
+    toggleExpress,
+    deleteMessage,
     clearError,
     requestNotificationPermission,
     onlineUserIds,
@@ -92,6 +94,8 @@ export default function MessagingWidget() {
           onNewChat={() => setShowNewChat(true)}
           onSendText={sendText}
           onSendFile={sendFile}
+          onToggleExpress={toggleExpress}
+          onDeleteMessage={deleteMessage}
         />
       )}
 

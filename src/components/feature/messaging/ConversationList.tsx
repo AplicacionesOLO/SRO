@@ -122,6 +122,11 @@ export default function ConversationList({
                         {timeAgo(c.last_message_at)}
                       </span>
                     </div>
+                    {c.is_express && (
+                      <p className="text-[10px] text-amber-600 flex items-center gap-1">
+                        <i className="ri-timer-flash-line"></i> Express
+                      </p>
+                    )}
                     {c.type === 'direct' && c.peer?.email && (
                       <p className="text-[11px] text-gray-400 truncate">{c.peer.email}</p>
                     )}

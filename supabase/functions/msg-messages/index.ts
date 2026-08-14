@@ -6,6 +6,9 @@ const corsHeaders = {
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
 
+const EXPRESS_TTL_HOURS = 24;
+const MULTIMEDIA_TTL_MONTHS = 2;
+
 function safeJsonResponse(data: unknown, status: number): Response {
   try {
     return new Response(JSON.stringify(data), { status, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
@@ -35,7 +38,6 @@ Deno.serve(async (req) => {
     const { conversation_id } = body;
     if (!conversation_id) return safeJsonResponse({ error: 'conversation_id required' }, 400);
 
-    // Verify membership
     const { data: myMember } = await supabase
       .from('msg_conversation_members')
       .select('id, org_id')
@@ -46,12 +48,16 @@ Deno.serve(async (req) => {
 
     const orgId = myMember.org_id;
 
-    // Fetch conversation
     const { data: conversation } = await supabase
       .from('msg_conversations')
       .select('*')
       .eq('id', conversation_id)
       .single();
+
+    const isExpress = conversation?.is_express === true;
+    const now = new Date();
+    const expressCutoff = new Date(now.getTime() - EXPRESS_TTL_HOURS * 60 * 60 * 1000).toISOString();
+    const multimediaCutoff = new Date(now.getTime() - MULTIMEDIA_TTL_MONTHS * 30 * 24 * 60 * 60 * 1000).toISOString();
 
     // Fetch members + profiles
     const { data: members } = await supabase
@@ -68,7 +74,7 @@ Deno.serve(async (req) => {
     (profiles ?? []).forEach((p: any) => pMap.set(p.id, p));
 
     // Fetch messages + attachments
-    const { data: messages } = await supabase
+    let msgQuery = supabase
       .from('msg_messages')
       .select('*')
       .eq('conversation_id', conversation_id)
@@ -76,13 +82,21 @@ Deno.serve(async (req) => {
       .order('created_at', { ascending: true })
       .limit(200);
 
+    // En modo express, los mensajes viejos se autodestruyen a las 24h
+    if (isExpress) {
+      msgQuery = msgQuery.gte('created_at', expressCutoff);
+    }
+
+    const { data: messages } = await msgQuery;
+
     const msgIds = (messages ?? []).map((m: any) => m.id);
     let attachmentsByMsg = new Map<string, any[]>();
     if (msgIds.length > 0) {
       const { data: attachments } = await supabase
         .from('msg_attachments')
         .select('*')
-        .in('message_id', msgIds);
+        .in('message_id', msgIds)
+        .gte('created_at', multimediaCutoff);
       for (const a of (attachments ?? [])) {
         const arr = attachmentsByMsg.get(a.message_id) ?? [];
         arr.push(a);
@@ -120,6 +134,7 @@ Deno.serve(async (req) => {
       conversation,
       members: memberList,
       messages: resultMessages,
+      is_express: isExpress,
     }, 200);
   } catch (error: any) {
     console.error('[msg-messages] ERROR:', error?.message || error);

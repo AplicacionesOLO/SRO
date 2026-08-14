@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import type { MessagingContact, MessagingConversation, MessagingThread } from '@/types/messaging';
 import ConversationList from './ConversationList';
 import ConversationView from './ConversationView';
@@ -17,6 +18,8 @@ interface MessagingPanelProps {
   onNewChat: () => void;
   onSendText: (text: string) => void;
   onSendFile: (file: File) => void;
+  onToggleExpress: () => void;
+  onDeleteMessage: (messageId: string) => void;
 }
 
 export default function MessagingPanel({
@@ -34,16 +37,19 @@ export default function MessagingPanel({
   onNewChat,
   onSendText,
   onSendFile,
+  onToggleExpress,
+  onDeleteMessage,
 }: MessagingPanelProps) {
+  const [isExpanded, setIsExpanded] = useState(false);
   const showConversation = !!activeConversationId;
 
   return (
     <div
-      className="fixed bottom-36 right-4 sm:bottom-[9.5rem] sm:right-6 z-[9999] flex flex-col rounded-2xl overflow-hidden bg-white"
+      className="fixed bottom-36 right-4 sm:bottom-[9.5rem] sm:right-6 z-[9999] flex flex-col rounded-2xl overflow-hidden bg-white transition-all duration-200"
       style={{
-        width: 'min(400px, calc(100vw - 2rem))',
-        height: 'min(600px, 72vh)',
-        minHeight: '400px',
+        width: isExpanded ? 'min(720px, calc(100vw - 2rem))' : 'min(400px, calc(100vw - 2rem))',
+        height: isExpanded ? 'min(760px, 88vh)' : 'min(600px, 72vh)',
+        minHeight: isExpanded ? '500px' : '400px',
         boxShadow: '0 8px 40px rgba(0,0,0,0.18)',
       }}
     >
@@ -54,9 +60,13 @@ export default function MessagingPanel({
           sending={sending}
           currentUserId={currentUserId}
           onlineUserIds={onlineUserIds}
+          isExpanded={isExpanded}
           onBack={onBack}
           onSendText={onSendText}
           onSendFile={onSendFile}
+          onToggleExpress={onToggleExpress}
+          onDeleteMessage={onDeleteMessage}
+          onToggleExpand={() => setIsExpanded((v) => !v)}
         />
       ) : (
         <ConversationList

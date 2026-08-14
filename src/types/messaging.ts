@@ -25,6 +25,7 @@ export interface MessagingConversation {
   type: ConversationType;
   title: string | null;
   peer: { id: string; name: string; email: string | null; avatar_url: string | null } | null;
+  is_express: boolean;
   last_message_at: string | null;
   last_message_preview: string | null;
   last_message_sender_id: string | null;
@@ -70,6 +71,8 @@ export interface MessagingThread {
     org_id: string;
     type: ConversationType;
     title: string | null;
+    created_by: string;
+    is_express: boolean;
     last_message_at: string | null;
     last_message_preview: string | null;
     last_message_sender_id: string | null;

@@ -64,7 +64,6 @@ Deno.serve(async (req) => {
       if (!canMessage(myScope, theirScope)) {
         return safeJsonResponse({ error: 'SCOPE_DENIED', message: 'No compartís un almacén con este usuario' }, 403);
       }
-      // find existing direct
       const { data: myMems } = await supabase.from('msg_conversation_members').select('conversation_id').eq('user_id', userId).eq('org_id', org_id);
       const { data: theirMems } = await supabase.from('msg_conversation_members').select('conversation_id').eq('user_id', recipient_id).eq('org_id', org_id);
       const mySet = new Set((myMems ?? []).map((m: any) => m.conversation_id));
@@ -125,6 +124,14 @@ Deno.serve(async (req) => {
       if (conv?.type !== 'group') return safeJsonResponse({ error: 'Solo se renombran grupos' }, 400);
       await supabase.from('msg_conversations').update({ title, updated_at: new Date().toISOString() }).eq('id', conversation_id);
       return safeJsonResponse({ ok: true }, 200);
+    }
+
+    if (action === 'toggle_express') {
+      const { data: conv } = await supabase.from('msg_conversations').select('is_express').eq('id', conversation_id).single();
+      if (!conv) return safeJsonResponse({ error: 'Conversación no encontrada' }, 404);
+      const next = !conv.is_express;
+      await supabase.from('msg_conversations').update({ is_express: next, updated_at: new Date().toISOString() }).eq('id', conversation_id);
+      return safeJsonResponse({ ok: true, is_express: next }, 200);
     }
 
     if (action === 'add_members') {

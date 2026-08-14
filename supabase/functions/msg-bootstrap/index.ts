@@ -143,6 +143,7 @@ Deno.serve(async (req) => {
           type: c.type,
           title,
           peer,
+          is_express: c.is_express === true,
           last_message_at: c.last_message_at,
           last_message_preview: c.last_message_preview,
           last_message_sender_id: c.last_message_sender_id,

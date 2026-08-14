@@ -2,6 +2,10 @@ import { useState, useEffect, useRef } from 'react';
 import type { MessagingThread, MessagingMessage, MessagingAttachment } from '@/types/messaging';
 import { getFileUrl } from '@/services/messagingService';
 import Avatar from './Avatar';
+import ChatComposer from './ChatComposer';
+import VoiceNotePlayer from './VoiceNotePlayer';
+
+const DELETE_WINDOW_MS = 60 * 1000; // 1 minuto
 
 interface ConversationViewProps {
   thread: MessagingThread | null;
@@ -9,9 +13,13 @@ interface ConversationViewProps {
   sending: boolean;
   currentUserId: string | null;
   onlineUserIds: Set<string>;
+  isExpanded: boolean;
   onBack: () => void;
   onSendText: (text: string) => void;
   onSendFile: (file: File) => void;
+  onToggleExpress: () => void;
+  onDeleteMessage: (messageId: string) => void;
+  onToggleExpand: () => void;
 }
 
 function formatTime(dateStr: string): string {
@@ -28,6 +36,11 @@ function AttachmentChip({ attachment }: { attachment: MessagingAttachment }) {
   const [loading, setLoading] = useState(false);
 
   const isImage = attachment.file_type?.startsWith('image/');
+  const isAudio = attachment.file_type?.startsWith('audio/');
+
+  if (isAudio) {
+    return <VoiceNotePlayer attachment={attachment} />;
+  }
 
   const handleOpen = async () => {
     setLoading(true);
@@ -35,7 +48,7 @@ function AttachmentChip({ attachment }: { attachment: MessagingAttachment }) {
       const { url } = await getFileUrl(attachment.id);
       window.open(url, '_blank', 'noopener');
     } catch {
-      // ignore — user gets no feedback but link fails silently
+      // ignore
     } finally {
       setLoading(false);
     }
@@ -66,9 +79,13 @@ function AttachmentChip({ attachment }: { attachment: MessagingAttachment }) {
 function MessageItem({
   message,
   isMine,
+  deletable,
+  onDelete,
 }: {
   message: MessagingMessage;
   isMine: boolean;
+  deletable: boolean;
+  onDelete: () => void;
 }) {
   const hasFiles = message.attachments.length > 0;
 
@@ -88,7 +105,18 @@ function MessageItem({
               ))}
             </div>
           )}
-          <p className="text-[11px] text-gray-400 mt-0.5 text-right">{formatTime(message.created_at)}</p>
+          <div className="flex items-center justify-end gap-1 mt-0.5">
+            {deletable && (
+              <button
+                onClick={onDelete}
+                className="w-5 h-5 flex items-center justify-center rounded-full text-gray-400 hover:text-red-500 hover:bg-red-50 transition-colors cursor-pointer"
+                title="Eliminar mensaje"
+              >
+                <i className="ri-delete-bin-6-line text-xs"></i>
+              </button>
+            )}
+            <p className="text-[11px] text-gray-400 text-right">{formatTime(message.created_at)}</p>
+          </div>
         </div>
       </div>
     );
@@ -113,7 +141,18 @@ function MessageItem({
             ))}
           </div>
         )}
-        <p className="text-[11px] text-gray-400 mt-0.5">{formatTime(message.created_at)}</p>
+        <div className="flex items-center gap-1 mt-0.5">
+          <p className="text-[11px] text-gray-400">{formatTime(message.created_at)}</p>
+          {deletable && (
+            <button
+              onClick={onDelete}
+              className="w-5 h-5 flex items-center justify-center rounded-full text-gray-400 hover:text-red-500 hover:bg-red-50 transition-colors cursor-pointer"
+              title="Eliminar mensaje"
+            >
+              <i className="ri-delete-bin-6-line text-xs"></i>
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -125,46 +164,39 @@ export default function ConversationView({
   sending,
   currentUserId,
   onlineUserIds,
+  isExpanded,
   onBack,
   onSendText,
   onSendFile,
+  onToggleExpress,
+  onDeleteMessage,
+  onToggleExpand,
 }: ConversationViewProps) {
-  const [input, setInput] = useState('');
   const bottomRef = useRef<HTMLDivElement>(null);
-  const fileRef = useRef<HTMLInputElement>(null);
 
   const title = thread?.conversation?.title || 'Conversación';
   const members = thread?.members || [];
   const messages = thread?.messages || [];
   const isGroup = thread?.conversation?.type === 'group';
+  const isExpress = thread?.conversation?.is_express === true;
+  const createdBy = thread?.conversation?.created_by ?? null;
   const peer = !isGroup ? members.find((m) => m.user_id !== currentUserId) : null;
   const headerTitle = isGroup ? (title || 'Grupo') : (peer?.name || title || 'Conversación');
   const peerOnline = peer ? onlineUserIds.has(peer.user_id) : false;
   const onlineCount = members.filter((m) => onlineUserIds.has(m.user_id)).length;
 
+  const canDelete = (m: MessagingMessage): boolean => {
+    if (!currentUserId || !m.created_at) return false;
+    const elapsed = Date.now() - new Date(m.created_at).getTime();
+    if (elapsed > DELETE_WINDOW_MS) return false;
+    const isMine = m.sender_id === currentUserId;
+    const isCreator = createdBy === currentUserId;
+    return isMine || isCreator;
+  };
+
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, sending]);
-
-  const handleSubmit = () => {
-    const text = input.trim();
-    if (!text || sending) return;
-    setInput('');
-    onSendText(text);
-  };
-
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      handleSubmit();
-    }
-  };
-
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) onSendFile(file);
-    e.target.value = '';
-  };
 
   return (
     <div className="flex flex-col h-full">
@@ -214,7 +246,22 @@ export default function ConversationView({
             ))}
           </div>
         )}
+        <button
+          onClick={onToggleExpand}
+          className="w-7 h-7 flex items-center justify-center rounded-full text-white/80 hover:bg-white/20 transition-colors cursor-pointer flex-shrink-0"
+          title={isExpanded ? 'Restaurar' : 'Ampliar'}
+        >
+          <i className={`text-base ${isExpanded ? 'ri-fullscreen-exit-line' : 'ri-fullscreen-line'}`}></i>
+        </button>
       </div>
+
+      {/* Express banner */}
+      {isExpress && (
+        <div className="px-3 py-1.5 bg-amber-50 border-b border-amber-200 flex items-center gap-2 flex-shrink-0">
+          <i className="ri-timer-flash-line text-amber-600 text-sm flex-shrink-0"></i>
+          <span className="text-[11px] text-amber-700">Conversación express: los mensajes se eliminan a las 24h</span>
+        </div>
+      )}
 
       {/* Messages */}
       <div className="flex-1 overflow-y-auto px-4 py-4 bg-gray-50">
@@ -231,7 +278,13 @@ export default function ConversationView({
         ) : (
           <>
             {messages.map((m) => (
-              <MessageItem key={m.id} message={m} isMine={m.sender_id === currentUserId} />
+              <MessageItem
+                key={m.id}
+                message={m}
+                isMine={m.sender_id === currentUserId}
+                deletable={canDelete(m)}
+                onDelete={() => onDeleteMessage(m.id)}
+              />
             ))}
             {sending && (
               <div className="flex justify-end mb-3">
@@ -246,41 +299,20 @@ export default function ConversationView({
         <div ref={bottomRef} />
       </div>
 
-      {/* Composer */}
-      <div className="px-3 py-3 bg-white border-t border-gray-200 flex-shrink-0">
-        <div className="flex items-end gap-2">
-          <input
-            ref={fileRef}
-            type="file"
-            className="hidden"
-            onChange={handleFileChange}
-          />
-          <button
-            onClick={() => fileRef.current?.click()}
-            disabled={sending}
-            title="Adjuntar archivo"
-            className="w-9 h-9 flex items-center justify-center rounded-xl text-emerald-600 hover:bg-emerald-50 transition-colors cursor-pointer disabled:opacity-40 flex-shrink-0"
-          >
-            <i className="ri-attachment-2 text-lg"></i>
-          </button>
-          <textarea
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder="Escribí un mensaje..."
-            rows={1}
-            disabled={sending}
-            className="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-xl resize-none focus:outline-none focus:border-emerald-500 disabled:opacity-60"
-            style={{ maxHeight: '96px', overflow: 'auto' }}
-          />
-          <button
-            onClick={handleSubmit}
-            disabled={!input.trim() || sending}
-            className="w-9 h-9 flex items-center justify-center bg-emerald-600 text-white rounded-xl hover:bg-emerald-700 disabled:opacity-40 cursor-pointer flex-shrink-0 transition-colors"
-          >
-            <i className="ri-send-plane-fill text-sm"></i>
-          </button>
+      {/* Express toggle + composer */}
+      <div className="flex-shrink-0">
+        <div className="px-4 py-2 bg-gray-50 border-t border-gray-200 flex items-center justify-between">
+          <label className="flex items-center gap-2 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={isExpress}
+              onChange={onToggleExpress}
+              className="w-4 h-4 accent-amber-500 cursor-pointer"
+            />
+            <span className="text-xs text-gray-600">Conversación express (borrar en 24h)</span>
+          </label>
         </div>
+        <ChatComposer sending={sending} onSendText={onSendText} onSendFile={onSendFile} />
       </div>
     </div>
   );
