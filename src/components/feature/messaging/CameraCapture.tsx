@@ -10,9 +10,11 @@ interface CameraCaptureProps {
 export default function CameraCapture({ onCapture, onClose, onPickFromGallery }: CameraCaptureProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const nativeInputRef = useRef<HTMLInputElement>(null);
   const [facingMode, setFacingMode] = useState<'environment' | 'user'>('environment');
   const [error, setError] = useState<string | null>(null);
   const [starting, setStarting] = useState(true);
+  const [ready, setReady] = useState(false);
 
   const stopStream = useCallback(() => {
     streamRef.current?.getTracks().forEach((t) => t.stop());
@@ -23,22 +25,38 @@ export default function CameraCapture({ onCapture, onClose, onPickFromGallery }:
     async (mode: 'environment' | 'user') => {
       setStarting(true);
       setError(null);
+      setReady(false);
       stopStream();
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: mode, width: { ideal: 1920 }, height: { ideal: 1080 } },
-          audio: false,
-        });
-        streamRef.current = stream;
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream;
-          await videoRef.current.play();
-        }
-      } catch {
-        setError('No se pudo acceder a la cámara. Revisá que le hayas dado permiso al navegador.');
-      } finally {
+
+      if (!navigator.mediaDevices?.getUserMedia) {
+        setError('Este navegador no permite abrir la cámara directamente. Usá la cámara del sistema.');
         setStarting(false);
+        return;
       }
+
+      // Intentamos varias configuraciones, de más específica a más genérica,
+      // porque algunos celulares fallan con restricciones de resolución.
+      const attempts = [
+        { video: { facingMode: mode } },
+        { video: true },
+      ];
+
+      for (const constraints of attempts) {
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia(constraints);
+          streamRef.current = stream;
+          if (videoRef.current) {
+            videoRef.current.srcObject = stream;
+          }
+          setStarting(false);
+          return;
+        } catch {
+          // probamos la siguiente configuración
+        }
+      }
+
+      setError('No se pudo acceder a la cámara. Podés abrir la cámara del sistema o elegir de la galería.');
+      setStarting(false);
     },
     [stopStream]
   );
@@ -56,7 +74,7 @@ export default function CameraCapture({ onCapture, onClose, onPickFromGallery }:
 
   const capture = () => {
     const video = videoRef.current;
-    if (!video || !video.videoWidth) return;
+    if (!video || !video.videoWidth || !video.videoHeight) return;
     const canvas = document.createElement('canvas');
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
@@ -74,15 +92,35 @@ export default function CameraCapture({ onCapture, onClose, onPickFromGallery }:
     );
   };
 
+  const handleNativeFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) onCapture(file);
+  };
+
   return createPortal(
     <div className="fixed inset-0 z-[10005] bg-black flex flex-col">
+      <input
+        ref={nativeInputRef}
+        type="file"
+        accept="image/*"
+        capture="environment"
+        className="hidden"
+        onChange={handleNativeFile}
+      />
+
       <div className="relative flex-1 min-h-0">
         {error ? (
-          <div className="h-full flex flex-col items-center justify-center px-6 text-center">
-            <span className="w-14 h-14 rounded-full bg-white/10 flex items-center justify-center mb-3">
+          <div className="h-full flex flex-col items-center justify-center px-6 text-center gap-4">
+            <span className="w-14 h-14 rounded-full bg-white/10 flex items-center justify-center">
               <i className="ri-camera-off-line text-white text-2xl"></i>
             </span>
             <p className="text-white text-sm leading-relaxed max-w-xs">{error}</p>
+            <button
+              onClick={() => nativeInputRef.current?.click()}
+              className="px-5 py-2.5 bg-white text-black rounded-full text-sm font-semibold whitespace-nowrap cursor-pointer"
+            >
+              Abrir cámara del sistema
+            </button>
           </div>
         ) : (
           <>
@@ -96,6 +134,7 @@ export default function CameraCapture({ onCapture, onClose, onPickFromGallery }:
               autoPlay
               playsInline
               muted
+              onLoadedMetadata={() => setReady(true)}
               className={`w-full h-full object-cover ${facingMode === 'user' ? '-scale-x-100' : ''}`}
             />
           </>
@@ -122,7 +161,7 @@ export default function CameraCapture({ onCapture, onClose, onPickFromGallery }:
 
         <button
           onClick={capture}
-          disabled={starting || !!error}
+          disabled={starting || !!error || !ready}
           className="w-16 h-16 rounded-full bg-white flex items-center justify-center transition-transform active:scale-95 cursor-pointer disabled:opacity-40"
           title="Tomar foto"
         >
