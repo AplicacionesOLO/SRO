@@ -33,8 +33,8 @@ export interface UseMessagingReturn {
   closeConversation: () => void;
   startDirect: (recipientId: string) => Promise<string | null>;
   startGroup: (title: string, memberIds: string[]) => Promise<string | null>;
-  sendFiles: (files: File[], text?: string) => Promise<void>;
-  sendVoiceNote: (file: File) => Promise<void>;
+  sendFiles: (files: File[], text?: string, replyToMessageId?: string | null) => Promise<void>;
+  sendVoiceNote: (file: File, replyToMessageId?: string | null) => Promise<void>;
   toggleExpress: () => Promise<void>;
   deleteMessage: (messageId: string) => Promise<void>;
   deleteConversation: (conversationId: string) => Promise<void>;
@@ -281,7 +281,7 @@ export function useMessaging(): UseMessagingReturn {
     }
   }, [orgId, refresh, openConversation]);
 
-  const sendFiles = useCallback(async (files: File[], text?: string): Promise<void> => {
+  const sendFiles = useCallback(async (files: File[], text?: string, replyToMessageId?: string | null): Promise<void> => {
     if (!orgId) return;
     const trimmed = (text ?? '').trim();
     if (files.length === 0 && !trimmed) return;
@@ -291,13 +291,15 @@ export function useMessaging(): UseMessagingReturn {
       let res: { conversation_id: string };
 
       if (files.length > 0) {
-        const params: { conversation_id?: string; recipient_id?: string; files: File[]; content?: string } = { files };
+        const params: { conversation_id?: string; recipient_id?: string; files: File[]; content?: string; reply_to_message_id?: string | null } = { files };
         if (convId) params.conversation_id = convId;
         if (trimmed) params.content = trimmed;
+        if (replyToMessageId) params.reply_to_message_id = replyToMessageId;
         res = await sendFilesMessage(orgId, params);
       } else {
-        const payload: { conversation_id?: string; recipient_id?: string; content: string } = { content: trimmed };
+        const payload: { conversation_id?: string; recipient_id?: string; content: string; reply_to_message_id?: string | null } = { content: trimmed };
         if (convId) payload.conversation_id = convId;
+        if (replyToMessageId) payload.reply_to_message_id = replyToMessageId;
         res = await sendTextMessage(orgId, payload);
       }
 
@@ -317,8 +319,8 @@ export function useMessaging(): UseMessagingReturn {
     }
   }, [orgId, activeConversationId, openConversation, refresh]);
 
-  const sendVoiceNote = useCallback(async (file: File): Promise<void> => {
-    await sendFiles([file]);
+  const sendVoiceNote = useCallback(async (file: File, replyToMessageId?: string | null): Promise<void> => {
+    await sendFiles([file], undefined, replyToMessageId);
   }, [sendFiles]);
 
   const toggleExpress = useCallback(async (): Promise<void> => {

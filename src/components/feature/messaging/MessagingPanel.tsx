@@ -16,8 +16,8 @@ interface MessagingPanelProps {
   onSelect: (id: string) => void;
   onBack: () => void;
   onNewChat: () => void;
-  onSend: (text: string, files: File[]) => void;
-  onSendVoiceNote: (file: File) => void;
+  onSend: (text: string, files: File[], replyToMessageId?: string | null) => void;
+  onSendVoiceNote: (file: File, replyToMessageId?: string | null) => void;
   onToggleExpress: () => void;
   onDeleteMessage: (messageId: string) => void;
   onDeleteConversation: (id: string) => void;

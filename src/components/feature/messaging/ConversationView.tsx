@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo, type ReactNode } from 'react';
-import type { MessagingThread, MessagingMessage, MessagingAttachment, MessagingMember } from '@/types/messaging';
+import type { MessagingThread, MessagingMessage, MessagingAttachment, MessagingMember, MessagingReplyTo } from '@/types/messaging';
 import { getFileUrl } from '@/services/messagingService';
 import Avatar from './Avatar';
 import ChatComposer from './ChatComposer';
@@ -16,8 +16,8 @@ interface ConversationViewProps {
   onlineUserIds: Set<string>;
   isExpanded: boolean;
   onBack: () => void;
-  onSend: (text: string, files: File[]) => void;
-  onSendVoiceNote: (file: File) => void;
+  onSend: (text: string, files: File[], replyToMessageId?: string | null) => void;
+  onSendVoiceNote: (file: File, replyToMessageId?: string | null) => void;
   onToggleExpress: () => void;
   onDeleteMessage: (messageId: string) => void;
   onDeleteConversation: (conversationId: string) => void;
@@ -128,11 +128,40 @@ function AttachmentChip({ attachment, highlightQuery }: { attachment: MessagingA
   );
 }
 
+function replyPreview(replyTo: MessagingReplyTo): string {
+  if (replyTo.deleted) return 'Mensaje eliminado';
+  if (replyTo.content && replyTo.content.trim()) return replyTo.content;
+  if (replyTo.has_attachments) return '📎 Archivo adjunto';
+  return '';
+}
+
+function ReplyQuote({ replyTo, isMine, onClick }: { replyTo: MessagingReplyTo; isMine?: boolean; onClick?: () => void }) {
+  const preview = replyPreview(replyTo);
+  const clickable = !replyTo.deleted && typeof onClick === 'function';
+  return (
+    <div
+      onClick={clickable ? onClick : undefined}
+      title={clickable ? 'Ir al mensaje original' : undefined}
+      className={`mb-1.5 px-2.5 py-1.5 rounded-lg text-xs leading-snug flex gap-2 transition-colors ${
+        clickable ? 'cursor-pointer' : ''
+      } ${isMine ? 'bg-emerald-700/40 text-emerald-50 hover:bg-emerald-700/60' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
+    >
+      <span className={`w-0.5 self-stretch rounded-full flex-shrink-0 ${isMine ? 'bg-emerald-200' : 'bg-emerald-400'}`}></span>
+      <div className="min-w-0 flex-1">
+        <p className={`font-semibold mb-0.5 ${isMine ? 'text-emerald-100' : 'text-emerald-700'}`}>{replyTo.sender_name}</p>
+        <p className={`truncate ${replyTo.deleted ? 'italic opacity-70' : ''}`}>{preview || ' '}</p>
+      </div>
+    </div>
+  );
+}
+
 function MessageItem({
   message,
   isMine,
   deletable,
   onDelete,
+  onReply,
+  onScrollToMessage,
   highlightQuery,
   status,
 }: {
@@ -140,6 +169,8 @@ function MessageItem({
   isMine: boolean;
   deletable: boolean;
   onDelete: () => void;
+  onReply: () => void;
+  onScrollToMessage: (id: string) => void;
   highlightQuery?: string;
   status?: MessageStatus | null;
 }) {
@@ -149,6 +180,9 @@ function MessageItem({
     return (
       <div className="flex justify-end mb-3">
         <div className="max-w-[78%]">
+          {message.reply_to && (
+            <ReplyQuote replyTo={message.reply_to} isMine onClick={() => onScrollToMessage(message.reply_to!.id)} />
+          )}
           {message.content && (
             <div className="bg-emerald-600 text-white px-3 py-2 rounded-2xl rounded-tr-sm text-sm leading-relaxed whitespace-pre-wrap break-words">
               {highlightQuery ? <HighlightedText text={message.content} query={highlightQuery} /> : message.content}
@@ -162,6 +196,13 @@ function MessageItem({
             </div>
           )}
           <div className="flex items-center justify-end gap-1 mt-0.5">
+            <button
+              onClick={onReply}
+              className="w-5 h-5 flex items-center justify-center rounded-full text-gray-400 hover:text-emerald-600 hover:bg-emerald-50 transition-colors cursor-pointer"
+              title="Responder"
+            >
+              <i className="ri-reply-line text-xs"></i>
+            </button>
             {deletable && (
               <button
                 onClick={onDelete}
@@ -195,6 +236,9 @@ function MessageItem({
       </div>
       <div className="max-w-[78%] min-w-0">
         <p className="text-[11px] text-gray-400 mb-0.5">{message.sender_name}</p>
+        {message.reply_to && (
+          <ReplyQuote replyTo={message.reply_to} onClick={() => onScrollToMessage(message.reply_to!.id)} />
+        )}
         {message.content && (
           <div className="bg-white border border-gray-200 rounded-2xl rounded-tl-sm px-3 py-2 text-sm text-gray-800 leading-relaxed whitespace-pre-wrap break-words">
             {highlightQuery ? <HighlightedText text={message.content} query={highlightQuery} /> : message.content}
@@ -209,6 +253,13 @@ function MessageItem({
         )}
         <div className="flex items-center gap-1 mt-0.5">
           <p className="text-[11px] text-gray-400">{formatTime(message.created_at)}</p>
+          <button
+            onClick={onReply}
+            className="w-5 h-5 flex items-center justify-center rounded-full text-gray-400 hover:text-emerald-600 hover:bg-emerald-50 transition-colors cursor-pointer"
+            title="Responder"
+          >
+            <i className="ri-reply-line text-xs"></i>
+          </button>
           {deletable && (
             <button
               onClick={onDelete}
@@ -247,6 +298,8 @@ export default function ConversationView({
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [activeMatch, setActiveMatch] = useState(0);
+  const [replyTo, setReplyTo] = useState<MessagingMessage | null>(null);
+  const [flashId, setFlashId] = useState<string | null>(null);
 
   const title = thread?.conversation?.title || 'Conversación';
   const members = thread?.members || [];
@@ -298,6 +351,27 @@ export default function ConversationView({
   const goPrev = () => {
     if (matchedIds.length === 0) return;
     setActiveMatch((i) => (i - 1 + matchedIds.length) % matchedIds.length);
+  };
+
+  const handleSend = (text: string, files: File[]) => {
+    onSend(text, files, replyTo?.id ?? null);
+    setReplyTo(null);
+  };
+
+  const handleSendVoiceNote = (file: File) => {
+    onSendVoiceNote(file, replyTo?.id ?? null);
+    setReplyTo(null);
+  };
+
+  const scrollToMessage = (id: string) => {
+    const el = messageRefs.current.get(id);
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      setFlashId(id);
+      window.setTimeout(() => {
+        setFlashId((cur) => (cur === id ? null : cur));
+      }, 1600);
+    }
   };
 
   useEffect(() => {
@@ -465,13 +539,21 @@ export default function ConversationView({
                     if (el) messageRefs.current.set(m.id, el);
                     else messageRefs.current.delete(m.id);
                   }}
-                  className={isActive ? 'bg-amber-100/80 rounded-lg' : ''}
+                  className={
+                    isActive
+                      ? 'bg-amber-100/80 rounded-lg'
+                      : flashId === m.id
+                      ? 'bg-emerald-100/80 rounded-lg transition-colors'
+                      : ''
+                  }
                 >
                   <MessageItem
                     message={m}
                     isMine={isMine}
                     deletable={canDelete(m)}
                     onDelete={() => onDeleteMessage(m.id)}
+                    onReply={() => setReplyTo(m)}
+                    onScrollToMessage={scrollToMessage}
                     highlightQuery={searchOpen ? searchQuery : ''}
                     status={status}
                   />
@@ -508,9 +590,11 @@ export default function ConversationView({
           sending={sending}
           initialText={draft?.text ?? ''}
           initialFiles={draft?.files ?? []}
-          onSend={onSend}
-          onSendVoiceNote={onSendVoiceNote}
+          onSend={handleSend}
+          onSendVoiceNote={handleSendVoiceNote}
           onDraftChange={onDraftChange}
+          replyTo={replyTo}
+          onCancelReply={() => setReplyTo(null)}
         />
       </div>
 

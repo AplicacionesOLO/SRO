@@ -78,6 +78,7 @@ Deno.serve(async (req) => {
     let conversationId: string | null = null;
     let recipientId: string | null = null;
     let textContent: string | null = null;
+    let replyToId: string | null = null;
     let files: File[] = [];
 
     if (contentType.includes('multipart/form-data')) {
@@ -86,6 +87,7 @@ Deno.serve(async (req) => {
       conversationId = (form.get('conversation_id') as string) || null;
       recipientId = (form.get('recipient_id') as string) || null;
       textContent = (form.get('content') as string) || null;
+      replyToId = (form.get('reply_to_message_id') as string) || null;
       const single = form.get('file') as File | null;
       if (single) files.push(single);
       const multi = form.getAll('files') as File[];
@@ -97,6 +99,7 @@ Deno.serve(async (req) => {
       conversationId = body.conversation_id || null;
       recipientId = body.recipient_id || null;
       textContent = body.content ?? null;
+      replyToId = body.reply_to_message_id || null;
     }
 
     if (!orgId) return safeJsonResponse({ error: 'org_id required' }, 400);
@@ -117,6 +120,17 @@ Deno.serve(async (req) => {
     // Verify membership
     const { data: myMember } = await supabase.from('msg_conversation_members').select('id').eq('conversation_id', conversationId).eq('user_id', userId).maybeSingle();
     if (!myMember) return safeJsonResponse({ error: 'No sos miembro de esta conversación' }, 403);
+
+    // Validate the referenced message (if any) belongs to this conversation
+    if (replyToId) {
+      const { data: replyMsg } = await supabase
+        .from('msg_messages')
+        .select('id')
+        .eq('id', replyToId)
+        .eq('conversation_id', conversationId)
+        .maybeSingle();
+      if (!replyMsg) replyToId = null;
+    }
 
     // Validate content
     const hasText = !!textContent && textContent.trim().length > 0;
@@ -149,13 +163,16 @@ Deno.serve(async (req) => {
     }
 
     const now = new Date().toISOString();
-    const { data: msg, error: mErr } = await supabase.from('msg_messages').insert({
+    const insertPayload: any = {
       conversation_id: conversationId,
       org_id: orgId,
       sender_id: userId,
       type: msgType,
       content: msgContent,
-    }).select('*').single();
+    };
+    if (replyToId) insertPayload.reply_to_message_id = replyToId;
+
+    const { data: msg, error: mErr } = await supabase.from('msg_messages').insert(insertPayload).select('*').single();
     if (mErr) return safeJsonResponse({ error: mErr.message }, 500);
 
     if (attachments.length > 0) {

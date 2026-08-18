@@ -73,7 +73,7 @@ Deno.serve(async (req) => {
     const pMap = new Map<string, any>();
     (profiles ?? []).forEach((p: any) => pMap.set(p.id, p));
 
-    // Fetch messages + attachments
+    // Fetch messages
     let msgQuery = supabase
       .from('msg_messages')
       .select('*')
@@ -88,14 +88,37 @@ Deno.serve(async (req) => {
     }
 
     const { data: messages } = await msgQuery;
+    const mainMessages = messages ?? [];
 
-    const msgIds = (messages ?? []).map((m: any) => m.id);
+    // Recopilar referencias de "responder a"
+    const replyIdSet = new Set<string>();
+    mainMessages.forEach((m: any) => {
+      if (m.reply_to_message_id) replyIdSet.add(m.reply_to_message_id);
+    });
+
+    const existingIds = new Set(mainMessages.map((m: any) => m.id));
+    const missingReplyIds = Array.from(replyIdSet).filter((id) => !existingIds.has(id));
+
+    // Traer los mensajes citados que no estén en la lista principal
+    let extraMessages: any[] = [];
+    if (missingReplyIds.length > 0) {
+      const { data: extra } = await supabase.from('msg_messages').select('*').in('id', missingReplyIds);
+      extraMessages = extra ?? [];
+    }
+
+    // Mapa de todos los mensajes (principales + citados) para resolver la referencia
+    const allMessageById = new Map<string, any>();
+    mainMessages.forEach((m: any) => allMessageById.set(m.id, m));
+    extraMessages.forEach((m: any) => allMessageById.set(m.id, m));
+
+    // Adjuntos de los mensajes principales
+    const mainMsgIds = mainMessages.map((m: any) => m.id);
     let attachmentsByMsg = new Map<string, any[]>();
-    if (msgIds.length > 0) {
+    if (mainMsgIds.length > 0) {
       const { data: attachments } = await supabase
         .from('msg_attachments')
         .select('*')
-        .in('message_id', msgIds)
+        .in('message_id', mainMsgIds)
         .gte('created_at', multimediaCutoff);
       for (const a of (attachments ?? [])) {
         const arr = attachmentsByMsg.get(a.message_id) ?? [];
@@ -104,13 +127,54 @@ Deno.serve(async (req) => {
       }
     }
 
-    const resultMessages = (messages ?? []).map((m: any) => {
+    // Adjuntos de los mensajes citados que no estén cubiertos
+    const replyIdsNeedingAttachments = Array.from(replyIdSet).filter((id) => !attachmentsByMsg.has(id));
+    if (replyIdsNeedingAttachments.length > 0) {
+      const { data: replyAttachments } = await supabase
+        .from('msg_attachments')
+        .select('*')
+        .in('message_id', replyIdsNeedingAttachments);
+      for (const a of (replyAttachments ?? [])) {
+        const arr = attachmentsByMsg.get(a.message_id) ?? [];
+        arr.push(a);
+        attachmentsByMsg.set(a.message_id, arr);
+      }
+    }
+
+    const resultMessages = mainMessages.map((m: any) => {
       const sender = pMap.get(m.sender_id);
+      let replyTo: any = null;
+      if (m.reply_to_message_id) {
+        const replied = allMessageById.get(m.reply_to_message_id);
+        if (replied) {
+          const repliedSender = pMap.get(replied.sender_id);
+          replyTo = {
+            id: replied.id,
+            sender_id: replied.sender_id,
+            sender_name: repliedSender?.name || 'Usuario',
+            content: replied.content || '',
+            type: replied.type || 'text',
+            has_attachments: (attachmentsByMsg.get(replied.id) ?? []).length > 0,
+            deleted: !!replied.deleted_at,
+          };
+        } else {
+          replyTo = {
+            id: m.reply_to_message_id,
+            sender_id: null,
+            sender_name: 'Mensaje',
+            content: '',
+            type: 'text',
+            has_attachments: false,
+            deleted: true,
+          };
+        }
+      }
       return {
         ...m,
         sender_name: sender?.name || 'Usuario',
         sender_avatar_url: sender?.avatar_url || null,
         attachments: attachmentsByMsg.get(m.id) ?? [],
+        reply_to: replyTo,
       };
     });
 

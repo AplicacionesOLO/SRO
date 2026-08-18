@@ -122,7 +122,7 @@ export default function MessagingWidget() {
           onSelect={openConversation}
           onBack={closeConversation}
           onNewChat={() => setShowNewChat(true)}
-          onSend={(text, files) => sendFiles(files, text)}
+          onSend={(text, files, replyToMessageId) => sendFiles(files, text, replyToMessageId)}
           onSendVoiceNote={sendVoiceNote}
           onToggleExpress={toggleExpress}
           onDeleteMessage={deleteMessage}

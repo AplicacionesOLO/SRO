@@ -62,25 +62,27 @@ export async function fetchThread(conversationId: string): Promise<MessagingThre
 
 export async function sendTextMessage(
   orgId: string,
-  params: { conversation_id?: string; recipient_id?: string; content: string }
+  params: { conversation_id?: string; recipient_id?: string; content: string; reply_to_message_id?: string | null }
 ): Promise<{ message: MessagingMessage; conversation_id: string }> {
   return invoke('msg-send', {
     org_id: orgId,
     conversation_id: params.conversation_id,
     recipient_id: params.recipient_id,
     content: params.content,
+    reply_to_message_id: params.reply_to_message_id || null,
   });
 }
 
 export async function sendFilesMessage(
   orgId: string,
-  params: { conversation_id?: string; recipient_id?: string; files: File[]; content?: string }
+  params: { conversation_id?: string; recipient_id?: string; files: File[]; content?: string; reply_to_message_id?: string | null }
 ): Promise<{ message: MessagingMessage; conversation_id: string }> {
   const form = new FormData();
   form.append('org_id', orgId);
   if (params.conversation_id) form.append('conversation_id', params.conversation_id);
   if (params.recipient_id) form.append('recipient_id', params.recipient_id);
   if (params.content) form.append('content', params.content);
+  if (params.reply_to_message_id) form.append('reply_to_message_id', params.reply_to_message_id);
   for (const file of params.files) {
     form.append('files', file);
   }

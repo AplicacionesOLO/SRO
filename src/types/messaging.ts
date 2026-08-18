@@ -44,6 +44,16 @@ export interface MessagingAttachment {
   created_at: string;
 }
 
+export interface MessagingReplyTo {
+  id: string;
+  sender_id: string | null;
+  sender_name: string;
+  content: string;
+  type: MessageType;
+  has_attachments: boolean;
+  deleted: boolean;
+}
+
 export interface MessagingMessage {
   id: string;
   conversation_id: string;
@@ -51,6 +61,8 @@ export interface MessagingMessage {
   sender_id: string;
   type: MessageType;
   content: string;
+  reply_to_message_id?: string | null;
+  reply_to?: MessagingReplyTo | null;
   deleted_at?: string | null;
   created_at: string;
   sender_name: string;

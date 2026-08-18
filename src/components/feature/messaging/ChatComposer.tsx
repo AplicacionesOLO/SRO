@@ -1,5 +1,8 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
+import type { MessagingMessage } from '@/types/messaging';
 import EmojiPicker from './EmojiPicker';
+import { compressImageFile, isImage, voiceNoteBitrate } from '@/utils/mediaCompression';
+import SendQualityModal from './SendQualityModal';
 
 const MAX_FILES = 5;
 const MAX_TEXTAREA_HEIGHT = 120;
@@ -8,6 +11,12 @@ function formatFileSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function composerReplyPreview(m: MessagingMessage): string {
+  if (m.content && m.content.trim()) return m.content;
+  if (m.attachments.length > 0) return '📎 Archivo adjunto';
+  return '';
 }
 
 function PendingFileChip({ file, onRemove }: { file: File; onRemove: () => void }) {
@@ -54,6 +63,8 @@ interface ChatComposerProps {
   onSend: (text: string, files: File[]) => void;
   onSendVoiceNote: (file: File) => void;
   onDraftChange: (text: string, files: File[]) => void;
+  replyTo?: MessagingMessage | null;
+  onCancelReply?: () => void;
 }
 
 export default function ChatComposer({
@@ -63,6 +74,8 @@ export default function ChatComposer({
   onSend,
   onSendVoiceNote,
   onDraftChange,
+  replyTo = null,
+  onCancelReply,
 }: ChatComposerProps) {
   const [input, setInput] = useState(initialText);
   const [pendingFiles, setPendingFiles] = useState<File[]>(initialFiles);
@@ -70,6 +83,9 @@ export default function ChatComposer({
   const [recording, setRecording] = useState(false);
   const [recordingSeconds, setRecordingSeconds] = useState(0);
   const [limitNotice, setLimitNotice] = useState(false);
+  const [qualityOpen, setQualityOpen] = useState(false);
+  const [qualityKind, setQualityKind] = useState<'photo' | 'voice'>('photo');
+  const [pendingSend, setPendingSend] = useState<{ text: string; files: File[] } | null>(null);
 
   const fileRef = useRef<HTMLInputElement>(null);
   const cameraRef = useRef<HTMLInputElement>(null);
@@ -93,6 +109,13 @@ export default function ChatComposer({
     }
     prevSendingRef.current = sending;
   }, [sending]);
+
+  // Enfocar el textarea apenas se inicia una respuesta a un mensaje (replyTo pasa a tener valor).
+  useEffect(() => {
+    if (replyTo) {
+      textareaRef.current?.focus();
+    }
+  }, [replyTo]);
 
   // Cerrar el picker de emojis al hacer clic fuera de él.
   useEffect(() => {
@@ -119,7 +142,7 @@ export default function ChatComposer({
     setRecordingSeconds(0);
   }, []);
 
-  const startRecording = useCallback(async () => {
+  const startRecording = useCallback(async (highQuality: boolean) => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       const mimeType = MediaRecorder.isTypeSupported('audio/webm')
@@ -128,7 +151,10 @@ export default function ChatComposer({
         ? 'audio/mp4'
         : 'audio/ogg';
 
-      const mr = new MediaRecorder(stream, { mimeType: mimeType || undefined });
+      const mr = new MediaRecorder(stream, {
+        mimeType: mimeType || undefined,
+        audioBitsPerSecond: voiceNoteBitrate(highQuality),
+      });
       chunksRef.current = [];
 
       mr.ondataavailable = (e) => {
@@ -192,7 +218,53 @@ export default function ChatComposer({
   const handleSubmit = () => {
     const text = input.trim();
     if ((!text && pendingFiles.length === 0) || sending) return;
+    const hasImage = pendingFiles.some((f) => isImage(f));
+    if (hasImage) {
+      setPendingSend({ text, files: pendingFiles });
+      setQualityKind('photo');
+      setQualityOpen(true);
+      return;
+    }
     onSend(text, pendingFiles);
+    setInput('');
+    setPendingFiles([]);
+    textareaRef.current?.focus();
+  };
+
+  const handleQualityClose = () => {
+    setQualityOpen(false);
+    setPendingSend(null);
+  };
+
+  const handleQualityChoose = async (highQuality: boolean) => {
+    if (qualityKind === 'voice') {
+      setQualityOpen(false);
+      startRecording(highQuality);
+      return;
+    }
+    if (!pendingSend) {
+      setQualityOpen(false);
+      return;
+    }
+    const { text, files: originalFiles } = pendingSend;
+    let files = originalFiles;
+    if (!highQuality) {
+      files = await Promise.all(
+        originalFiles.map(async (f) => {
+          if (isImage(f)) {
+            try {
+              return await compressImageFile(f);
+            } catch {
+              return f;
+            }
+          }
+          return f;
+        })
+      );
+    }
+    setPendingSend(null);
+    setQualityOpen(false);
+    onSend(text, files);
     setInput('');
     setPendingFiles([]);
     textareaRef.current?.focus();
@@ -222,6 +294,7 @@ export default function ChatComposer({
   };
 
   return (
+    <>
     <div className="px-3 py-3 bg-white border-t border-gray-200 flex-shrink-0 relative">
       {/* Emoji picker */}
       {showEmoji && (
@@ -259,6 +332,24 @@ export default function ChatComposer({
         </div>
       )}
 
+      {/* Mensaje citado (responder) */}
+      {replyTo && (
+        <div className="mb-2 flex items-start gap-2 px-3 py-2 bg-emerald-50 border border-emerald-200 rounded-xl">
+          <span className="w-0.5 self-stretch rounded-full bg-emerald-500 flex-shrink-0"></span>
+          <div className="flex-1 min-w-0">
+            <p className="text-xs font-semibold text-emerald-700 mb-0.5">Respondiendo a {replyTo.sender_name}</p>
+            <p className="text-xs text-emerald-800 truncate">{composerReplyPreview(replyTo) || ' '}</p>
+          </div>
+          <button
+            onClick={onCancelReply}
+            title="Cancelar respuesta"
+            className="w-5 h-5 flex items-center justify-center rounded-full text-emerald-600 hover:bg-emerald-100 hover:text-red-500 transition-colors cursor-pointer flex-shrink-0"
+          >
+            <i className="ri-close-line text-sm"></i>
+          </button>
+        </div>
+      )}
+
       <div className="flex items-end gap-2">
         <input ref={fileRef} type="file" multiple className="hidden" onChange={handleFileChange} />
         <input ref={cameraRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={handleFileChange} />
@@ -268,7 +359,8 @@ export default function ChatComposer({
             if (recording) {
               stopRecording();
             } else {
-              startRecording();
+              setQualityKind('voice');
+              setQualityOpen(true);
             }
           }}
           disabled={sending}
@@ -329,6 +421,15 @@ export default function ChatComposer({
           <i className="ri-send-plane-fill text-sm"></i>
         </button>
       </div>
+
     </div>
+
+    <SendQualityModal
+      open={qualityOpen}
+      kind={qualityKind}
+      onClose={handleQualityClose}
+      onChoose={handleQualityChoose}
+    />
+    </>
   );
 }
