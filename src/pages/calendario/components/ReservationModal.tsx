@@ -8,6 +8,7 @@ import { Dock } from '../../../types/dock';
 import { useAuth } from '../../../contexts/AuthContext';
 import { supabase } from '../../../lib/supabase';
 import { calendarService, regenerateReservationQRAssets, type Reservation } from '../../../services/calendarService';
+import { clientStatusSequenceRulesService } from '../../../services/clientStatusSequenceRulesService';
 import { activityLogService } from '../../../services/activityLogService';
 import { ActivityTab } from './ActivityTab';
 import { providersService } from '../../../services/providersService';
@@ -131,6 +132,10 @@ export default function ReservationModal({
   const [files, setFiles] = useState<FileItem[]>([]);
   const [isDragging, setIsDragging] = useState(false);
   const [saving, setSaving] = useState(false);
+
+  const formRef = useRef<HTMLFormElement>(null);
+  const bypassConfirmedRef = useRef(false);
+  const [showBypassConfirm, setShowBypassConfirm] = useState<{ message: string } | null>(null);
 
   const [providers, setProviders] = useState<Provider[]>([]);
   const [cargoTypes, setCargoTypes] = useState<CargoType[]>([]);
@@ -791,6 +796,25 @@ export default function ReservationModal({
         }
       }
     }
+    // Pre-validación de secuencia de estados (solo edición + cambio de status real)
+    if (reservation && formData.statusId !== reservation.status_id && !bypassConfirmedRef.current) {
+      try {
+        const validation = await clientStatusSequenceRulesService.validateTransition(
+          orgId,
+          reservation.id,
+          formData.statusId,
+          user?.id ?? null
+        );
+        if (validation.allowed === false) {
+          setNotifyModal({ isOpen: true, type: 'error', title: 'Acción no permitida', message: validation.message });
+          return;
+        }
+        if (validation.bypassed === true) {
+          setShowBypassConfirm({ message: validation.message });
+          return;
+        }
+      } catch { /* fail-open: el service re-validará */ }
+    }
     try {
       setSaving(true);
       let saved: Reservation;
@@ -929,7 +953,7 @@ export default function ReservationModal({
     } catch (error: any) {
       // Solo llega aquí si el GUARDADO falló (no el refresh)
       setNotifyModal({ isOpen: true, type: 'error', title: 'Error al guardar', message: error?.message || 'Error al guardar reserva' });
-    } finally { setSaving(false); }
+    } finally { setSaving(false); bypassConfirmedRef.current = false; }
   };
 
   const openFile = async (file: FileItem) => {
@@ -1082,7 +1106,7 @@ export default function ReservationModal({
           </div>
         </div>
 
-        <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto flex flex-col">
+        <form ref={formRef} onSubmit={handleSubmit} className="flex-1 overflow-y-auto flex flex-col">
           <div className="flex-1 overflow-y-auto">
             {activeTab === 'info' && (
               <div className="p-6">
@@ -1602,7 +1626,7 @@ export default function ReservationModal({
                           <label className={labelBase}>Estado *</label>
                           <select
                             value={formData.statusId}
-                            onChange={(e) => setFormData({ ...formData, statusId: e.target.value })}
+                            onChange={(e) => { bypassConfirmedRef.current = false; setFormData({ ...formData, statusId: e.target.value }); }}
                             className={selectCls}
                             required
                             disabled={isReadOnly}
@@ -2177,6 +2201,22 @@ export default function ReservationModal({
           message={notifyModal.message}
           onConfirm={() => setNotifyModal({ ...notifyModal, isOpen: false })}
           onCancel={() => setNotifyModal({ ...notifyModal, isOpen: false })}
+        />
+
+        <ConfirmModal
+          isOpen={showBypassConfirm !== null}
+          type="warning"
+          title="Advertencia de secuencia"
+          message={showBypassConfirm ? `${showBypassConfirm.message}\n\nTenés permisos elevados. ¿Deseás continuar de todas formas?` : ''}
+          confirmText="Continuar"
+          cancelText="Cancelar"
+          showCancel
+          onConfirm={() => {
+            setShowBypassConfirm(null);
+            bypassConfirmedRef.current = true;
+            formRef.current?.requestSubmit();
+          }}
+          onCancel={() => setShowBypassConfirm(null)}
         />
 
         {/* ── Confirm: conservar o descartar borrador al cerrar ──────────── */}

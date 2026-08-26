@@ -122,3 +122,23 @@ export interface ClientOverlapRuleFormData {
   authorized_role_ids: string[];
   authorized_user_ids: string[];
 }
+
+// Regla de Secuencia de Estados (orden estricto de estados por cliente)
+export interface ClientStatusSequenceRule {
+  id: string;
+  org_id: string;
+  client_id: string | null; // null = secuencia por defecto de la organización
+  status_sequence: string[]; // IDs ordenados de estados estrictos
+  bypass_role_ids: string[]; // roles que pueden saltarse la regla
+  bypass_user_ids: string[]; // usuarios que pueden saltarse la regla
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ClientStatusSequenceRuleFormData {
+  status_sequence: string[];
+  bypass_role_ids: string[];
+  bypass_user_ids: string[];
+  is_active: boolean;
+}

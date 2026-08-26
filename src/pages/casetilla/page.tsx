@@ -120,6 +120,7 @@ export default function CasetillaPage() {
   const [modal, setModal] = useState<{
     isOpen: boolean; type: 'success' | 'warning' | 'error' | 'info';
     title: string; message: string; showCancel: boolean;
+    confirmText?: string; cancelText?: string;
     onConfirm: () => void; onCancel?: () => void;
   }>({ isOpen: false, type: 'success', title: '', message: '', showCancel: false, onConfirm: () => {}, onCancel: undefined });
 
@@ -344,6 +345,33 @@ export default function CasetillaPage() {
 
   const handleSubmitIngreso = async (data: any) => {
     if (!orgId || !user?.id) return;
+
+    // Pre-validación de secuencia de estados (solo si hay reserva vinculada)
+    if (data.reservation_id) {
+      try {
+        const validation = await casetillaService.validateIngresoTransition(orgId, data.reservation_id, user.id);
+        if (validation.allowed === false) {
+          showModal('error', 'Acción no permitida', validation.message);
+          return;
+        }
+        if (validation.bypassed === true) {
+          setModal({
+            isOpen: true, type: 'warning', title: 'Advertencia de secuencia',
+            message: `${validation.message}\n\nTenés permisos elevados. ¿Deseás continuar de todas formas?`,
+            showCancel: true, confirmText: 'Continuar', cancelText: 'Cancelar',
+            onConfirm: () => { setModal(prev => ({ ...prev, isOpen: false })); doSubmitIngreso(data); },
+            onCancel: () => setModal(prev => ({ ...prev, isOpen: false })),
+          });
+          return;
+        }
+      } catch { /* fail-open: el service re-validará */ }
+    }
+
+    await doSubmitIngreso(data);
+  };
+
+  const doSubmitIngreso = async (data: any) => {
+    if (!orgId || !user?.id) return;
     setIsSubmitting(true);
     try {
       // Usar data.fotos (del estado local del form) como fuente de verdad.
@@ -357,6 +385,31 @@ export default function CasetillaPage() {
   };
 
   const handleSubmitSalida = async () => {
+    if (!orgId || !user?.id || !selectedExitReservation) return;
+
+    // Pre-validación de secuencia de estados
+    try {
+      const validation = await casetillaService.validateSalidaTransition(orgId, selectedExitReservation.id, user.id);
+      if (validation.allowed === false) {
+        showModal('error', 'Acción no permitida', validation.message);
+        return;
+      }
+      if (validation.bypassed === true) {
+        setModal({
+          isOpen: true, type: 'warning', title: 'Advertencia de secuencia',
+          message: `${validation.message}\n\nTenés permisos elevados. ¿Deseás continuar de todas formas?`,
+          showCancel: true, confirmText: 'Continuar', cancelText: 'Cancelar',
+          onConfirm: () => { setModal(prev => ({ ...prev, isOpen: false })); doSubmitSalida(); },
+          onCancel: () => setModal(prev => ({ ...prev, isOpen: false })),
+        });
+        return;
+      }
+    } catch { /* fail-open: el service re-validará */ }
+
+    await doSubmitSalida();
+  };
+
+  const doSubmitSalida = async () => {
     if (!orgId || !user?.id || !selectedExitReservation) return;
     setIsSubmitting(true);
     try {
@@ -1056,7 +1109,7 @@ export default function CasetillaPage() {
         )}
       </div>
 
-      <ConfirmModal isOpen={modal.isOpen} type={modal.type} title={modal.title} message={modal.message} showCancel={modal.showCancel} onConfirm={modal.onConfirm} onCancel={modal.onCancel} />
+      <ConfirmModal isOpen={modal.isOpen} type={modal.type} title={modal.title} message={modal.message} showCancel={modal.showCancel} confirmText={modal.confirmText} cancelText={modal.cancelText} onConfirm={modal.onConfirm} onCancel={modal.onCancel} />
 
       {/* QR Scanner Modal */}
       <QRScannerModal

@@ -7,6 +7,7 @@ import BlockedStatusesConfig from '../../../calendario/components/BlockedStatuse
 import RuleBlock from './RuleBlock';
 import SameDayCutoffRuleBlock from './SameDayCutoffRuleBlock';
 import ClientOverlapRulesTab from './ClientOverlapRulesTab';
+import ClientStatusSequenceRulesTab from './ClientStatusSequenceRulesTab';
 
 interface ClientDetailDrawerProps {
   isOpen: boolean;
@@ -876,6 +877,26 @@ export default function ClientDetailDrawer({
                 onToggle={() => toggleRule('overlap-rules')}
               >
                 <ClientOverlapRulesTab
+                  orgId={client.org_id}
+                  clientId={client.id}
+                  canManage={canUpdateRules}
+                />
+              </RuleBlock>
+
+              {/* ── BLOQUE 7: Secuencia de estados ── */}
+              <RuleBlock
+                icon="ri-flow-chart"
+                iconBg="bg-rose-100"
+                iconColor="text-rose-600"
+                title="Secuencia de estados"
+                description="Define un orden estricto entre estados de la reserva. Si un estado se intenta poner antes de lo permitido, la acción se bloquea. Los estados que no incluyas son circunstanciales. Los roles y usuarios autorizados pueden saltarse la regla."
+                badge="Por cliente"
+                badgeColor="bg-rose-100 text-rose-700"
+                scope="client"
+                isOpen={openRuleId === 'status-sequence'}
+                onToggle={() => toggleRule('status-sequence')}
+              >
+                <ClientStatusSequenceRulesTab
                   orgId={client.org_id}
                   clientId={client.id}
                   canManage={canUpdateRules}

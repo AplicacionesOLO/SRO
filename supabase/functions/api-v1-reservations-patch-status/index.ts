@@ -44,7 +44,6 @@ Deno.serve(async (req) => {
     // Extract reservation_id from path: /functions/v1/api-v1-reservations-patch-status/{reservation_id}/status
     const url = new URL(req.url);
     const pathParts = url.pathname.split('/').filter(Boolean);
-    // Path ends in /{reservation_id}/status
     const lastSegment = pathParts[pathParts.length - 1];
     const reservationId = lastSegment === 'status'
       ? pathParts[pathParts.length - 2]
@@ -135,6 +134,25 @@ Deno.serve(async (req) => {
     }
 
     const oldStatusId = reservation.status_id;
+
+    // Validar secuencia de estados (con bypass por rol del usuario autenticado)
+    const { data: validation } = await supabase.rpc('validate_status_sequence', {
+      p_org_id: orgId,
+      p_reservation_id: reservationId,
+      p_new_status_id: body.status_id,
+      p_user_id: userId,
+    });
+
+    if (validation && validation.allowed === false) {
+      return new Response(
+        JSON.stringify({
+          error: validation.message || 'Secuencia de estados inválida',
+          code: 'STATUS_SEQUENCE_BLOCKED',
+        }),
+        { status: 409, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
     const now = new Date().toISOString();
 
     // Update reservation status — ONLY status_id, never dates

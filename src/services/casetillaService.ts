@@ -2,6 +2,7 @@ import { supabase } from '../lib/supabase';
 import type { CreateCasetillaIngresoInput, CasetillaIngreso } from '../types/casetilla';
 import { getStartOfDayInTimezone, getEndOfDayInTimezone, DEFAULT_TIMEZONE } from '../utils/timezoneUtils';
 import { emailTriggerService } from './emailTriggerService';
+import { clientStatusSequenceRulesService } from './clientStatusSequenceRulesService';
 
 // ─── Tipos de segregación ────────────────────────────────────────────────────
 export interface CasetillaClientOption {
@@ -287,6 +288,63 @@ class CasetillaService {
     return null;
   }
 
+  // ─── VALIDACIÓN DE SECUENCIA DE ESTADOS ────────────────────────────
+  // Consulta la regla de secuencia (por cliente o por defecto) y devuelve
+  // { allowed, bypassed, message }. Fail-open: si la validación no puede
+  // ejecutarse (error de red/RPC), devuelve allowed=true para no romper flujos.
+  private async _validateTransition(orgId: string, reservationId: string, newStatusId: string, userId: string): Promise<{ allowed: boolean; bypassed: boolean; message: string }> {
+    try {
+      return await clientStatusSequenceRulesService.validateTransition(orgId, reservationId, newStatusId, userId);
+    } catch {
+      return { allowed: true, bypassed: false, message: '' }; // fail-open
+    }
+  }
+
+  // Bloquea transiciones inválidas (allowed=false). El bypass (permisos elevados)
+  // NO bloquea aquí: el frontend se encarga de avisar y pedir confirmación.
+  private async _validateTransitionOrThrow(orgId: string, reservationId: string, newStatusId: string, userId: string): Promise<void> {
+    const result = await this._validateTransition(orgId, reservationId, newStatusId, userId);
+    if (result.allowed === false) {
+      throw new Error(result.message || 'Transición de estado no permitida.');
+    }
+  }
+
+  // ─── PRE-VALIDACIÓN PÚBLICA PARA EL FRONTEND ───────────────────────
+  // Devuelven el resultado completo (incluyendo bypassed) para que la UI
+  // pueda mostrar un modal de confirmación ANTES de ejecutar la escritura.
+
+  /** Valida la transición a "Despachado" (salida) para una reserva. */
+  async validateSalidaTransition(orgId: string, reservationId: string, userId: string): Promise<{ allowed: boolean; bypassed: boolean; message: string }> {
+    const { data: dispatchedRow } = await supabase
+      .from('reservation_statuses')
+      .select('id')
+      .eq('org_id', orgId)
+      .eq('code', 'DISPATCHED')
+      .eq('is_active', true)
+      .maybeSingle();
+
+    if (!dispatchedRow?.id) return { allowed: true, bypassed: false, message: '' };
+    return this._validateTransition(orgId, reservationId, dispatchedRow.id, userId);
+  }
+
+  /** Valida la transición a "Arribó (pendiente descarga)" (ingreso) para una reserva. */
+  async validateIngresoTransition(orgId: string, reservationId: string, userId: string): Promise<{ allowed: boolean; bypassed: boolean; message: string }> {
+    const arrivedStatusId =
+      (await this.getStatusIdFlexible({
+        orgId,
+        codes: ['ARRIVED_PENDING_UNLOAD'],
+        names: ['Arribó (pendiente descarga)', 'Arribo (pendiente descarga)', 'Arribó pendiente descarga']
+      })) ??
+      (await this.getStatusIdFlexible({
+        orgId,
+        codes: ['LLEGO_AL_ALMACEN'],
+        names: ['LLegó al almacén', 'Llegó al almacén', 'LLEGO_AL_ALMACEN']
+      }));
+
+    if (!arrivedStatusId) return { allowed: true, bypassed: false, message: '' };
+    return this._validateTransition(orgId, reservationId, arrivedStatusId, userId);
+  }
+
   async createIngreso(orgId: string, userId: string, data: CreateCasetillaIngresoInput) {
     try {
       let reservationId: string | undefined = data.reservation_id;
@@ -329,6 +387,10 @@ class CasetillaService {
 
         if (arrivedPendingUnloadStatusId) {
           statusToId = arrivedPendingUnloadStatusId;
+
+          if (reservationId) {
+            await this._validateTransitionOrThrow(orgId, reservationId, statusToId, userId);
+          }
 
           const { data: updatedRowsFb, error: updateErrFb } = await supabase
             .from('reservations')
@@ -380,6 +442,10 @@ class CasetillaService {
 
           if (arrivedPendingUnloadStatusId) {
             statusToId = arrivedPendingUnloadStatusId;
+
+            if (reservationId) {
+              await this._validateTransitionOrThrow(orgId, reservationId, statusToId, userId);
+            }
 
             const { data: updatedRows, error: updateErr } = await supabase
               .from('reservations')
@@ -1195,6 +1261,9 @@ async getExitEligibleReservations(
       }
 
       const statusToId = dispatchedRow.id;
+
+      // Validar secuencia de estados: no despachar si no está descargado
+      await this._validateTransitionOrThrow(orgId, reservationId, statusToId, userId);
 
       // 4) Actualizar status de la reserva a DISPATCHED
       const { data: updatedSalidaRows, error: updateStatusError } = await supabase

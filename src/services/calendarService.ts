@@ -517,6 +517,30 @@ const tryExtractPathFromFileUrl = (fileUrlOrPath: string) => {
   return fileUrlOrPath.substring(idx + marker.length);
 };
 
+/**
+ * Valida que una transición de estado respete la secuencia configurada.
+ * Fail-open: si no se puede validar (error de RPC/red), no bloquea.
+ * Lanza error con mensaje claro solo cuando la transición es inválida.
+ */
+async function validateStatusTransition(orgId: string, reservationId: string, newStatusId: string, userId?: string | null): Promise<void> {
+  let result: { allowed: boolean; bypassed: boolean; message: string } | null = null;
+  try {
+    const { data, error } = await supabase.rpc('validate_status_sequence', {
+      p_org_id: orgId,
+      p_reservation_id: reservationId,
+      p_new_status_id: newStatusId,
+      p_user_id: userId ?? null,
+    });
+    if (error) return;
+    result = data as { allowed: boolean; bypassed: boolean; message: string } | null;
+  } catch {
+    return;
+  }
+  if (result && result.allowed === false) {
+    throw new Error(result.message || 'Transición de estado no permitida.');
+  }
+}
+
 export const calendarService = {
   async getReservations(
     orgId: string,
@@ -1210,6 +1234,11 @@ export const calendarService = {
       oldOrgId = oldReservation?.org_id || null;
     }
 
+    // Validar secuencia de estados (solo si el estado realmente cambia)
+    if (updates.status_id !== undefined && oldStatusId !== updates.status_id && oldOrgId) {
+      await validateStatusTransition(oldOrgId, id, updates.status_id, user.id);
+    }
+
     const updatePayload = {
       ...updates,
       updated_by: user.id,
@@ -1582,6 +1611,11 @@ export const calendarService = {
 
     const oldStatusId = oldReservation?.status_id || null;
     const orgIdForTrigger = oldReservation?.org_id || '';
+
+    // Validar secuencia de estados antes de cambiar el estado
+    if (orgIdForTrigger) {
+      await validateStatusTransition(orgIdForTrigger, id, statusId, user.id);
+    }
 
     // 1. Solo actualizar status_id, updated_by y updated_at
     const { error } = await supabase
