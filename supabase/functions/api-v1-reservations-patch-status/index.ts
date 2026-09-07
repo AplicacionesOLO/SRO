@@ -1,4 +1,4 @@
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.3';
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -135,12 +135,15 @@ Deno.serve(async (req) => {
 
     const oldStatusId = reservation.status_id;
 
-    // Validar secuencia de estados (con bypass por rol del usuario autenticado)
+    // Validar secuencia de estados (con bypass por rol del usuario autenticado).
+    // p_enforce_no_reversion=true bloquea retrocesos en la secuencia para la API,
+    // incluso si el usuario tiene rol de bypass.
     const { data: validation } = await supabase.rpc('validate_status_sequence', {
       p_org_id: orgId,
       p_reservation_id: reservationId,
       p_new_status_id: body.status_id,
       p_user_id: userId,
+      p_enforce_no_reversion: true,
     });
 
     if (validation && validation.allowed === false) {
