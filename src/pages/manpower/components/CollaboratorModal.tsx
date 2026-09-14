@@ -1,19 +1,23 @@
 import { useState, useEffect, useCallback } from 'react';
-import type { Collaborator, CollaboratorFormData, WorkType } from '../../../types/collaborator';
-import type { Country } from '../../../types/warehouse';
-import type { Warehouse } from '../../../types/warehouse';
-import { useFormDraft, getDraftAge } from '../../../hooks/useReservationDraft';
-import { ConfirmModal } from '../../../components/base/ConfirmModal';
-import { usePermissions } from '../../../hooks/usePermissions';
+import type { Collaborator, CollaboratorFormData, WorkType } from '@/types/collaborator';
+import { useFormDraft, getDraftAge } from '@/hooks/useReservationDraft';
+import { ConfirmModal } from '@/components/base/ConfirmModal';
+import { usePermissions } from '@/hooks/usePermissions';
+
+export interface ActiveWarehouseInfo {
+  id: string;
+  name: string;
+  country_id: string;
+  country_name: string;
+}
 
 interface CollaboratorModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSave: (data: CollaboratorFormData) => Promise<void>;
   collaborator?: Collaborator | null;
-  countries: Country[];
   workTypes: WorkType[];
-  warehouses: Warehouse[];
+  activeWarehouse: ActiveWarehouseInfo | null;
   canManage: boolean;
 }
 
@@ -22,9 +26,8 @@ export function CollaboratorModal({
   onClose,
   onSave,
   collaborator,
-  countries,
   workTypes,
-  warehouses,
+  activeWarehouse,
   canManage
 }: CollaboratorModalProps) {
   const { orgId } = usePermissions();
@@ -50,43 +53,46 @@ export function CollaboratorModal({
   const { saveDraft, clearDraft, readDraft } = useFormDraft<CollaboratorFormData>({ storageKey: DRAFT_KEY, isNewRecord });
 
   useEffect(() => {
+    // País y almacén siempre vienen del switch (almacén activo), no se eligen a mano.
+    const derivedCountry = activeWarehouse?.country_id ?? '';
+    const derivedWarehouses = activeWarehouse ? [activeWarehouse.id] : [];
+
     if (collaborator) {
       setFormData({
         full_name: collaborator.full_name,
         ficha: collaborator.ficha || '',
         cedula: collaborator.cedula || '',
-        country_id: collaborator.country_id,
+        country_id: derivedCountry,
         work_type_id: collaborator.work_type_id,
         is_active: collaborator.is_active,
-        warehouse_ids: collaborator.warehouses?.map(w => w.id) || []
+        warehouse_ids: derivedWarehouses
       });
       setShowDraftBanner(false);
     } else {
       if (isOpen) {
         const draft = readDraft();
         if (draft) {
-          setFormData(draft.formData);
+          setFormData({
+            ...draft.formData,
+            country_id: derivedCountry,
+            warehouse_ids: derivedWarehouses
+          });
           setDraftAgeLabel(getDraftAge(draft.savedAt));
           setShowDraftBanner(true);
         } else {
-          setFormData({ full_name: '', ficha: '', cedula: '', country_id: '', work_type_id: '', is_active: true, warehouse_ids: [] });
+          setFormData({ full_name: '', ficha: '', cedula: '', country_id: derivedCountry, work_type_id: '', is_active: true, warehouse_ids: derivedWarehouses });
           setShowDraftBanner(false);
         }
       }
     }
     setErrors({});
-  }, [collaborator, isOpen]);
+  }, [collaborator, isOpen, activeWarehouse, readDraft]);
 
   // Auto-save borrador
   useEffect(() => {
     if (!isOpen || !isNewRecord) return;
     saveDraft(formData);
-  }, [formData, isOpen, isNewRecord]);
-
-  // Filtrar almacenes por país seleccionado
-  const filteredWarehouses = warehouses.filter(
-    w => !formData.country_id || w.country_id === formData.country_id
-  );
+  }, [formData, isOpen, isNewRecord, saveDraft]);
 
   // Validar formulario
   const validate = (): boolean => {
@@ -96,39 +102,16 @@ export function CollaboratorModal({
       newErrors.full_name = 'El nombre completo es requerido';
     }
 
-    if (!formData.country_id) {
-      newErrors.country_id = 'El país es requerido';
-    }
-
     if (!formData.work_type_id) {
       newErrors.work_type_id = 'El tipo de trabajo es requerido';
     }
 
-    if (formData.warehouse_ids.length === 0) {
-      newErrors.warehouse_ids = 'Debe asignar al menos un almacén';
+    if (!activeWarehouse) {
+      newErrors.warehouse = 'Seleccione un almacén en el switch para continuar';
     }
 
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
-  };
-
-  // Manejar cambio de país
-  const handleCountryChange = (countryId: string) => {
-    setFormData(prev => ({
-      ...prev,
-      country_id: countryId,
-      warehouse_ids: [] // Limpiar almacenes seleccionados
-    }));
-  };
-
-  // Manejar toggle de almacén
-  const handleWarehouseToggle = (warehouseId: string) => {
-    setFormData(prev => ({
-      ...prev,
-      warehouse_ids: prev.warehouse_ids.includes(warehouseId)
-        ? prev.warehouse_ids.filter(id => id !== warehouseId)
-        : [...prev.warehouse_ids, warehouseId]
-    }));
   };
 
   const handleClose = useCallback(() => {
@@ -157,9 +140,16 @@ export function CollaboratorModal({
 
     if (!validate()) return;
 
+    // País y almacén siempre se derivan del switch al guardar.
+    const payload: CollaboratorFormData = {
+      ...formData,
+      country_id: activeWarehouse?.country_id ?? '',
+      warehouse_ids: activeWarehouse ? [activeWarehouse.id] : []
+    };
+
     setLoading(true);
     try {
-      await onSave(formData);
+      await onSave(payload);
       clearDraft();
       onClose();
     } catch (error) {
@@ -173,7 +163,7 @@ export function CollaboratorModal({
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-lg shadow-xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+      <div className="bg-white rounded-lg shadow-xl w-full max-w-xl max-h-[90vh] overflow-y-auto">
         <div className="sticky top-0 bg-white border-b px-6 py-4 flex items-center justify-between">
           <h2 className="text-xl font-semibold text-gray-900">
             {collaborator ? 'Editar Colaborador' : 'Nuevo Colaborador'}
@@ -201,7 +191,7 @@ export function CollaboratorModal({
                       className="px-3 py-1.5 text-xs font-semibold bg-teal-600 text-white rounded-lg hover:bg-teal-700 transition-colors whitespace-nowrap">
                       Continuar con el borrador
                     </button>
-                    <button type="button" onClick={() => { clearDraft(); setFormData({ full_name: '', ficha: '', cedula: '', country_id: '', work_type_id: '', is_active: true, warehouse_ids: [] }); setShowDraftBanner(false); }}
+                    <button type="button" onClick={() => { clearDraft(); setFormData(prev => ({ ...prev, full_name: '', ficha: '', cedula: '', work_type_id: '' })); setShowDraftBanner(false); }}
                       className="px-3 py-1.5 text-xs font-medium border border-gray-300 bg-white text-gray-700 rounded-lg hover:bg-gray-50 transition-colors whitespace-nowrap">
                       Descartar y empezar nuevo
                     </button>
@@ -210,6 +200,30 @@ export function CollaboratorModal({
               </div>
             </div>
           )}
+
+          {/* País y Almacén (derivados del switch) */}
+          <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
+            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">País y Almacén</p>
+            {activeWarehouse ? (
+              <div className="flex items-center gap-3">
+                <i className="ri-store-2-line text-teal-600 text-xl w-6 h-6 flex items-center justify-center"></i>
+                <div>
+                  <p className="text-sm font-medium text-gray-900">{activeWarehouse.name}</p>
+                  <p className="text-xs text-gray-500">{activeWarehouse.country_name || 'País no definido'}</p>
+                </div>
+              </div>
+            ) : (
+              <div className="flex items-start gap-3">
+                <i className="ri-information-line text-amber-600 text-lg w-5 h-5 flex items-center justify-center flex-shrink-0 mt-0.5"></i>
+                <p className="text-sm text-amber-800">
+                  Seleccioná un almacén en el switch para asignar el colaborador automáticamente.
+                </p>
+              </div>
+            )}
+            {errors.warehouse && (
+              <p className="mt-2 text-sm text-red-600">{errors.warehouse}</p>
+            )}
+          </div>
 
           {/* Nombre Completo */}
           <div>
@@ -259,29 +273,6 @@ export function CollaboratorModal({
             </div>
           </div>
 
-          {/* País */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              País <span className="text-red-500">*</span>
-            </label>
-            <select
-              value={formData.country_id}
-              onChange={(e) => handleCountryChange(e.target.value)}
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent"
-              disabled={!canManage || loading}
-            >
-              <option value="">Seleccione un país</option>
-              {countries.map(country => (
-                <option key={country.id} value={country.id}>
-                  {country.name}
-                </option>
-              ))}
-            </select>
-            {errors.country_id && (
-              <p className="mt-1 text-sm text-red-600">{errors.country_id}</p>
-            )}
-          </div>
-
           {/* Tipo de Trabajo */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -302,43 +293,6 @@ export function CollaboratorModal({
             </select>
             {errors.work_type_id && (
               <p className="mt-1 text-sm text-red-600">{errors.work_type_id}</p>
-            )}
-          </div>
-
-          {/* Almacenes Asignados */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Almacenes Asignados <span className="text-red-500">*</span>
-            </label>
-            {!formData.country_id ? (
-              <p className="text-sm text-gray-500 italic">
-                Seleccione un país primero para ver los almacenes disponibles
-              </p>
-            ) : filteredWarehouses.length === 0 ? (
-              <p className="text-sm text-gray-500 italic">
-                No hay almacenes disponibles para el país seleccionado
-              </p>
-            ) : (
-              <div className="border border-gray-300 rounded-lg p-4 max-h-48 overflow-y-auto space-y-2">
-                {filteredWarehouses.map(warehouse => (
-                  <label
-                    key={warehouse.id}
-                    className="flex items-center space-x-3 cursor-pointer hover:bg-gray-50 p-2 rounded"
-                  >
-                    <input
-                      type="checkbox"
-                      checked={formData.warehouse_ids.includes(warehouse.id)}
-                      onChange={() => handleWarehouseToggle(warehouse.id)}
-                      className="w-4 h-4 text-teal-600 border-gray-300 rounded focus:ring-teal-500"
-                      disabled={!canManage || loading}
-                    />
-                    <span className="text-sm text-gray-700">{warehouse.name}</span>
-                  </label>
-                ))}
-              </div>
-            )}
-            {errors.warehouse_ids && (
-              <p className="mt-1 text-sm text-red-600">{errors.warehouse_ids}</p>
             )}
           </div>
 

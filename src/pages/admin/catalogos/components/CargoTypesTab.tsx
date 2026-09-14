@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { usePermissions } from '../../../../hooks/usePermissions';
 import { cargoTypesService } from '../../../../services/cargoTypesService';
+import { timeAnalyticsService, type CargoTypeAverage } from '../../../../services/timeAnalyticsService';
 import type { CargoType } from '../../../../types/catalog';
 import CargoTypeModal from './CargoTypeModal';
 import { ConfirmModal } from '../../../../components/base/ConfirmModal';
@@ -20,6 +21,9 @@ export default function CargoTypesTab({ orgId, warehouseId }: CargoTypesTabProps
   const [showModal, setShowModal] = useState(false);
   const [editingCargoType, setEditingCargoType] = useState<CargoType | null>(null);
   const [showActiveOnly, setShowActiveOnly] = useState(true);
+  const [averages, setAverages] = useState<Record<string, CargoTypeAverage>>({});
+  const [isComputing, setIsComputing] = useState(false);
+  const [computeError, setComputeError] = useState<string | null>(null);
   const [confirmModal, setConfirmModal] = useState<{ isOpen: boolean; type: 'success' | 'warning' | 'error' | 'info'; title: string; message: string; showCancel?: boolean; onConfirm: () => void; onCancel?: () => void; }>({ isOpen: false, type: 'info', title: '', message: '', onConfirm: () => {} });
 
   const canRead = can('cargo_types.view');
@@ -27,7 +31,10 @@ export default function CargoTypesTab({ orgId, warehouseId }: CargoTypesTabProps
   const canUpdate = can('cargo_types.update');
   const canDelete = can('cargo_types.delete');
 
-  useEffect(() => { loadCargoTypes(); }, [orgId, warehouseId]);
+  useEffect(() => {
+    loadCargoTypes();
+    computeAverages(false);
+  }, [orgId, warehouseId]);
 
   useEffect(() => {
     const filtered = cargoTypes.filter(ct => {
@@ -76,6 +83,25 @@ export default function CargoTypesTab({ orgId, warehouseId }: CargoTypesTabProps
 
   const handleSave = async () => { await loadCargoTypes(); setShowModal(false); };
 
+  const computeAverages = async (silent = false) => {
+    try {
+      if (!silent) setIsComputing(true);
+      setComputeError(null);
+      const result = await timeAnalyticsService.computeAnalytics(orgId, warehouseId);
+      const map: Record<string, CargoTypeAverage> = {};
+      for (const avg of result.cargoTypeAverages) {
+        map[avg.cargoTypeId] = avg;
+      }
+      setAverages(map);
+    } catch (err: any) {
+      setComputeError(err?.message || 'Error al calcular promedios');
+    } finally {
+      if (!silent) setIsComputing(false);
+    }
+  };
+
+  const handleComputeAverages = () => computeAverages(true);
+
   if (!canRead) return <div className="text-center py-12"><i className="ri-lock-line text-6xl text-red-500 mb-4"></i><p className="text-gray-600">No tienes permisos para ver tipos de carga</p></div>;
   if (loading) return <div className="text-center py-12"><div className="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-teal-600 mb-4"></div><p className="text-gray-600">Cargando tipos de carga...</p></div>;
   if (error) return <div className="text-center py-12"><i className="ri-error-warning-line text-6xl text-red-500 mb-4"></i><p className="text-gray-600 mb-4">{error}</p><button onClick={loadCargoTypes} className="px-6 py-2 bg-teal-600 text-white rounded-lg hover:bg-teal-700 transition-colors whitespace-nowrap cursor-pointer">Reintentar</button></div>;
@@ -105,6 +131,26 @@ export default function CargoTypesTab({ orgId, warehouseId }: CargoTypesTabProps
         )}
       </div>
 
+      <div className="flex items-center gap-2 mb-4 -mt-2 flex-wrap">
+        <button
+          onClick={handleComputeAverages}
+          disabled={isComputing}
+          className="flex items-center gap-2 px-4 py-2 bg-white border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors whitespace-nowrap cursor-pointer text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+          title="Calcular tiempo promedio real de descarga (IN → OUT) por tipo de carga"
+        >
+          <i className={`ri-bar-chart-box-line w-5 h-5 flex items-center justify-center ${isComputing ? 'animate-pulse' : ''}`}></i>
+          {isComputing ? 'Calculando...' : 'Recalcular promedios'}
+        </button>
+        {Object.keys(averages).length > 0 ? (
+          <span className="text-xs text-gray-500">Promedios calculados desde tiempos reales IN/OUT</span>
+        ) : !isComputing ? (
+          <span className="text-xs text-gray-400">Sin citas con IN/OUT registrado para calcular promedios</span>
+        ) : null}
+      </div>
+      {computeError && (
+        <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">{computeError}</div>
+      )}
+
       {filteredCargoTypes.length === 0 ? (
         <div className="text-center py-12 bg-gray-50 rounded-lg">
           <i className="ri-inbox-line text-6xl text-gray-400 mb-4"></i>
@@ -117,6 +163,7 @@ export default function CargoTypesTab({ orgId, warehouseId }: CargoTypesTabProps
               <tr className="border-b border-gray-200">
                 <th className="text-left py-3 px-4 text-sm font-semibold text-gray-700">Nombre</th>
                 <th className="text-left py-3 px-4 text-sm font-semibold text-gray-700">Minutos por defecto</th>
+                <th className="text-left py-3 px-4 text-sm font-semibold text-gray-700">Tiempo promedio</th>
                 <th className="text-left py-3 px-4 text-sm font-semibold text-gray-700">Dinámico</th>
                 <th className="text-left py-3 px-4 text-sm font-semibold text-gray-700">Estado</th>
                 <th className="text-right py-3 px-4 text-sm font-semibold text-gray-700">Acciones</th>
@@ -127,6 +174,18 @@ export default function CargoTypesTab({ orgId, warehouseId }: CargoTypesTabProps
                 <tr key={ct.id} className="border-b border-gray-100 hover:bg-gray-50">
                   <td className="py-3 px-4 text-sm text-gray-900">{ct.name}</td>
                   <td className="py-3 px-4 text-sm text-gray-600">{ct.default_minutes ?? '-'}</td>
+                  <td className="py-3 px-4">
+                    {(() => {
+                      const avg = averages[ct.id];
+                      if (!avg) return <span className="text-sm text-gray-400">-</span>;
+                      return (
+                        <div className="flex flex-col">
+                          <span className="text-sm font-medium text-gray-900">{avg.avgMinutes} min</span>
+                          <span className="text-xs text-gray-500">{avg.sampleSize} cita{avg.sampleSize !== 1 ? 's' : ''}</span>
+                        </div>
+                      );
+                    })()}
+                  </td>
                   <td className="py-3 px-4">{ct.is_dynamic ? <i className="ri-check-line text-green-600 w-5 h-5 flex items-center justify-center"></i> : <i className="ri-close-line text-gray-400 w-5 h-5 flex items-center justify-center"></i>}</td>
                   <td className="px-4 py-3 whitespace-nowrap">
                     <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${ct.active ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'}`}>{ct.active ? 'Activo' : 'Inactivo'}</span>

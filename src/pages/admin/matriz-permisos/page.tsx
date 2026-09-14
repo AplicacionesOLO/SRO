@@ -110,8 +110,8 @@ const getPermissionLabel = (technicalName: string): string => {
     'docks.delete':                          'Eliminar andenes',
 
     // ─── Manpower (Colaboradores) ─────────────────────────────────────
-    'manpower.view':                         'Ver lista de colaboradores',
-    'manpower.manage':                       'Gestionar colaboradores (Manpower)',
+    'manpower.view':                         'Ver módulo Manpower (colaboradores, recursos, reglas, pronóstico)',
+    'manpower.manage':                       'Gestionar módulo Manpower (colaboradores, recursos, reglas, pronóstico)',
 
     // ─── Menú › Navegación principal ─────────────────────────────────
     'menu.dashboard.view':                   'Acceder al menú Dashboard',
@@ -277,6 +277,7 @@ const getCategoryLabel = (category: string): string => {
     'reports': 'Reportes',
     'menu': 'Menú de Navegación',
     'correspondence': 'Correspondencia',
+    'manpower': 'Manpower',
   };
 
   return categoryLabels[category] || category;

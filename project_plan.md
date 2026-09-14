@@ -44,6 +44,7 @@ Sistema de gestión de reservas de andenes para operaciones logísticas (bodegas
 - [x] Zona de carga y preselección de reservas
 - [x] Cutoff times para recepción
 - [ ] Centro de Cumplimiento Logístico (IN/OUT Flow)
+- [x] Pronóstico de Recursos (Manpower Forecasting)
 
 ## 4. Modelo de Datos
 ### Tablas principales
@@ -74,6 +75,10 @@ Sistema de gestión de reservas de andenes para operaciones logísticas (bodegas
 - `knowledge_documents` — Documentos de conocimiento
 - `collaborators` / `collaborator_warehouses` — Colaboradores
 - `manpower_control` — Control de personal
+- `manpower_resource_categories` — Categorías de recurso (personal, montacargas, apilador, carretilla eléctrica, carretilla manual)
+- `manpower_resources` — Pool de recursos por país/almacén (cantidad, estado, ritmo por hora)
+- `manpower_resource_rules` / `manpower_resource_rule_items` — Reglas de pronóstico (carga + rango de bultos + proveedor → recursos)
+- `manpower_forecast_config` — Configuración global (margen recomendado %, tope de citas/día)
 - `activity_log` / `reservation_activity_log` — Logs de actividad
 
 ## 5. Integraciones
@@ -129,6 +134,35 @@ Sistema de gestión de reservas de andenes para operaciones logísticas (bodegas
 - [ ] Siembra y validación de las 16 reglas iniciales del sistema
 - [ ] Módulo visual: Dashboard de cumplimiento, Tab de incidencias, Tab de reglas, Tab de reportes
 - [ ] Integración con Notification Dispatcher
+
+### Fase 7: Pronóstico de Recursos (Manpower Forecasting)
+- **Objetivo**: pronosticar qué recursos (personal, montacargas, apiladores, carretillas) se van a necesitar por reserva y por día, con mínimo/recomendado, calculadora de duración y descarga a Excel.
+
+#### Fase 7.1: Tablas maestras de recursos
+- [x] Catálogo de categorías de recurso (personal, montacargas, apilador, carretilla eléctrica, carretilla manual) con unidad y ritmo por hora
+- [x] Pool de recursos por país/almacén con cantidad, estado y ritmo
+- [x] Tab "Recursos" en el módulo Manpower (CRUD + filtros por país/almacén + carga de categorías estándar)
+
+#### Fase 7.2: Reglas de configuración
+- [x] Reglas: tipo de carga + rango de bultos (+ proveedor opcional) → N personas, N montacargas, N equipos
+- [x] Tab "Reglas" en el módulo Manpower
+
+#### Fase 7.3: Motor de pronóstico + calculadora
+- [x] Pronóstico por reserva (regla que aplica → recursos mínimo/recomendado)
+- [x] Agregación diaria por almacén: necesidad vs stock disponible
+- [x] Alerta de mano de obra externa (necesidad > stock, o citas/día > tope)
+- [x] Calculadora de duración (bultos ÷ (recursos × ritmo)) con simulación de agregar/quitar recursos
+- [x] Visualización y descarga a Excel
+
+#### Fase 7.4: Sugerencias al calendario por sobrecarga
+- [x] Detección de sobrecarga diaria y sugerencia de cambios en el calendario
+- [x] Agregación diaria respetando el timezone de cada almacén
+- [x] Aviso "Sin stock cargado" cuando faltan recursos o categorías
+
+#### Fase 7.5: Sustituciones de recursos y permisos
+- [x] Sustitución de recursos (carretilla faltante → apilador) aplicada a nivel día y semana (antes solo franjas horarias)
+- [x] Nota de sustitución visible en los paneles de agregación diaria y semanal
+- [x] Permisos `manpower.view` / `manpower.manage` / `menu.manpower.view` registrados en la matriz (migración + categoría + etiquetas)
 
 ### Documentos de Arquitectura
 - [x] `ARCHITECTURE.md` — Arquitectura general del sistema

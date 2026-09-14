@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useLayoutEffect, useMemo, useCallback, useRef } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { supabase } from '../../lib/supabase';
 import { usePermissions } from '../../hooks/usePermissions';
 import { useUserScope } from '../../hooks/useUserScope';
@@ -103,6 +104,10 @@ export default function CalendarioPage() {
   const { isPrivileged: isPrivilegedUser } = useBlockedStatuses(orgId);
   const { allowedWarehouseIds, allowedClientIds, availableWarehouses: scopeWarehouses, isGlobalAccess, loading: scopeLoading } = useUserScope();
   const { allowedWarehouses, activeWarehouseId: ctxWarehouseId, activeWarehouse: ctxActiveWarehouse, setActiveWarehouseId: ctxSetWarehouseId, hasMultipleWarehouses, loading: activeWhLoading, selectionInvalidated, acknowledgeInvalidation } = useActiveWarehouse();
+
+  // ── Deep-link: abrir una cita puntual desde otros módulos (ej. Manpower) ──
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [pendingOpenReservationId, setPendingOpenReservationId] = useState<string | null>(null);
 
   const [showResumeBanner, setShowResumeBanner] = useState(false);
   const [resumeDraftAge, setResumeDraftAge] = useState('');
@@ -385,6 +390,42 @@ export default function CalendarioPage() {
   useEffect(() => { if (ready) readyStableRef.current = true; }, [ready]);
 
   const warehouseLabel = useMemo(() => selectedWarehouse ? selectedWarehouse.name : 'Ver todos los andenes', [selectedWarehouse]);
+
+  // ── Deep-link (paso 1): posiciona almacén/fecha y marca la cita pendiente ──
+  useEffect(() => {
+    const rid = searchParams.get('reservation');
+    if (!rid) return;
+    const wh = searchParams.get('warehouse');
+    const dateStr = searchParams.get('date');
+    if (wh && allowedWarehouses.some((w) => w.id === wh) && wh !== ctxWarehouseId) {
+      ctxSetWarehouseId(wh);
+    }
+    if (dateStr) {
+      const [y, m, d] = dateStr.split('-').map(Number);
+      if (y && m && d) {
+        setAnchorDate(new Date(Date.UTC(y, m - 1, d, 12, 0, 0)));
+        setRangeDays(1);
+      }
+    }
+    setTabMode('calendar');
+    setPendingOpenReservationId(rid);
+  }, [searchParams, allowedWarehouses, ctxWarehouseId, ctxSetWarehouseId]);
+
+  // ── Deep-link (paso 2): abre la cita cuando ya está cargada ──
+  useEffect(() => {
+    if (!pendingOpenReservationId) return;
+    const found = reservations.find((r) => r.id === pendingOpenReservationId);
+    if (!found) return;
+    setSelectedReservation(found);
+    setReserveModalSlot(null);
+    setReserveModalOpen(true);
+    setPendingOpenReservationId(null);
+    const next = new URLSearchParams(searchParams);
+    next.delete('reservation');
+    next.delete('date');
+    next.delete('warehouse');
+    setSearchParams(next, { replace: true });
+  }, [reservations, pendingOpenReservationId, searchParams, setSearchParams]);
 
   useEffect(() => {
     if (!orgId || scopeLoading) return;

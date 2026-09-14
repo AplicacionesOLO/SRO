@@ -212,9 +212,7 @@ async enrichWithWarehouses(orgId: string, collaborators: any[]): Promise<Collabo
       .from('collaborators')
       .update({
         ...collaboratorData,
-        updated_at: new Date().toISOString(),
-        // ✅ si tu tabla NO tiene updated_by, quitá esta línea también
-        updated_by: userId
+        updated_at: new Date().toISOString()
       })
       .eq('id', collaboratorId)
       .eq('org_id', orgId)

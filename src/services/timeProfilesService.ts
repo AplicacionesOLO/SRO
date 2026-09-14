@@ -70,6 +70,39 @@ export const timeProfilesService = {
     return data;
   },
 
+  /**
+   * Activa una sugerencia calculada (IN → OUT) convirtiéndola en un perfil de tiempo.
+   * Marca el perfil con source = 'calculated' y guarda el sample_size que lo respalda.
+   */
+  async activateFromSuggestion(
+    orgId: string,
+    providerId: string,
+    cargoTypeId: string,
+    avgMinutes: number,
+    sampleSize: number,
+    warehouseId?: string | null
+  ): Promise<ProviderCargoTimeProfile> {
+    const payload: any = {
+      org_id: orgId,
+      provider_id: providerId,
+      cargo_type_id: cargoTypeId,
+      avg_minutes: Number(avgMinutes),
+      sample_size: Number(sampleSize),
+      source: 'system',
+    };
+
+    if (warehouseId) payload.warehouse_id = warehouseId;
+
+    const { data, error } = await supabase
+      .from('provider_cargo_time_profiles')
+      .upsert(payload, { onConflict: 'org_id,provider_id,cargo_type_id,warehouse_id' })
+      .select('*')
+      .single();
+
+    if (error) throw error;
+    return data;
+  },
+
   // ✅ Update reforzado con orgId (más seguro con RLS)
   async update(
     orgId: string,
