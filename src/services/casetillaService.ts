@@ -884,16 +884,27 @@ async getExitEligibleReservations(
     });
 
     // 2) Traer ingresos ordenados (último ingreso primero) — paginado para superar el límite de 1000 filas
-    const ingresos = await this._fetchAll<any>((from, to) =>
-      supabase
+    // ─── FILTRO POR FECHA: solo ingresos del día seleccionado (created_at) ──
+    const dateRange = selectedDate ? this._buildDateFilterParams(selectedDate, timezone) : null;
+
+    const ingresos = await this._fetchAll<any>((from, to) => {
+      let q = supabase
         .from("casetilla_ingresos")
         .select("reservation_id, created_at")
         .eq("org_id", orgId)
-        .not("reservation_id", "is", null)
+        .not("reservation_id", "is", null);
+
+      if (dateRange) {
+        q = q
+          .gte("created_at", dateRange.fromIso)
+          .lte("created_at", dateRange.toIso);
+      }
+
+      return q
         .order("created_at", { ascending: false })
         .order("id", { ascending: true })
-        .range(from, to)
-    );
+        .range(from, to);
+    });
 
     if (!ingresos || ingresos.length === 0) return [];
 
