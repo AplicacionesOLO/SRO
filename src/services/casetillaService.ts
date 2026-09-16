@@ -70,6 +70,50 @@ class CasetillaService {
     }
   }
 
+  // ─── Helper: paginación completa de lecturas (evita el límite de 1000 filas de PostgREST) ───
+  private async _fetchAll<T>(
+    buildQuery: (from: number, to: number) => any,
+    pageSize = 1000
+  ): Promise<T[]> {
+    const all: T[] = [];
+    let from = 0;
+    for (;;) {
+      const to = from + pageSize - 1;
+      const { data, error } = await buildQuery(from, to);
+      if (error) throw error;
+      const rows = (data ?? []) as T[];
+      if (rows.length === 0) break;
+      all.push(...rows);
+      if (rows.length < pageSize) break;
+      from += pageSize;
+    }
+    return all;
+  }
+
+  // ─── Helper: traer salidas de muchas reservas en lotes (evita URL demasiado larga y límite de filas) ───
+  private async _fetchSalidasForReservations(
+    orgId: string,
+    reservationIds: string[],
+    batchSize = 50
+  ): Promise<Map<string, string>> {
+    const salidasMap = new Map<string, string>(); // reservation_id -> exit_at
+    for (let i = 0; i < reservationIds.length; i += batchSize) {
+      const batch = reservationIds.slice(i, i + batchSize);
+      const { data, error } = await supabase
+        .from('casetilla_salidas')
+        .select('reservation_id, exit_at')
+        .eq('org_id', orgId)
+        .in('reservation_id', batch)
+        .order('exit_at', { ascending: false });
+      if (error) throw error;
+      (data ?? []).forEach((s: any) => {
+        const rid = s.reservation_id as string;
+        if (!salidasMap.has(rid)) salidasMap.set(rid, s.exit_at as string);
+      });
+    }
+    return salidasMap;
+  }
+
   // ─── SEGREGACIÓN: obtener warehouses permitidos para el usuario ──────────
   // FUENTE REAL: user_warehouse_access (user_warehouses está vacía y no se usa)
   async getUserAllowedWarehouseIds(orgId: string, userId: string): Promise<string[] | null> {
@@ -839,18 +883,18 @@ async getExitEligibleReservations(
       statusCatalog.set(s.id, { name: s.name, code: s.code });
     });
 
-    // 2) Traer ingresos ordenados (último ingreso primero)
-    let ingresosQuery = supabase
-      .from("casetilla_ingresos")
-      .select("reservation_id, created_at")
-      .eq("org_id", orgId)
-      .not("reservation_id", "is", null);
+    // 2) Traer ingresos ordenados (último ingreso primero) — paginado para superar el límite de 1000 filas
+    const ingresos = await this._fetchAll<any>((from, to) =>
+      supabase
+        .from("casetilla_ingresos")
+        .select("reservation_id, created_at")
+        .eq("org_id", orgId)
+        .not("reservation_id", "is", null)
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: true })
+        .range(from, to)
+    );
 
-    ingresosQuery = ingresosQuery.order("created_at", { ascending: false });
-
-    const { data: ingresos, error: step2Err } = await ingresosQuery;
-
-    if (step2Err) throw new Error(`[Paso 2 - casetilla_ingresos] ${step2Err.message} (code: ${step2Err.code})`);
     if (!ingresos || ingresos.length === 0) return [];
 
     // Map: reservation_id -> fecha_ingreso (última)
@@ -1371,14 +1415,17 @@ async getExitEligibleReservations(
       }
       // ─────────────────────────────────────────────────────────────────────
 
-      // 1) Join entre casetilla_ingresos y casetilla_salidas
-      const { data: ingresos, error: ingresosError } = await supabase
-        .from('casetilla_ingresos')
-        .select('reservation_id, chofer, matricula, dua, created_at, fotos, reservations(dock_id, docks(warehouse_id, warehouses(timezone)))')
-        .eq('org_id', orgId)
-        .order('created_at', { ascending: false });
+      // 1) Join entre casetilla_ingresos y casetilla_salidas — paginado para superar el límite de 1000 filas
+      const ingresos = await this._fetchAll<any>((from, to) =>
+        supabase
+          .from('casetilla_ingresos')
+          .select('reservation_id, chofer, matricula, dua, created_at, fotos, reservations(dock_id, docks(warehouse_id, warehouses(timezone)))')
+          .eq('org_id', orgId)
+          .order('created_at', { ascending: false })
+          .order('id', { ascending: true })
+          .range(from, to)
+      );
 
-      if (ingresosError) throw ingresosError;
       if (!ingresos || ingresos.length === 0) return [];
 
       // ─── SEGREGACIÓN: filtrar ingresos por dock permitido ─────────────────
@@ -1396,23 +1443,28 @@ async getExitEligibleReservations(
 
       if (reservationIds.length === 0) return [];
 
-      const { data: salidas, error: salidasError } = await supabase
-        .from('casetilla_salidas')
-        .select('reservation_id, exit_at, fotos')
-        .eq('org_id', orgId)
-        .in('reservation_id', reservationIds);
-
-      if (salidasError) throw salidasError;
-      if (!salidas || salidas.length === 0) return [];
-
-      // 2) Crear maps de salidas (exit_at y fotos)
+      // 2) Traer salidas en lotes (evita URL larga y límite de filas)
       const salidasMap = new Map<string, { exit_at: string; fotos?: string[] | null }>();
-      salidas.forEach((sal: any) => {
-        salidasMap.set(sal.reservation_id, {
-          exit_at: sal.exit_at,
-          fotos: sal.fotos ?? null,
+      const SALIDAS_BATCH = 50;
+      for (let i = 0; i < reservationIds.length; i += SALIDAS_BATCH) {
+        const batch = reservationIds.slice(i, i + SALIDAS_BATCH);
+        const { data: salidas, error: salidasError } = await supabase
+          .from('casetilla_salidas')
+          .select('reservation_id, exit_at, fotos')
+          .eq('org_id', orgId)
+          .in('reservation_id', batch);
+
+        if (salidasError) throw salidasError;
+
+        (salidas ?? []).forEach((sal: any) => {
+          salidasMap.set(sal.reservation_id, {
+            exit_at: sal.exit_at,
+            fotos: sal.fotos ?? null,
+          });
         });
-      });
+      }
+
+      if (salidasMap.size === 0) return [];
 
       // 3) Traer datos de las reservas para enriquecer el reporte
       const reservationIdsWithSalida = filteredIngresos
@@ -1623,36 +1675,25 @@ async getExitEligibleReservations(
       }
 
       // 4) Cargar INGRESOS del rango (para citas_con_in y tiempo real)
-      let ingresosQuery = supabase
-        .from('casetilla_ingresos')
-        .select('reservation_id, created_at')
-        .eq('org_id', orgId)
-        .not('reservation_id', 'is', null)
-        .gte('created_at', fromIso)
-        .lte('created_at', toIso)
-        .order('created_at', { ascending: false });
-
-      const { data: ingresos, error: ingErr } = await ingresosQuery;
-      if (ingErr) throw ingErr;
+      const ingresos = await this._fetchAll<any>((from, to) =>
+        supabase
+          .from('casetilla_ingresos')
+          .select('reservation_id, created_at')
+          .eq('org_id', orgId)
+          .not('reservation_id', 'is', null)
+          .gte('created_at', fromIso)
+          .lte('created_at', toIso)
+          .order('created_at', { ascending: false })
+          .order('id', { ascending: true })
+          .range(from, to)
+      );
 
       // 5) Cargar SALIDAS para los ingresos encontrados
       const ingresoReservationIds = (ingresos ?? []).map((i: any) => i.reservation_id).filter(Boolean) as string[];
       let salidasMap = new Map<string, string>();
       if (ingresoReservationIds.length > 0) {
-        const { data: salidas } = await supabase
-          .from('casetilla_salidas')
-          .select('reservation_id, exit_at')
-          .eq('org_id', orgId)
-          .in('reservation_id', ingresoReservationIds)
-          .order('exit_at', { ascending: false });
-
-        (salidas ?? []).forEach((s: any) => {
-          const rid = s.reservation_id as string;
-          const exitAt = s.exit_at as string;
-          if (!salidasMap.has(rid)) {
-            salidasMap.set(rid, exitAt);
-          }
-        });
+        const salidasFromHelper = await this._fetchSalidasForReservations(orgId, ingresoReservationIds);
+        salidasMap = salidasFromHelper;
       }
 
       // 6) Resolver proveedores
@@ -2085,35 +2126,25 @@ async getExitEligibleReservations(
       }
 
       // 3) Cargar INGRESOS del rango (solo con reservation_id)
-      const { data: ingresos, error: ingErr } = await supabase
-        .from('casetilla_ingresos')
-        .select('reservation_id, created_at')
-        .eq('org_id', orgId)
-        .not('reservation_id', 'is', null)
-        .gte('created_at', fromIso)
-        .lte('created_at', toIso)
-        .order('created_at', { ascending: false });
-
-      if (ingErr) throw ingErr;
+      const ingresos = await this._fetchAll<any>((from, to) =>
+        supabase
+          .from('casetilla_ingresos')
+          .select('reservation_id, created_at')
+          .eq('org_id', orgId)
+          .not('reservation_id', 'is', null)
+          .gte('created_at', fromIso)
+          .lte('created_at', toIso)
+          .order('created_at', { ascending: false })
+          .order('id', { ascending: true })
+          .range(from, to)
+      );
 
       // 4) Cargar SALIDAS para esos ingresos
       const ingresoReservationIds = (ingresos ?? []).map((i: any) => i.reservation_id).filter(Boolean) as string[];
       let salidasMap = new Map<string, string>();
       if (ingresoReservationIds.length > 0) {
-        const { data: salidas } = await supabase
-          .from('casetilla_salidas')
-          .select('reservation_id, exit_at')
-          .eq('org_id', orgId)
-          .in('reservation_id', ingresoReservationIds)
-          .order('exit_at', { ascending: false });
-
-        (salidas ?? []).forEach((s: any) => {
-          const rid = s.reservation_id as string;
-          const exitAt = s.exit_at as string;
-          if (!salidasMap.has(rid)) {
-            salidasMap.set(rid, exitAt);
-          }
-        });
+        const salidasFromHelper = await this._fetchSalidasForReservations(orgId, ingresoReservationIds);
+        salidasMap = salidasFromHelper;
       }
 
       // 5) Construir map de ingresos (primer ingreso por reserva)
