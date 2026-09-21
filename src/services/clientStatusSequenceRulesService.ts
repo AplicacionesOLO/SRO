@@ -134,6 +134,7 @@ export const clientStatusSequenceRulesService = {
       p_reservation_id: reservationId,
       p_new_status_id: newStatusId,
       p_user_id: userId ?? null,
+      p_enforce_no_reversion: false,
     });
 
     if (error) throw error;

@@ -530,6 +530,7 @@ async function validateStatusTransition(orgId: string, reservationId: string, ne
       p_reservation_id: reservationId,
       p_new_status_id: newStatusId,
       p_user_id: userId ?? null,
+      p_enforce_no_reversion: false,
     });
     if (error) return;
     result = data as { allowed: boolean; bypassed: boolean; message: string } | null;

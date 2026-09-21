@@ -1478,21 +1478,32 @@ async getExitEligibleReservations(
       if (salidasMap.size === 0) return [];
 
       // 3) Traer datos de las reservas para enriquecer el reporte
+      //    ⚠️ Se hace en LOTES: con cientos de IDs en un solo .in() la URL supera
+      //    el límite de PostgREST, la consulta falla en silencio y deja vacíos
+      //    los campos Proveedor / N° Pedido / Inicio cita / Fin cita.
       const reservationIdsWithSalida = filteredIngresos
         .filter((ing: any) => ing.reservation_id && salidasMap.has(ing.reservation_id))
         .map((ing: any) => ing.reservation_id as string);
 
-      let reservationsMap = new Map<string, { start_datetime: string | null; end_datetime: string | null; shipper_provider: string | null; order_request_number: string | null }>();
-      let providersMap = new Map<string, string>();
+      const reservationsMap = new Map<string, { start_datetime: string | null; end_datetime: string | null; shipper_provider: string | null; order_request_number: string | null }>();
+      const providersMap = new Map<string, string>();
 
       if (reservationIdsWithSalida.length > 0) {
-        const { data: reservationsData } = await supabase
-          .from('reservations')
-          .select('id, start_datetime, end_datetime, shipper_provider, order_request_number')
-          .in('id', reservationIdsWithSalida)
-          .eq('org_id', orgId);
+        const RES_BATCH = 50;
+        const allReservations: any[] = [];
+        for (let i = 0; i < reservationIdsWithSalida.length; i += RES_BATCH) {
+          const batch = reservationIdsWithSalida.slice(i, i + RES_BATCH);
+          const { data: reservationsData, error: resErr } = await supabase
+            .from('reservations')
+            .select('id, start_datetime, end_datetime, shipper_provider, order_request_number')
+            .in('id', batch)
+            .eq('org_id', orgId);
 
-        (reservationsData ?? []).forEach((r: any) => {
+          if (resErr) throw resErr;
+          allReservations.push(...(reservationsData ?? []));
+        }
+
+        allReservations.forEach((r: any) => {
           reservationsMap.set(r.id, {
             start_datetime: r.start_datetime ?? null,
             end_datetime: r.end_datetime ?? null,
@@ -1503,19 +1514,24 @@ async getExitEligibleReservations(
 
         const providerIds = [
           ...new Set(
-            (reservationsData ?? [])
+            allReservations
               .map((r: any) => r.shipper_provider)
               .filter((id: any) => id && String(id).match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i))
           ),
         ] as string[];
 
         if (providerIds.length > 0) {
-          const { data: providersData } = await supabase
-            .from('providers')
-            .select('id, name')
-            .in('id', providerIds);
+          const PROV_BATCH = 50;
+          for (let i = 0; i < providerIds.length; i += PROV_BATCH) {
+            const batch = providerIds.slice(i, i + PROV_BATCH);
+            const { data: providersData, error: provErr } = await supabase
+              .from('providers')
+              .select('id, name')
+              .in('id', batch);
 
-          (providersData ?? []).forEach((p: any) => providersMap.set(p.id, p.name));
+            if (provErr) throw provErr;
+            (providersData ?? []).forEach((p: any) => providersMap.set(p.id, p.name));
+          }
         }
       }
 
