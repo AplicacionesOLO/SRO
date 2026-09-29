@@ -13,9 +13,10 @@ import { activityLogService } from '../../../services/activityLogService';
 import { ActivityTab } from './ActivityTab';
 import { providersService } from '../../../services/providersService';
 import { cargoTypesService } from '../../../services/cargoTypesService';
+import { vehicleTypesService } from '../../../services/vehicleTypesService';
 import { timeProfilesService } from '../../../services/timeProfilesService';
 import { userProvidersService, type UserProvider } from '../../../services/userProvidersService';
-import type { Provider, CargoType } from '../../../types/catalog';
+import type { Provider, CargoType, VehicleType } from '../../../types/catalog';
 import { ConfirmModal } from '../../../components/base/ConfirmModal';
 import { RecurrenceForm } from './RecurrenceForm';
 import {
@@ -122,6 +123,7 @@ export default function ReservationModal({
     notes: '',
     transportType: 'inbound',
     cargoType: '',
+    vehicleType: '',
     operationType: '' as string,
     blNumber: '',
   });
@@ -139,6 +141,7 @@ export default function ReservationModal({
 
   const [providers, setProviders] = useState<Provider[]>([]);
   const [cargoTypes, setCargoTypes] = useState<CargoType[]>([]);
+  const [vehicleTypes, setVehicleTypes] = useState<VehicleType[]>([]);
   const [suggestedMinutes, setSuggestedMinutes] = useState<number | null>(null);
   const [manualOverride, setManualOverride] = useState(false);
   const [cargoQuantity, setCargoQuantity] = useState<string>('');
@@ -291,8 +294,9 @@ export default function ReservationModal({
 
     const providerId = reservation.shipper_provider;
     const cargoTypeId = reservation.cargo_type;
+    const vehicleTypeId = (reservation as any).vehicle_type as string | null;
 
-    if (!providerId && !cargoTypeId) return;
+    if (!providerId && !cargoTypeId && !vehicleTypeId) return;
 
     let cancelled = false;
 
@@ -326,6 +330,22 @@ export default function ReservationModal({
                   setCargoTypes(prev => {
                     if (prev.some(ct => ct.id === data.id)) return prev;
                     return [data as CargoType, ...prev];
+                  });
+                }
+              })()
+            : Promise.resolve(),
+
+          vehicleTypeId
+            ? (async () => {
+                const { data } = await supabase
+                  .from('vehicle_types')
+                  .select('*')
+                  .eq('id', vehicleTypeId)
+                  .maybeSingle();
+                if (!cancelled && data) {
+                  setVehicleTypes(prev => {
+                    if (prev.some(vt => vt.id === data.id)) return prev;
+                    return [data as VehicleType, ...prev];
                   });
                 }
               })()
@@ -364,6 +384,7 @@ export default function ReservationModal({
       notes: defaults?.notes || '',
       transportType: defaults?.transport_type || 'inbound',
       cargoType: defaults?.cargo_type || '',
+      vehicleType: defaults?.vehicle_type || '',
       operationType: defaults?.operation_type || '',
       blNumber: defaults?.bl_number || '',
     });
@@ -408,6 +429,11 @@ export default function ReservationModal({
           console.log('[NewReservation] Modal ── cargoTypes count:', data.length);
           setCargoTypes(data);
         })
+        .catch(() => { /* non-blocking */ });
+
+      // ══ vehicleTypes: catálogo de tipos de vehículo (no bloqueante) ══
+      vehicleTypesService.getByWarehouse(orgId, warehouseId ?? null, true)
+        .then(data => { if (data) setVehicleTypes(data); })
         .catch(() => { /* non-blocking */ });
 
       console.time('[NewReservation] Modal ── providers ──');
@@ -517,6 +543,7 @@ export default function ReservationModal({
         notes: reservation.notes || '',
         transportType: reservation.transport_type || 'inbound',
         cargoType: reservation.cargo_type || '',
+        vehicleType: (reservation as any).vehicle_type || '',
         operationType: reservation.operation_type || '',
         blNumber: (reservation as any).bl_number || '',
       });
@@ -551,7 +578,7 @@ export default function ReservationModal({
         const currentDockIds = docks.map((d) => d.id);
         const { isConsistent, warnings } = checkDraftContext(draft, currentDockIds, defaults);
         setRecurrenceConfig(draft.recurrenceConfig ?? DEFAULT_RECURRENCE_CONFIG);
-        setFormData(draft.formData);
+        setFormData({ ...draft.formData, vehicleType: draft.formData.vehicleType ?? '' });
         setIsImported(draft.isImported);
         setCancelReason(draft.cancelReason ?? '');
         setManualOverride(false);
@@ -749,6 +776,10 @@ export default function ReservationModal({
       setNotifyModal({ isOpen: true, type: 'warning', title: 'Campo requerido', message: 'El campo "BL / Conocimiento del contenedor" es obligatorio para operaciones de Zona Franca con carga importada.' });
       return;
     }
+    if (!formData.vehicleType) {
+      setNotifyModal({ isOpen: true, type: 'warning', title: 'Campo requerido', message: 'Seleccioná el tipo de vehículo para guardar la reserva.' });
+      return;
+    }
     const startDateTime = fromWarehouseLocalToUtc(formData.startDate, formData.startTime, tz);
     const endDateTime = fromWarehouseLocalToUtc(formData.endDate, formData.endTime, tz);
     if (endDateTime <= startDateTime) {
@@ -769,7 +800,8 @@ export default function ReservationModal({
       dua: isImported ? (formData.dua?.trim() || null) : null,
       invoice: formData.invoice || null, status_id: formData.statusId || null,
       notes: formData.notes || null, transport_type: formData.transportType,
-      cargo_type: formData.cargoType, operation_type: formData.operationType || null,
+      cargo_type: formData.cargoType, vehicle_type: formData.vehicleType || null,
+      operation_type: formData.operationType || null,
       is_imported: isImported, is_cancelled: isCancelledStatus,
       cancel_reason: isCancelledStatus ? cancelReason : null, is_consolidated: isConsolidated,
       ...(defaults?.client_id ? { client_id: defaults.client_id } : {}),
@@ -836,6 +868,7 @@ export default function ReservationModal({
           formData.notes === (reservation.notes || '') &&
           formData.transportType === (reservation.transport_type || 'inbound') &&
           formData.cargoType === (reservation.cargo_type || '') &&
+          formData.vehicleType === ((reservation as any).vehicle_type || '') &&
           formData.operationType === (reservation.operation_type || '') &&
           formData.blNumber === ((reservation as any).bl_number || '') &&
           isImported === !!((reservation as any).is_imported ?? !!(reservation.dua)) &&
@@ -1788,6 +1821,35 @@ export default function ReservationModal({
                         )}
                       </div>
                       <div className="space-y-4">
+                        {/* Tipo de Vehículo (obligatorio) */}
+                        <div>
+                          <label className={labelBase}>Tipo de Vehículo *</label>
+                          {canViewSensitive ? (
+                            <select
+                              value={formData.vehicleType}
+                              onChange={(e) => setFormData({ ...formData, vehicleType: e.target.value })}
+                              className={selectCls}
+                              required
+                              disabled={isReadOnly}
+                            >
+                              <option value="">Seleccionar tipo de vehículo</option>
+                              {(vehicleTypes.some(vt => vt.id === formData.vehicleType) || !formData.vehicleType
+                                ? vehicleTypes
+                                : [...vehicleTypes, { id: formData.vehicleType, org_id: '', name: 'Tipo actual (no disponible)', active: true } as VehicleType]
+                              ).map(vt => (
+                                <option key={vt.id} value={vt.id}>{vt.name}</option>
+                              ))}
+                            </select>
+                          ) : (
+                            <div className={inputMasked}>
+                              <span className="select-none">Reservado</span>
+                            </div>
+                          )}
+                          {canViewSensitive && !isReadOnly && (
+                            <p className={hintBase}>Clasificá el vehículo que ingresa. Este campo es obligatorio.</p>
+                          )}
+                        </div>
+
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                           <div>
                             <label className={labelBase}>Chofer</label>
@@ -2183,9 +2245,9 @@ export default function ReservationModal({
               {!isReadOnly && (
                 <button
                   type="submit"
-                  disabled={saving || providerMissingForSubmit || !formData.operationType || (isConsolidated && consolidatedProviders.length === 0)}
+                  disabled={saving || providerMissingForSubmit || !formData.operationType || !formData.vehicleType || (isConsolidated && consolidatedProviders.length === 0)}
                   className="px-4 py-2.5 bg-teal-600 text-white text-sm font-semibold rounded-lg hover:bg-teal-700 transition-colors whitespace-nowrap disabled:opacity-50 shadow-sm"
-                  title={providerMissingForSubmit ? 'No podés crear reservas sin proveedores asignados' : !formData.operationType ? 'Seleccioná un tipo de operación para guardar' : (isConsolidated && consolidatedProviders.length === 0) ? 'Agregá al menos un proveedor consolidado' : ''}
+                  title={providerMissingForSubmit ? 'No podés crear reservas sin proveedores asignados' : !formData.operationType ? 'Seleccioná un tipo de operación para guardar' : !formData.vehicleType ? 'Seleccioná el tipo de vehículo para guardar' : (isConsolidated && consolidatedProviders.length === 0) ? 'Agregá al menos un proveedor consolidado' : ''}
                 >
                   {saving ? 'Guardando...' : reservation ? 'Guardar Cambios' : 'Crear Reserva'}
                 </button>

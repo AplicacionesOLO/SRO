@@ -1320,13 +1320,36 @@ async getExitEligibleReservations(
       // Validar secuencia de estados: no despachar si no está descargado
       await this._validateTransitionOrThrow(orgId, reservationId, statusToId, userId);
 
-      // 4) Actualizar status de la reserva a DISPATCHED
+      // 4) Determinar el fin real de la cita (achique del bloque en el calendario).
+      //    Solo se achica, NUNCA crece: se guarda la hora real de salida cuando es
+      //    anterior al fin planificado. Así la parte no usada del andén queda libre.
+      const exitAtIso = new Date().toISOString();
+      let actualEndDatetime: string | null = null;
+      try {
+        const { data: timing } = await supabase
+          .from('reservations')
+          .select('start_datetime, end_datetime')
+          .eq('id', reservationId)
+          .eq('org_id', orgId)
+          .maybeSingle();
+        if (timing?.start_datetime && timing?.end_datetime) {
+          const startMs = new Date(timing.start_datetime).getTime();
+          const endMs = new Date(timing.end_datetime).getTime();
+          const exitMs = new Date(exitAtIso).getTime();
+          if (exitMs > startMs && exitMs < endMs) {
+            actualEndDatetime = exitAtIso;
+          }
+        }
+      } catch { /* best-effort: si falla, la salida igual se registra */ }
+
+      // 5) Actualizar status de la reserva a DISPATCHED (y su fin real si aplica)
       const { data: updatedSalidaRows, error: updateStatusError } = await supabase
         .from('reservations')
         .update({
           status_id: statusToId,
           updated_by: userId,
-          updated_at: new Date().toISOString()
+          updated_at: new Date().toISOString(),
+          ...(actualEndDatetime ? { actual_end_datetime: actualEndDatetime } : {}),
         })
         .eq('id', reservationId)
         .eq('org_id', orgId)
@@ -1350,7 +1373,7 @@ async getExitEligibleReservations(
           matricula: matricula,
           dua: dua,
           created_by: userId,
-          exit_at: new Date().toISOString(),
+          exit_at: exitAtIso,
           fotos: fotos && fotos.length > 0 ? fotos : null,
         })
         .select()

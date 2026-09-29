@@ -7,6 +7,13 @@ export interface Reservation {
   dock_id: string;
   start_datetime: string;
   end_datetime: string;
+  /**
+   * Hora real de fin de la cita (salida/despacho por el módulo in/out).
+   * Si es anterior a end_datetime, el bloque se achica y el espacio no usado
+   * queda disponible. El fin efectivo = LEAST(end_datetime, actual_end_datetime).
+   * Nunca crece la cita.
+   */
+  actual_end_datetime?: string | null;
   dua: string | null;
   invoice: string | null;
   driver: string | null;
@@ -14,6 +21,8 @@ export interface Reservation {
   notes: string | null;
   transport_type: string | null;
   cargo_type: string | null;
+  /** UUID del tipo de vehículo (catálogo vehicle_types) */
+  vehicle_type?: string | null;
   /** Clasificación de la operación: distribucion | almacen | zona_franca */
   operation_type?: string | null;
   is_cancelled: boolean;
@@ -557,11 +566,11 @@ export const calendarService = {
       const { data, error } = await supabase
         .from('reservations')
         .select(
-          `id, org_id, dock_id, start_datetime, end_datetime, status_id, is_cancelled,
+          `id, org_id, dock_id, start_datetime, end_datetime, actual_end_datetime, status_id, is_cancelled,
            cancel_reason, cancelled_by, cancelled_at, dua, invoice, driver, truck_plate,
            purchase_order, order_request_number, shipper_provider, client_id,
            operation_type, is_imported, bl_number, quantity_value, notes,
-           transport_type, cargo_type, created_by, created_at, updated_by, updated_at,
+           transport_type, cargo_type, vehicle_type, created_by, created_at, updated_by, updated_at,
            is_consolidated, qr_image_url, qr_card_image_url, recurrence`
         )
         .eq('org_id', orgId)
@@ -1284,6 +1293,7 @@ export const calendarService = {
         notes: updates.notes || null,
         transport_type: updates.transport_type || null,
         cargo_type: updates.cargo_type || null,
+        vehicle_type: updates.vehicle_type || null,
         operation_type: updates.operation_type || null,
         is_cancelled: updates.is_cancelled ?? false,
         cancel_reason: updates.cancel_reason || null,
@@ -1335,6 +1345,7 @@ export const calendarService = {
         notes: updates.notes || null,
         transport_type: updates.transport_type || null,
         cargo_type: updates.cargo_type || null,
+        vehicle_type: updates.vehicle_type || null,
         operation_type: updates.operation_type || null,
         is_cancelled: updates.is_cancelled ?? false,
         cancel_reason: updates.cancel_reason || null,
@@ -1651,6 +1662,7 @@ export const calendarService = {
         notes: null,
         transport_type: null,
         cargo_type: null,
+        vehicle_type: null,
         operation_type: null,
         is_cancelled: false,
         cancel_reason: null,
@@ -1693,6 +1705,7 @@ export const calendarService = {
         notes: null,
         transport_type: null,
         cargo_type: null,
+        vehicle_type: null,
         operation_type: null,
         is_cancelled: false,
         cancel_reason: null,

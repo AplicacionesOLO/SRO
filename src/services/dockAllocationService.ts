@@ -519,7 +519,7 @@ export const dockAllocationService = {
   getEnabledDockIdsForSlot(
     clientDocks: { dockId: string; dockOrder: number }[],
     mode: 'SEQUENTIAL' | 'ODD_FIRST' | 'NONE' | null | undefined,
-    reservations: { dock_id: string; start_datetime: string; end_datetime: string; is_cancelled: boolean }[],
+    reservations: { dock_id: string; start_datetime: string; end_datetime: string; actual_end_datetime?: string | null; is_cancelled: boolean }[],
     slotStart: Date,
     slotEnd: Date
   ): Set<string> {
@@ -531,7 +531,12 @@ export const dockAllocationService = {
     for (const r of reservations) {
       if (r.is_cancelled) continue;
       const rStart = truncMin(new Date(r.start_datetime));
-      const rEnd = truncMin(new Date(r.end_datetime));
+      // Fin efectivo: si la cita fue despachada antes, solo ocupa hasta su salida real.
+      const plannedEnd = new Date(r.end_datetime);
+      const effectiveEnd = r.actual_end_datetime && new Date(r.actual_end_datetime) < plannedEnd
+        ? new Date(r.actual_end_datetime)
+        : plannedEnd;
+      const rEnd = truncMin(effectiveEnd);
       if (rStart < slotEnd && rEnd > slotStart) {
         busyDockIds.add(r.dock_id);
       }

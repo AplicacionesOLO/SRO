@@ -48,6 +48,22 @@ export interface CargoType {
   updated_at?: string;
 }
 
+/**
+ * Tipo de vehículo (catálogo por almacén).
+ * Se usa en el formulario de reserva para clasificar el vehículo que ingresa.
+ */
+export interface VehicleType {
+  id: string;
+  org_id: string;
+  name: string;
+  active: boolean;
+  is_active?: boolean;
+  created_by?: string;
+  created_at?: string;
+  updated_by?: string;
+  updated_at?: string;
+}
+
 export interface ProviderCargoTimeProfile {
   id: string;
   org_id: string;

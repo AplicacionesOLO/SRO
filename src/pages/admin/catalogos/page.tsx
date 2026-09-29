@@ -3,6 +3,7 @@ import { usePermissions } from '../../../hooks/usePermissions';
 import { useActiveWarehouse } from '../../../contexts/ActiveWarehouseContext';
 import ProvidersTab from './components/ProvidersTab';
 import CargoTypesTab from './components/CargoTypesTab';
+import VehicleTypesTab from './components/VehicleTypesTab';
 import TimeProfilesTab from './components/TimeProfilesTab';
 import AsignacionesTab from './components/AsignacionesTab';
 import OrigenProveedoresTab from './components/OrigenProveedoresTab';
@@ -19,7 +20,7 @@ export default function CatalogosPage() {
     loading: whLoading,
   } = useActiveWarehouse();
 
-  const [activeTab, setActiveTab] = useState<'providers' | 'cargo_types' | 'time_profiles' | 'assignments' | 'origen_proveedores'>('providers');
+  const [activeTab, setActiveTab] = useState<'providers' | 'cargo_types' | 'vehicle_types' | 'time_profiles' | 'assignments' | 'origen_proveedores'>('providers');
   const [mountedTabs, setMountedTabs] = useState<Set<string>>(new Set(['providers']));
 
   const switchTab = (tabId: typeof activeTab) => {
@@ -66,6 +67,7 @@ export default function CatalogosPage() {
   const tabs = [
     { id: 'providers' as const, label: 'Proveedores', icon: 'ri-truck-line', adminOnly: false },
     { id: 'cargo_types' as const, label: 'Tipos de carga', icon: 'ri-box-3-line', adminOnly: false },
+    { id: 'vehicle_types' as const, label: 'Tipos de Vehículo', icon: 'ri-truck-line', adminOnly: false },
     { id: 'time_profiles' as const, label: 'Tiempos (Proveedor x Tipo de carga)', icon: 'ri-time-line', adminOnly: false },
     { id: 'origen_proveedores' as const, label: 'Orígenes', icon: 'ri-git-branch-line', adminOnly: true },
     { id: 'assignments' as const, label: 'Asignaciones', icon: 'ri-links-line', adminOnly: true },
@@ -127,6 +129,11 @@ export default function CatalogosPage() {
             {mountedTabs.has('cargo_types') && (
               <div style={{ display: activeTab === 'cargo_types' ? 'block' : 'none' }}>
                 <CargoTypesTab orgId={orgId} warehouseId={activeWarehouseId} />
+              </div>
+            )}
+            {mountedTabs.has('vehicle_types') && (
+              <div style={{ display: activeTab === 'vehicle_types' ? 'block' : 'none' }}>
+                <VehicleTypesTab orgId={orgId} warehouseId={activeWarehouseId} />
               </div>
             )}
             {mountedTabs.has('time_profiles') && (

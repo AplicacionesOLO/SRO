@@ -20,6 +20,7 @@ export interface ReservationDraftFormData {
   notes: string;
   transportType: string;
   cargoType: string;
+  vehicleType: string;
 }
 
 export interface ReservationDraftData {

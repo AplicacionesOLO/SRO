@@ -8,6 +8,18 @@ const corsHeaders = {
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+/**
+ * Fin efectivo de una reserva existente (en ms).
+ * Nunca es mayor que el fin planificado: si la cita fue despachada antes
+ * (actual_end_datetime), el espacio no usado queda libre para nuevas citas.
+ */
+function effectiveEndMs(_startIso: string, endIso: string, actualEndIso: string | null): number {
+  const endMs = new Date(endIso).getTime();
+  if (!actualEndIso) return endMs;
+  const actualMs = new Date(actualEndIso).getTime();
+  return Math.min(endMs, actualMs);
+}
+
 function formatDateInTimezone(date: Date, tz: string): string {
   return new Intl.DateTimeFormat('en-CA', {
     timeZone: tz,
@@ -73,13 +85,20 @@ Deno.serve(async (req) => {
 
     const token = authHeader.replace('Bearer ', '');
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
+    const supabaseAnonKey = Deno.env.get('SUPABASE_ANON_KEY')!;
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 
+    // Cliente anon: SOLO para validar el JWT del llamador
+    const authClient = createClient(supabaseUrl, supabaseAnonKey, {
+      auth: { persistSession: false },
+    });
+
+    // Cliente service-role: SOLO para operaciones privilegiadas de DB/RPC
     const supabase = createClient(supabaseUrl, supabaseServiceKey, {
       auth: { persistSession: false },
     });
 
-    const { data: { user }, error: authError } = await supabase.auth.getUser(token);
+    const { data: { user }, error: authError } = await authClient.auth.getUser(token);
     if (authError || !user) {
       return safeJsonResponse({ error: 'Invalid or expired token' }, 401);
     }
@@ -262,7 +281,7 @@ Deno.serve(async (req) => {
           if (!isAuthorized) {
             const { data: overlappingReservations, error: overlapQueryErr } = await supabase
               .from('reservations')
-              .select('id, start_datetime, end_datetime, status_id')
+              .select('id, start_datetime, end_datetime, actual_end_datetime, status_id')
               .eq('org_id', org_id)
               .eq('dock_id', dock_id)
               .eq('is_cancelled', false)
@@ -272,7 +291,12 @@ Deno.serve(async (req) => {
             if (overlapQueryErr) {
               console.error('Overlap query error:', overlapQueryErr);
             } else if (overlappingReservations && overlappingReservations.length > 0) {
+              const newStartMs = new Date(start_datetime).getTime();
               for (const existing of overlappingReservations) {
+                // Fin efectivo: si la cita ya fue despachada antes, su espacio no usado está libre.
+                if (newStartMs >= effectiveEndMs(existing.start_datetime, existing.end_datetime, existing.actual_end_datetime)) {
+                  continue;
+                }
                 if (allowedStatusIds.length > 0 && existing.status_id && allowedStatusIds.includes(existing.status_id)) {
                   continue;
                 }
@@ -306,19 +330,23 @@ Deno.serve(async (req) => {
           // If user IS authorized, skip overlap check — allow the reservation to proceed
         } else {
           // ── FALLBACK OVERLAP CHECK (replaces DB exclusion constraint) ─────
-          const { data: anyOverlap, error: fallbackErr } = await supabase
+          const { data: overlapRows, error: fallbackErr } = await supabase
             .from('reservations')
-            .select('id')
+            .select('id, start_datetime, end_datetime, actual_end_datetime')
             .eq('org_id', org_id)
             .eq('dock_id', dock_id)
             .eq('is_cancelled', false)
             .lt('start_datetime', end_datetime)
-            .gt('end_datetime', start_datetime)
-            .maybeSingle();
+            .gt('end_datetime', start_datetime);
+
+          const newStartMs = new Date(start_datetime).getTime();
+          const hasOverlap = (overlapRows || []).some((r: any) =>
+            newStartMs < effectiveEndMs(r.start_datetime, r.end_datetime, r.actual_end_datetime)
+          );
 
           if (fallbackErr) {
             console.error('Fallback overlap query error:', fallbackErr);
-          } else if (anyOverlap) {
+          } else if (hasOverlap) {
             return safeJsonResponse({
               error: 'OVERLAP_CONFLICT',
               message: 'Ese andén ya está reservado en ese horario. Elegí otro espacio.',
@@ -327,19 +355,23 @@ Deno.serve(async (req) => {
         }
       } else {
         // ── FALLBACK OVERLAP CHECK (no client context) ──────────────────────
-        const { data: anyOverlap, error: fallbackErr } = await supabase
+        const { data: overlapRows, error: fallbackErr } = await supabase
           .from('reservations')
-          .select('id')
+          .select('id, start_datetime, end_datetime, actual_end_datetime')
           .eq('org_id', org_id)
           .eq('dock_id', dock_id)
           .eq('is_cancelled', false)
           .lt('start_datetime', end_datetime)
-          .gt('end_datetime', start_datetime)
-          .maybeSingle();
+          .gt('end_datetime', start_datetime);
+
+        const newStartMs = new Date(start_datetime).getTime();
+        const hasOverlap = (overlapRows || []).some((r: any) =>
+          newStartMs < effectiveEndMs(r.start_datetime, r.end_datetime, r.actual_end_datetime)
+        );
 
         if (fallbackErr) {
           console.error('Fallback overlap query error (no client):', fallbackErr);
-        } else if (anyOverlap) {
+        } else if (hasOverlap) {
           return safeJsonResponse({
             error: 'OVERLAP_CONFLICT',
             message: 'Ese andén ya está reservado en ese horario. Elegí otro espacio.',
@@ -353,7 +385,7 @@ Deno.serve(async (req) => {
     const allowedColumns = new Set([
       'client_id', 'purchase_order', 'truck_plate', 'order_request_number',
       'shipper_provider', 'driver', 'dua', 'invoice', 'status_id', 'notes',
-      'transport_type', 'cargo_type', 'operation_type', 'is_imported',
+      'transport_type', 'cargo_type', 'vehicle_type', 'operation_type', 'is_imported',
       'is_cancelled', 'cancel_reason', 'cancelled_by', 'cancelled_at',
       'is_consolidated', 'bl_number', 'quantity_value', 'recurrence',
     ]);

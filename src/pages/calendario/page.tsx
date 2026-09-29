@@ -683,6 +683,18 @@ export default function CalendarioPage() {
 
   const truncateToMinute = useCallback((d: Date): Date => new Date(Math.floor(d.getTime() / 60_000) * 60_000), []);
 
+  // Fin efectivo de una reserva: si fue despachada antes de su fin planificado
+  // (actual_end_datetime), el bloque se achica y solo ocupa hasta su salida real.
+  // NUNCA crece por encima del fin planificado.
+  const getReservationEffectiveEnd = useCallback((r: Reservation): Date => {
+    const plannedEnd = new Date(r.end_datetime);
+    if (r.actual_end_datetime) {
+      const actualEnd = new Date(r.actual_end_datetime);
+      if (actualEnd < plannedEnd) return actualEnd;
+    }
+    return plannedEnd;
+  }, []);
+
   const isSlotEligible = useCallback(
     (dockId: string, day: Date, timeSlot: TimeSlot, diagnose = false): boolean => {
       const diag = (_reason: string, _extra?: Record<string, unknown>) => { void _reason; void _extra; };
@@ -724,7 +736,7 @@ export default function CalendarioPage() {
       const conflictingReservation = reservations.find((r) => {
         if (r.dock_id !== dockId) return false;
         const rStart = truncateToMinute(new Date(r.start_datetime));
-        const rEnd = truncateToMinute(new Date(r.end_datetime));
+        const rEnd = truncateToMinute(getReservationEffectiveEnd(r));
         return slotStart < rEnd && slotEnd > rStart;
       });
       // Si el usuario tiene bypass de overlap activado, permitir slots solapados
@@ -739,7 +751,7 @@ export default function CalendarioPage() {
       void diagnose;
       return true;
     },
-    [selectionMode, requiredMinutes, reservations, blocks, businessStartMinutes, businessEndMinutes, enabledDockIds, allocationError, allocationRule, warehouseTimezone, truncateToMinute, sameDayCutoffInfo, overlapBypassEnabled]
+    [selectionMode, requiredMinutes, reservations, blocks, businessStartMinutes, businessEndMinutes, enabledDockIds, allocationError, allocationRule, warehouseTimezone, truncateToMinute, getReservationEffectiveEnd, sameDayCutoffInfo, overlapBypassEnabled]
   );
 
   const handleSelectSlot = useCallback((slot: any) => {
@@ -763,7 +775,7 @@ export default function CalendarioPage() {
         const overlapping = reservations.find((r) => {
           if (r.dock_id !== dockId) return false;
           const rStart = truncateToMinute(new Date(r.start_datetime));
-          const rEnd = truncateToMinute(new Date(r.end_datetime));
+          const rEnd = truncateToMinute(getReservationEffectiveEnd(r));
           return cellStart < rEnd && calculatedEnd > rStart;
         });
         if (overlapping) {
@@ -803,13 +815,13 @@ export default function CalendarioPage() {
       const blocked = await clientBlockedStatusesService.isBlockedForUser(orgId!, (reservation as any).client_id ?? null, reservation.status_id, user?.id ?? null, null, isPrivilegedUser);
       if (blocked) { setNotifyModal({ isOpen: true, type: 'warning', title: 'Reserva bloqueada', message: 'Esta reserva no puede modificarse en su estado actual. Tu rol no tiene permiso para moverla.' }); setDraggedEvent(null); return; }
     }
-    const duration = new Date(reservation.end_datetime).getTime() - new Date(reservation.start_datetime).getTime();
+    const duration = getReservationEffectiveEnd(reservation).getTime() - new Date(reservation.start_datetime).getTime();
     const dayStartTz = getStartOfDayInTimezone(targetDay, warehouseTimezone);
     const newStart = new Date(dayStartTz.getTime() + (targetSlot.hour * 60 + targetSlot.minute) * 60_000);
     const newEnd = new Date(newStart.getTime() + duration);
     if (newStart.toDateString() !== newEnd.toDateString()) { setNotifyModal({ isOpen: true, type: 'warning', title: 'No se puede mover', message: 'No se puede mover la reserva porque cruzaría al día siguiente.' }); setDraggedEvent(null); return; }
     if (!isWithinBusinessHours(targetDay, newStart, newEnd)) { setNotifyModal({ isOpen: true, type: 'warning', title: 'Fuera de horario', message: 'No se puede mover la reserva fuera del horario permitido del almacén.' }); setDraggedEvent(null); return; }
-    const willConflictReservation = reservations.some((r) => { if (r.id === reservation.id) return false; if (r.dock_id !== targetDockId) return false; const rStart = truncateToMinute(new Date(r.start_datetime)); const rEnd = truncateToMinute(new Date(r.end_datetime)); return newStart < rEnd && newEnd > rStart; });
+    const willConflictReservation = reservations.some((r) => { if (r.id === reservation.id) return false; if (r.dock_id !== targetDockId) return false; const rStart = truncateToMinute(new Date(r.start_datetime)); const rEnd = truncateToMinute(getReservationEffectiveEnd(r)); return newStart < rEnd && newEnd > rStart; });
     const willConflictBlock = blocks.some((b) => { if (b.dock_id !== targetDockId) return false; const bStart = truncateToMinute(new Date(b.start_datetime)); const bEnd = truncateToMinute(new Date(b.end_datetime)); return newStart < bEnd && newEnd > bStart; });
     if (willConflictReservation || willConflictBlock) { setNotifyModal({ isOpen: true, type: 'warning', title: 'Conflicto de horario', message: 'No se puede mover la reserva porque hay un conflicto de horario.' }); setDraggedEvent(null); return; }
     try {
@@ -1115,6 +1127,7 @@ export default function CalendarioPage() {
       operation_type: (sourceReservation as any).operation_type || '',
       is_imported: (sourceReservation as any).is_imported ?? !!(sourceReservation.dua),
       bl_number: (sourceReservation as any).bl_number || '',
+      vehicle_type: (sourceReservation as any).vehicle_type || '',
       quantity_value: (sourceReservation as any).quantity_value ?? null,
       is_consolidated: !!sourceReservation.is_consolidated,
       consolidated_providers: consolidatedProviders,
@@ -1491,7 +1504,7 @@ export default function CalendarioPage() {
                                             const sStart = new Date(dayStartTz2.getTime() + (slot.hour * 60 + slot.minute) * 60_000);
                                             const sEnd = new Date(sStart.getTime() + requiredMinutes * 60_000);
                                             const rStart2 = truncateToMinute(new Date(r.start_datetime));
-                                            const rEnd2 = truncateToMinute(new Date(r.end_datetime));
+                                            const rEnd2 = truncateToMinute(getReservationEffectiveEnd(r));
                                             return sStart < rEnd2 && sEnd > rStart2;
                                           });
                                           return (
@@ -1538,7 +1551,7 @@ export default function CalendarioPage() {
                                         {(reservationsByDockDay.get(`${dock.id}|${toWarehouseDateString(day, warehouseTimezone)}`) || [])
                                           .map((reservation) => {
                                             const start = new Date(reservation.start_datetime);
-                                            const end = new Date(reservation.end_datetime);
+                                            const end = getReservationEffectiveEnd(reservation);
                                             const clamped = clampEventToBusinessHours(day, start, end);
                                             if (!clamped) return null;
                                             const { top, height, extendsBeyondBusinessHours } = clamped;
