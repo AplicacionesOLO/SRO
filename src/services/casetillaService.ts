@@ -3,6 +3,7 @@ import type { CreateCasetillaIngresoInput, CasetillaIngreso } from '../types/cas
 import { getStartOfDayInTimezone, getEndOfDayInTimezone, DEFAULT_TIMEZONE } from '../utils/timezoneUtils';
 import { emailTriggerService } from './emailTriggerService';
 import { clientStatusSequenceRulesService } from './clientStatusSequenceRulesService';
+import { activityLogService } from './activityLogService';
 
 // ─── Tipos de segregación ────────────────────────────────────────────────────
 export interface CasetillaClientOption {
@@ -1325,6 +1326,7 @@ async getExitEligibleReservations(
       //    anterior al fin planificado. Así la parte no usada del andén queda libre.
       const exitAtIso = new Date().toISOString();
       let actualEndDatetime: string | null = null;
+      let plannedEndDatetime: string | null = null;
       try {
         const { data: timing } = await supabase
           .from('reservations')
@@ -1333,6 +1335,7 @@ async getExitEligibleReservations(
           .eq('org_id', orgId)
           .maybeSingle();
         if (timing?.start_datetime && timing?.end_datetime) {
+          plannedEndDatetime = timing.end_datetime;
           const startMs = new Date(timing.start_datetime).getTime();
           const endMs = new Date(timing.end_datetime).getTime();
           const exitMs = new Date(exitAtIso).getTime();
@@ -1380,6 +1383,23 @@ async getExitEligibleReservations(
         .single();
 
       if (salidaError) throw salidaError;
+
+      // ✅ 5b) Actividad: registrar el recorte por salida anticipada (solo si aplica).
+      //        No bloquea el flujo: el writeLog ya es defensivo internamente.
+      if (actualEndDatetime) {
+        try {
+          await activityLogService.writeLog({
+            orgId,
+            entityType: 'reservation',
+            entityId: reservationId,
+            action: 'updated',
+            field: 'actual_end_datetime',
+            oldValue: plannedEndDatetime,
+            newValue: actualEndDatetime,
+            metadata: { reason: 'EARLY_EXIT', source: 'casetilla_salida', exit_at: exitAtIso },
+          });
+        } catch { /* no bloquear la salida si falla el log */ }
+      }
 
       // ✅ 6) TRIGGER: Disparar evento de cambio de status a DISPATCHED
 

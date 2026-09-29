@@ -13,6 +13,8 @@ export interface ReservationHoverData {
   id: string;
   startDatetime: string;
   endDatetime: string;
+  /** Fin real del despacho (salida anticipada). Si es anterior al fin planificado, el bloque se recortó. */
+  actualEndDatetime?: string | null;
   // Campos de transporte
   dua?: string | null;
   pedido?: string | null;
@@ -233,6 +235,19 @@ export default function ReservationHoverCard({
               {formatTime(data.startDatetime)} — {formatTime(data.endDatetime)}
             </span>
           </div>
+
+          {/* Salida anticipada — visible solo si el fin real es anterior al planificado */}
+          {data.actualEndDatetime &&
+            new Date(data.actualEndDatetime).getTime() < new Date(data.endDatetime).getTime() && (
+              <div className="flex items-center gap-2 -mt-0.5 mb-1">
+                <div className="w-4 h-4 flex items-center justify-center flex-shrink-0">
+                  <i className="ri-logout-box-r-line text-amber-500 text-xs" />
+                </div>
+                <span className="text-[10px] font-semibold text-amber-700 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded">
+                  Salida anticipada {formatTime(data.actualEndDatetime)}
+                </span>
+              </div>
+            )}
 
           {/* Filas dinámicas */}
           {rows.map((row) => (

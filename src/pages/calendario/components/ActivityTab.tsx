@@ -461,10 +461,31 @@ function getActivityDescription(
     }
 
     // ── Campos estándar ──────────────────────────────────────────────────
+    // ── Salida anticipada (recorte del bloque en el calendario) ──
+    if (log.field === 'actual_end_datetime') {
+      const plannedLabel = formatValue('actual_end_datetime', log.old_value, dockNameById, statusById);
+      const actualLabel = formatValue('actual_end_datetime', log.new_value, dockNameById, statusById);
+      return {
+        title: 'Salida anticipada registrada',
+        subtitle: (
+          <>
+            <span className="px-2 py-1 rounded-md bg-gray-50 border border-gray-200 text-xs text-gray-700">
+              Planificado: {plannedLabel}
+            </span>
+            <i className="ri-arrow-right-line text-gray-400 w-4 h-4 flex items-center justify-center" />
+            <span className="px-2 py-1 rounded-md bg-amber-50 border border-amber-200 text-xs text-amber-900">
+              Salida real: {actualLabel}
+            </span>
+          </>
+        ),
+      };
+    }
+
     const fieldLabels: Record<string, string> = {
       status_id: 'Estado',
       start_datetime: 'Fecha/hora inicio',
       end_datetime: 'Fecha/hora fin',
+      actual_end_datetime: 'Fin real (salida anticipada)',
       dock_id: 'Andén',
       driver: 'Chofer',
       truck_plate: 'Matrícula',
@@ -523,7 +544,7 @@ function formatValue(
   }
 
   // Fechas
-  if (field === 'start_datetime' || field === 'end_datetime') {
+  if (field === 'start_datetime' || field === 'end_datetime' || field === 'actual_end_datetime') {
     try {
       return format(parseISO(value), "d 'de' MMM yyyy HH:mm", { locale: es });
     } catch {
@@ -550,6 +571,7 @@ function getActionIcon(log: ActivityLog): string {
   if (log.field === 'consolidated_provider_removed') return 'ri-user-unfollow-line';
   if (log.field === 'consolidated_provider_changed') return 'ri-stack-line';
   if (log.field === 'status_id') return 'ri-checkbox-circle-line';
+  if (log.field === 'actual_end_datetime') return 'ri-logout-box-r-line';
   if (log.field === 'start_datetime' || log.field === 'end_datetime') return 'ri-calendar-line';
   if (log.field === 'dock_id') return 'ri-building-line';
   if (log.field === 'driver') return 'ri-user-line';
@@ -571,6 +593,7 @@ function getActionColor(log: ActivityLog): string {
   if (log.field === 'consolidated_provider_added') return 'text-green-600';
   if (log.field === 'consolidated_provider_removed') return 'text-red-600';
   if (log.field === 'consolidated_provider_changed') return 'text-teal-600';
+  if (log.field === 'actual_end_datetime') return 'text-amber-600';
   return 'text-gray-600';
 }
 

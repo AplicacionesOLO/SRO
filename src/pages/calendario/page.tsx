@@ -1551,7 +1551,10 @@ export default function CalendarioPage() {
                                         {(reservationsByDockDay.get(`${dock.id}|${toWarehouseDateString(day, warehouseTimezone)}`) || [])
                                           .map((reservation) => {
                                             const start = new Date(reservation.start_datetime);
-                                            const end = getReservationEffectiveEnd(reservation);
+                                            const plannedEnd = new Date(reservation.end_datetime);
+                                            const effectiveEnd = getReservationEffectiveEnd(reservation);
+                                            const isEarlyExit = effectiveEnd.getTime() < plannedEnd.getTime();
+                                            const end = effectiveEnd;
                                             const clamped = clampEventToBusinessHours(day, start, end);
                                             if (!clamped) return null;
                                             const { top, height, extendsBeyondBusinessHours } = clamped;
@@ -1559,7 +1562,24 @@ export default function CalendarioPage() {
                                             const hasSameProviderR = reservation.shipper_provider ? userProviderIds.has(reservation.shipper_provider) : false;
                                             const canViewSensitiveR = isOwnerR || isPrivilegedUser || hasSameProviderR;
                                             return (
-                                              <ReservationHoverCard key={reservation.id} isLimitedAccess={!canViewSensitiveR} data={{ id: reservation.id, startDatetime: reservation.start_datetime, endDatetime: reservation.end_datetime, statusName: reservation.status?.name, statusColor: reservation.status?.color, dockName: filteredDocks.find(d => d.id === reservation.dock_id)?.name, providerName: canViewSensitiveR ? providers.find(p => p.id === reservation.shipper_provider)?.name : null, driver: canViewSensitiveR ? reservation.driver : null, truckPlate: canViewSensitiveR ? reservation.truck_plate : null, cargoOrigin: canViewSensitiveR ? (reservation as any).cargo_origin : null, dua: canViewSensitiveR ? reservation.dua : null, invoice: canViewSensitiveR ? reservation.invoice : null, purchaseOrder: canViewSensitiveR ? reservation.purchase_order : null, pedido: canViewSensitiveR ? reservation.order_request_number : null, operationType: (reservation as any).operation_type ?? null, notes: canViewSensitiveR ? reservation.notes : null, blNumber: canViewSensitiveR ? (reservation as any).bl_number ?? null : null, createdByName: canViewSensitiveR ? (reservation.creator?.name || reservation.creator?.email || null) : null }} disabled={selectionMode}>
+                                              <React.Fragment key={reservation.id}>
+                                              {isEarlyExit && (() => {
+                                                const ghostTop = getTopFromBusinessStart(effectiveEnd);
+                                                const ghostHeight = calculateEventHeightDynamic(effectiveEnd, plannedEnd);
+                                                if (!Number.isFinite(ghostTop) || !Number.isFinite(ghostHeight) || ghostHeight <= 1) return null;
+                                                return (
+                                                  <div
+                                                    className="absolute left-1 right-1 rounded-b-lg pointer-events-none border border-dashed border-gray-400/70 overflow-hidden"
+                                                    style={{ top: `${ghostTop}px`, height: `${ghostHeight}px`, backgroundImage: 'repeating-linear-gradient(45deg, transparent, transparent 5px, rgba(107,114,128,0.18) 5px, rgba(107,114,128,0.18) 6px)' }}
+                                                  >
+                                                    <div className="h-full flex items-center justify-center gap-1 px-1">
+                                                      <i className="ri-logout-box-r-line text-gray-500 flex-shrink-0" style={{ fontSize: '10px' }}></i>
+                                                      <span className="text-[9px] font-semibold text-gray-500 truncate">Liberado · salida anticipada</span>
+                                                    </div>
+                                                  </div>
+                                                );
+                                              })()}
+                                              <ReservationHoverCard isLimitedAccess={!canViewSensitiveR} data={{ id: reservation.id, startDatetime: reservation.start_datetime, endDatetime: reservation.end_datetime, actualEndDatetime: reservation.actual_end_datetime ?? null, statusName: reservation.status?.name, statusColor: reservation.status?.color, dockName: filteredDocks.find(d => d.id === reservation.dock_id)?.name, providerName: canViewSensitiveR ? providers.find(p => p.id === reservation.shipper_provider)?.name : null, driver: canViewSensitiveR ? reservation.driver : null, truckPlate: canViewSensitiveR ? reservation.truck_plate : null, cargoOrigin: canViewSensitiveR ? (reservation as any).cargo_origin : null, dua: canViewSensitiveR ? reservation.dua : null, invoice: canViewSensitiveR ? reservation.invoice : null, purchaseOrder: canViewSensitiveR ? reservation.purchase_order : null, pedido: canViewSensitiveR ? reservation.order_request_number : null, operationType: (reservation as any).operation_type ?? null, notes: canViewSensitiveR ? reservation.notes : null, blNumber: canViewSensitiveR ? (reservation as any).bl_number ?? null : null, createdByName: canViewSensitiveR ? (reservation.creator?.name || reservation.creator?.email || null) : null }} disabled={selectionMode}>
                                                 <div
                                                   draggable={canMove && !selectionMode}
                                                   onDragStart={(e) => { if (selectionMode) { e.preventDefault(); return; } handleDragStart(e, { type: 'reservation', id: reservation.id, dockId: dock.id, startTime: start, endTime: end, data: reservation }); }}
@@ -1583,6 +1603,14 @@ export default function CalendarioPage() {
                                                       {!canViewSensitiveR && (<div className="text-amber-600 truncate text-[10px] leading-tight mt-0.5 flex items-center gap-0.5"><i className="ri-eye-off-line" style={{ fontSize: '10px' }}></i><span>Info limitada</span></div>)}
                                                     </div>
                                                     <div className="flex flex-col gap-1 mt-1.5 flex-shrink-0 min-w-0">
+                                                      {isEarlyExit && (
+                                                        <div className="flex items-center gap-1 min-w-0">
+                                                          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold leading-tight truncate max-w-full bg-amber-600 text-white" title={`Salida registrada a las ${toWarehouseTimeString(effectiveEnd, warehouseTimezone)} · el bloque se recortó por salida anticipada`}>
+                                                            <i className="ri-logout-box-r-line flex-shrink-0" style={{ fontSize: '9px' }} />
+                                                            <span className="truncate">Salida {toWarehouseTimeString(effectiveEnd, warehouseTimezone)}</span>
+                                                          </span>
+                                                        </div>
+                                                      )}
                                                       {(reservation as any).operation_type && (() => {
                                                         const OP_LABELS: Record<string, { label: string; icon: string }> = { distribucion: { label: 'Distribución', icon: 'ri-store-2-line' }, almacen: { label: 'Almacén', icon: 'ri-archive-line' }, zona_franca: { label: 'Zona Franca', icon: 'ri-global-line' } };
                                                         const raw: string = (reservation as any).operation_type;
@@ -1598,6 +1626,7 @@ export default function CalendarioPage() {
                                                   </div>
                                                 </div>
                                               </ReservationHoverCard>
+                                              </React.Fragment>
                                             );
                                           })}
                                         {blocks.filter((b) => { if (b.dock_id !== dock.id) return false; const bStart = new Date(b.start_datetime); return isSameDayInTimezone(bStart, day, warehouseTimezone); }).map((block) => {
