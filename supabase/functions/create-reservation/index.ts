@@ -167,6 +167,56 @@ Deno.serve(async (req) => {
       return safeJsonResponse({ error: 'User does not belong to the specified organization' }, 403);
     }
 
+    // ── VEHICLE TYPE REQUIRED (obligatorio para todos) ────────────────────
+    const vehicleTypeId =
+      typeof (body as any).vehicle_type === 'string' ? ((body as any).vehicle_type as string).trim() : '';
+
+    if (!vehicleTypeId || !UUID_REGEX.test(vehicleTypeId)) {
+      return safeJsonResponse({
+        error: 'VEHICLE_TYPE_REQUIRED',
+        message: 'El tipo de vehículo es obligatorio para crear una reserva.',
+      }, 400);
+    }
+
+    const { data: vehicleTypeRow } = await supabase
+      .from('vehicle_types')
+      .select('id, active, country_id')
+      .eq('id', vehicleTypeId)
+      .eq('org_id', org_id)
+      .maybeSingle();
+
+    if (!vehicleTypeRow || vehicleTypeRow.active !== true) {
+      return safeJsonResponse({
+        error: 'VEHICLE_TYPE_INVALID',
+        message: 'El tipo de vehículo seleccionado no es válido o está inactivo.',
+      }, 400);
+    }
+
+    // El tipo de vehículo debe pertenecer al país del almacén del andén
+    const { data: dockRowForCountry } = await supabase
+      .from('docks')
+      .select('warehouse_id')
+      .eq('id', dock_id)
+      .eq('org_id', org_id)
+      .maybeSingle();
+
+    let dockCountryId: string | null = null;
+    if (dockRowForCountry?.warehouse_id) {
+      const { data: whRowForCountry } = await supabase
+        .from('warehouses')
+        .select('country_id')
+        .eq('id', dockRowForCountry.warehouse_id)
+        .maybeSingle();
+      dockCountryId = (whRowForCountry?.country_id as string | null) ?? null;
+    }
+
+    if (dockCountryId && vehicleTypeRow.country_id && vehicleTypeRow.country_id !== dockCountryId) {
+      return safeJsonResponse({
+        error: 'VEHICLE_TYPE_COUNTRY_MISMATCH',
+        message: 'El tipo de vehículo no pertenece al país del almacén.',
+      }, 400);
+    }
+
     // ── RESOLVE CLIENT_ID FROM DOCK IF NOT PROVIDED ───────────────────────
     let effectiveClientId: string | null = client_id || null;
     if (!effectiveClientId && dock_id) {

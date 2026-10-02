@@ -1,33 +1,34 @@
 import { useState, useEffect, useCallback } from 'react';
 import { vehicleTypesService } from '../../../../services/vehicleTypesService';
-import { warehousesService } from '../../../../services/warehousesService';
+import { countriesService } from '../../../../services/countriesService';
 import type { VehicleType } from '../../../../types/catalog';
 import { useFormDraft, getDraftAge } from '../../../../hooks/useReservationDraft';
 import { ConfirmModal } from '../../../../components/base/ConfirmModal';
 
 interface VehicleTypeModalProps {
   orgId: string;
-  warehouseId?: string | null;
+  /** País por defecto (ej: el país del almacén activo) */
+  defaultCountryId?: string | null;
   vehicleType: VehicleType | null;
   onClose: () => void;
   onSave: () => void;
 }
 
-interface WarehouseOption {
+interface CountryOption {
   id: string;
   name: string;
 }
 
-export default function VehicleTypeModal({ orgId, warehouseId, vehicleType, onClose, onSave }: VehicleTypeModalProps) {
+export default function VehicleTypeModal({ orgId, defaultCountryId, vehicleType, onClose, onSave }: VehicleTypeModalProps) {
   const [name, setName] = useState('');
   const [isActive, setIsActive] = useState(true);
+  const [countryId, setCountryId] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Almacenes
-  const [warehouses, setWarehouses] = useState<WarehouseOption[]>([]);
-  const [selectedWarehouseIds, setSelectedWarehouseIds] = useState<string[]>([]);
-  const [warehousesLoading, setWarehousesLoading] = useState(false);
+  // Países
+  const [countries, setCountries] = useState<CountryOption[]>([]);
+  const [countriesLoading, setCountriesLoading] = useState(false);
 
   // ── Draft persistence ─────────────────────────────────────────────────────
   const isNewRecord = !vehicleType;
@@ -36,52 +37,47 @@ export default function VehicleTypeModal({ orgId, warehouseId, vehicleType, onCl
   const [showDiscardConfirm, setShowDiscardConfirm] = useState(false);
   const [draftAgeLabel, setDraftAgeLabel] = useState('');
 
-  interface VehicleTypeDraft { name: string }
+  interface VehicleTypeDraft { name: string; countryId: string }
   const { saveDraft, clearDraft, readDraft } = useFormDraft<VehicleTypeDraft>({ storageKey: DRAFT_KEY, isNewRecord });
 
-  // Cargar almacenes disponibles
+  // Cargar países disponibles
   useEffect(() => {
     if (!orgId) return;
-    setWarehousesLoading(true);
-    warehousesService.getAll(orgId)
-      .then(data => setWarehouses(data.map(w => ({ id: w.id, name: w.name }))))
-      .catch(() => setWarehouses([]))
-      .finally(() => setWarehousesLoading(false));
+    setCountriesLoading(true);
+    countriesService.getAll(orgId)
+      .then(data => setCountries(data.map(c => ({ id: c.id, name: c.name }))))
+      .catch(() => setCountries([]))
+      .finally(() => setCountriesLoading(false));
   }, [orgId]);
 
   useEffect(() => {
     if (vehicleType) {
       setName(vehicleType.name);
       setIsActive(vehicleType.is_active ?? vehicleType.active ?? true);
+      setCountryId(vehicleType.country_id || '');
       setShowDraftBanner(false);
-      vehicleTypesService.getVehicleTypeWarehouses(orgId, vehicleType.id)
-        .then(ids => setSelectedWarehouseIds(ids))
-        .catch(() => setSelectedWarehouseIds([]));
     } else {
       const draft = readDraft();
       if (draft) {
         setName(draft.formData.name);
+        setCountryId(draft.formData.countryId || defaultCountryId || '');
         setDraftAgeLabel(getDraftAge(draft.savedAt));
         setShowDraftBanner(true);
       } else {
         setName('');
+        setCountryId(defaultCountryId || '');
         setShowDraftBanner(false);
-      }
-      if (warehouseId) {
-        setSelectedWarehouseIds([warehouseId]);
-      } else {
-        setSelectedWarehouseIds([]);
       }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [vehicleType, warehouseId]);
+  }, [vehicleType, defaultCountryId]);
 
   // Auto-save borrador
   useEffect(() => {
     if (!isNewRecord) return;
-    saveDraft({ name });
+    saveDraft({ name, countryId });
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [name, isNewRecord]);
+  }, [name, countryId, isNewRecord]);
 
   const handleClose = useCallback(() => {
     if (isNewRecord && name.trim()) {
@@ -103,30 +99,20 @@ export default function VehicleTypeModal({ orgId, warehouseId, vehicleType, onCl
     onClose();
   }, [onClose]);
 
-  const handleToggleWarehouse = (wid: string) => {
-    setSelectedWarehouseIds(prev =>
-      prev.includes(wid) ? prev.filter(id => id !== wid) : [...prev, wid]
-    );
-  };
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim()) { setError('El nombre es requerido'); return; }
+    if (!countryId) { setError('El país es requerido'); return; }
 
     try {
       setSaving(true);
       setError(null);
-      let savedId: string;
 
       if (vehicleType) {
-        await vehicleTypesService.update(vehicleType.id, { name: name.trim(), active: isActive });
-        savedId = vehicleType.id;
+        await vehicleTypesService.update(vehicleType.id, { name: name.trim(), active: isActive, country_id: countryId });
       } else {
-        const created = await vehicleTypesService.create(orgId, name.trim());
-        savedId = created.id;
+        await vehicleTypesService.create(orgId, name.trim(), countryId);
       }
-
-      await vehicleTypesService.setVehicleTypeWarehouses(orgId, savedId, selectedWarehouseIds);
 
       clearDraft();
       onSave();
@@ -162,7 +148,7 @@ export default function VehicleTypeModal({ orgId, warehouseId, vehicleType, onCl
                       className="px-3 py-1 text-xs font-semibold bg-teal-600 text-white rounded-lg hover:bg-teal-700 whitespace-nowrap cursor-pointer">
                       Continuar
                     </button>
-                    <button type="button" onClick={() => { clearDraft(); setName(''); setShowDraftBanner(false); }}
+                    <button type="button" onClick={() => { clearDraft(); setName(''); setCountryId(defaultCountryId || ''); setShowDraftBanner(false); }}
                       className="px-3 py-1 text-xs border border-gray-300 bg-white text-gray-700 rounded-lg hover:bg-gray-50 whitespace-nowrap cursor-pointer">
                       Descartar
                     </button>
@@ -186,6 +172,39 @@ export default function VehicleTypeModal({ orgId, warehouseId, vehicleType, onCl
               placeholder="Ej: Cava 350" required />
           </div>
 
+          {/* País */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              País <span className="text-red-500">*</span>
+            </label>
+            {countriesLoading ? (
+              <div className="flex items-center gap-2 py-2 text-sm text-gray-500">
+                <i className="ri-loader-4-line animate-spin w-4 h-4 flex items-center justify-center"></i>
+                Cargando países...
+              </div>
+            ) : (
+              <select
+                value={countryId}
+                onChange={(e) => setCountryId(e.target.value)}
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent text-sm bg-white cursor-pointer"
+                required
+              >
+                <option value="">Seleccionar país</option>
+                {countries.map(c => (
+                  <option key={c.id} value={c.id}>{c.name}</option>
+                ))}
+              </select>
+            )}
+            <p className="mt-2 text-xs text-gray-500">
+              Este tipo de vehículo solo será visible en los almacenes del país seleccionado.
+            </p>
+            {countries.length === 0 && !countriesLoading && (
+              <p className="mt-1 text-xs text-amber-600">
+                No hay países configurados. Creá un país en Almacenes antes de agregar tipos de vehículo.
+              </p>
+            )}
+          </div>
+
           {/* Activo (solo al editar) */}
           {vehicleType && (
             <div className="space-y-2">
@@ -207,51 +226,6 @@ export default function VehicleTypeModal({ orgId, warehouseId, vehicleType, onCl
               )}
             </div>
           )}
-
-          {/* Selector de almacenes */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">Almacenes asignados</label>
-            <p className="text-xs text-gray-500 mb-3">
-              Seleccioná los almacenes donde este tipo de vehículo aplica.
-            </p>
-
-            {warehousesLoading ? (
-              <div className="flex items-center gap-2 py-3 text-sm text-gray-500">
-                <i className="ri-loader-4-line animate-spin"></i>
-                Cargando almacenes...
-              </div>
-            ) : warehouses.length === 0 ? (
-              <div className="p-3 bg-gray-50 border border-gray-200 rounded-lg text-sm text-gray-500">
-                No hay almacenes disponibles
-              </div>
-            ) : (
-              <div className="border border-gray-200 rounded-lg divide-y divide-gray-100 max-h-48 overflow-y-auto">
-                {warehouses.map(w => (
-                  <label key={w.id} className="flex items-center gap-3 px-4 py-2.5 hover:bg-gray-50 cursor-pointer transition-colors">
-                    <input
-                      type="checkbox"
-                      checked={selectedWarehouseIds.includes(w.id)}
-                      onChange={() => handleToggleWarehouse(w.id)}
-                      className="w-4 h-4 text-teal-600 border-gray-300 rounded focus:ring-teal-500"
-                    />
-                    <div className="flex items-center gap-2 flex-1">
-                      <i className="ri-store-2-line text-gray-400 text-sm w-4 h-4 flex items-center justify-center"></i>
-                      <span className="text-sm text-gray-800">{w.name}</span>
-                    </div>
-                    {warehouseId === w.id && (
-                      <span className="text-xs text-teal-600 font-medium">Activo</span>
-                    )}
-                  </label>
-                ))}
-              </div>
-            )}
-
-            {selectedWarehouseIds.length > 0 && (
-              <p className="mt-2 text-xs text-teal-700">
-                {selectedWarehouseIds.length} almacén(es) seleccionado(s)
-              </p>
-            )}
-          </div>
 
           <div className="flex items-center justify-end gap-3 pt-2">
             <button type="button" onClick={handleClose}

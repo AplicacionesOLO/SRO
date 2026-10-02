@@ -49,13 +49,15 @@ export interface CargoType {
 }
 
 /**
- * Tipo de vehículo (catálogo por almacén).
+ * Tipo de vehículo (catálogo por país).
+ * Cada tipo pertenece a un país y solo es visible en los almacenes de ese país.
  * Se usa en el formulario de reserva para clasificar el vehículo que ingresa.
  */
 export interface VehicleType {
   id: string;
   org_id: string;
   name: string;
+  country_id?: string | null;
   active: boolean;
   is_active?: boolean;
   created_by?: string;

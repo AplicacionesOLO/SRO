@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react';
 import { usePermissions } from '../../../../hooks/usePermissions';
 import { vehicleTypesService } from '../../../../services/vehicleTypesService';
+import { warehousesService } from '../../../../services/warehousesService';
+import { countriesService } from '../../../../services/countriesService';
 import type { VehicleType } from '../../../../types/catalog';
 import VehicleTypeModal from './VehicleTypeModal';
 import { ConfirmModal } from '../../../../components/base/ConfirmModal';
@@ -20,6 +22,8 @@ export default function VehicleTypesTab({ orgId, warehouseId }: VehicleTypesTabP
   const [showModal, setShowModal] = useState(false);
   const [editingVehicleType, setEditingVehicleType] = useState<VehicleType | null>(null);
   const [showActiveOnly, setShowActiveOnly] = useState(true);
+  const [countriesById, setCountriesById] = useState<Record<string, string>>({});
+  const [effectiveCountryId, setEffectiveCountryId] = useState<string | null>(null);
   const [confirmModal, setConfirmModal] = useState<{ isOpen: boolean; type: 'success' | 'warning' | 'error' | 'info'; title: string; message: string; showCancel?: boolean; onConfirm: () => void; onCancel?: () => void; }>({ isOpen: false, type: 'info', title: '', message: '', onConfirm: () => {} });
 
   const canRead = can('vehicle_types.view');
@@ -28,7 +32,7 @@ export default function VehicleTypesTab({ orgId, warehouseId }: VehicleTypesTabP
   const canDelete = can('vehicle_types.delete');
 
   useEffect(() => {
-    loadVehicleTypes();
+    loadContextAndTypes();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orgId, warehouseId]);
 
@@ -41,11 +45,25 @@ export default function VehicleTypesTab({ orgId, warehouseId }: VehicleTypesTabP
     setFilteredVehicleTypes(filtered);
   }, [searchTerm, vehicleTypes, showActiveOnly]);
 
-  const loadVehicleTypes = async () => {
+  const loadContextAndTypes = async () => {
     try {
       setLoading(true);
       setError(null);
-      const data = await vehicleTypesService.getByWarehouse(orgId, warehouseId);
+
+      // País del almacén activo (para filtrar) + nombres de país (para mostrar)
+      const [warehouses, countries] = await Promise.all([
+        warehousesService.getAll(orgId).catch(() => []),
+        countriesService.getAll(orgId).catch(() => []),
+      ]);
+      setCountriesById(Object.fromEntries(countries.map(c => [c.id, c.name])));
+
+      let countryId: string | null = null;
+      if (warehouseId) {
+        countryId = warehouses.find(w => w.id === warehouseId)?.country_id ?? null;
+      }
+      setEffectiveCountryId(countryId);
+
+      const data = await vehicleTypesService.getByCountry(orgId, countryId);
       setVehicleTypes(data);
     } catch (err: any) {
       setError(err?.message || 'Error al cargar tipos de vehículo');
@@ -70,24 +88,34 @@ export default function VehicleTypesTab({ orgId, warehouseId }: VehicleTypesTabP
     setConfirmModal(prev => ({ ...prev, isOpen: false }));
     try {
       await vehicleTypesService.deleteVehicleType(vt.id);
-      await loadVehicleTypes();
+      await loadContextAndTypes();
     } catch (err: any) {
       setError(err?.message || 'Error al eliminar');
     }
   };
 
-  const handleSave = async () => { await loadVehicleTypes(); setShowModal(false); };
+  const handleSave = async () => { await loadContextAndTypes(); setShowModal(false); };
 
   if (!canRead) return <div className="text-center py-12"><i className="ri-lock-line text-6xl text-red-500 mb-4"></i><p className="text-gray-600">No tienes permisos para ver tipos de vehículo</p></div>;
   if (loading) return <div className="text-center py-12"><div className="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-teal-600 mb-4"></div><p className="text-gray-600">Cargando tipos de vehículo...</p></div>;
-  if (error) return <div className="text-center py-12"><i className="ri-error-warning-line text-6xl text-red-500 mb-4"></i><p className="text-gray-600 mb-4">{error}</p><button onClick={loadVehicleTypes} className="px-6 py-2 bg-teal-600 text-white rounded-lg hover:bg-teal-700 transition-colors whitespace-nowrap cursor-pointer">Reintentar</button></div>;
+  if (error) return <div className="text-center py-12"><i className="ri-error-warning-line text-6xl text-red-500 mb-4"></i><p className="text-gray-600 mb-4">{error}</p><button onClick={loadContextAndTypes} className="px-6 py-2 bg-teal-600 text-white rounded-lg hover:bg-teal-700 transition-colors whitespace-nowrap cursor-pointer">Reintentar</button></div>;
 
   return (
     <div>
-      {!warehouseId && (
+      {!warehouseId ? (
         <div className="mb-4 p-3 bg-amber-50 border border-amber-200 rounded-lg flex items-center gap-2">
           <i className="ri-information-line text-amber-500 w-5 h-5 flex items-center justify-center"></i>
-          <p className="text-sm text-amber-700">Mostrando tipos de vehículo de todos los almacenes. Selecciona un almacén para filtrar.</p>
+          <p className="text-sm text-amber-700">Mostrando tipos de vehículo de todos los países. Seleccioná un almacén para filtrar por su país.</p>
+        </div>
+      ) : !effectiveCountryId ? (
+        <div className="mb-4 p-3 bg-amber-50 border border-amber-200 rounded-lg flex items-center gap-2">
+          <i className="ri-alert-line text-amber-500 w-5 h-5 flex items-center justify-center"></i>
+          <p className="text-sm text-amber-700">El almacén activo no tiene un país asignado. Asignale un país para poder ver sus tipos de vehículo.</p>
+        </div>
+      ) : (
+        <div className="mb-4 p-3 bg-teal-50 border border-teal-200 rounded-lg flex items-center gap-2">
+          <i className="ri-map-pin-line text-teal-600 w-5 h-5 flex items-center justify-center"></i>
+          <p className="text-sm text-teal-700">Mostrando tipos de vehículo de <span className="font-semibold">{countriesById[effectiveCountryId] || 'el país del almacén activo'}</span>.</p>
         </div>
       )}
 
@@ -117,7 +145,7 @@ export default function VehicleTypesTab({ orgId, warehouseId }: VehicleTypesTabP
       {filteredVehicleTypes.length === 0 ? (
         <div className="text-center py-12 bg-gray-50 rounded-lg">
           <i className="ri-inbox-line text-6xl text-gray-400 mb-4"></i>
-          <p className="text-gray-600">{warehouseId ? 'No hay tipos de vehículo asignados a este almacén' : 'No hay tipos de vehículo registrados'}</p>
+          <p className="text-gray-600">{warehouseId ? 'No hay tipos de vehículo para el país de este almacén' : 'No hay tipos de vehículo registrados'}</p>
         </div>
       ) : (
         <div className="overflow-x-auto">
@@ -125,6 +153,7 @@ export default function VehicleTypesTab({ orgId, warehouseId }: VehicleTypesTabP
             <thead>
               <tr className="border-b border-gray-200">
                 <th className="text-left py-3 px-4 text-sm font-semibold text-gray-700">Nombre</th>
+                <th className="text-left py-3 px-4 text-sm font-semibold text-gray-700">País</th>
                 <th className="text-left py-3 px-4 text-sm font-semibold text-gray-700">Estado</th>
                 <th className="text-right py-3 px-4 text-sm font-semibold text-gray-700">Acciones</th>
               </tr>
@@ -136,6 +165,12 @@ export default function VehicleTypesTab({ orgId, warehouseId }: VehicleTypesTabP
                     <span className="inline-flex items-center gap-2">
                       <i className="ri-truck-line text-gray-400 w-4 h-4 flex items-center justify-center"></i>
                       {vt.name}
+                    </span>
+                  </td>
+                  <td className="py-3 px-4 text-sm text-gray-600">
+                    <span className="inline-flex items-center gap-1.5">
+                      <i className="ri-map-pin-line text-gray-400 w-4 h-4 flex items-center justify-center"></i>
+                      {vt.country_id ? (countriesById[vt.country_id] || '—') : '—'}
                     </span>
                   </td>
                   <td className="px-4 py-3 whitespace-nowrap">
@@ -154,7 +189,7 @@ export default function VehicleTypesTab({ orgId, warehouseId }: VehicleTypesTabP
         </div>
       )}
 
-      {showModal && <VehicleTypeModal orgId={orgId} warehouseId={warehouseId} vehicleType={editingVehicleType} onClose={() => setShowModal(false)} onSave={handleSave} />}
+      {showModal && <VehicleTypeModal orgId={orgId} defaultCountryId={effectiveCountryId} vehicleType={editingVehicleType} onClose={() => setShowModal(false)} onSave={handleSave} />}
       <ConfirmModal isOpen={confirmModal.isOpen} type={confirmModal.type} title={confirmModal.title} message={confirmModal.message} showCancel={confirmModal.showCancel} onConfirm={confirmModal.onConfirm} onCancel={confirmModal.onCancel} />
     </div>
   );

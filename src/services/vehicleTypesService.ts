@@ -3,62 +3,37 @@ import type { VehicleType } from '../types/catalog';
 
 /**
  * Servicio del catálogo "Tipos de Vehículo".
- * Sigue el mismo patrón que cargoTypesService, con alcance por almacén.
+ * Alcance por PAÍS: cada tipo pertenece a un país y solo es visible en los
+ * almacenes de ese país. La visibilidad por almacén se resuelve a partir del
+ * país del almacén (warehouses.country_id).
  */
 export const vehicleTypesService = {
-  async getAll(orgId: string): Promise<VehicleType[]> {
-    const { data, error } = await supabase
+  async getAll(orgId: string, countryId?: string | null): Promise<VehicleType[]> {
+    let query = supabase
       .from('vehicle_types')
       .select('*')
       .eq('org_id', orgId)
       .order('name', { ascending: true });
 
+    if (countryId) {
+      query = query.eq('country_id', countryId);
+    }
+
+    const { data, error } = await query;
     if (error) throw error;
     return (data || []) as VehicleType[];
   },
 
-  async getActive(orgId: string): Promise<VehicleType[]> {
-    const { data, error } = await supabase
+  async getActive(orgId: string, countryId?: string | null): Promise<VehicleType[]> {
+    let query = supabase
       .from('vehicle_types')
       .select('*')
       .eq('org_id', orgId)
       .eq('active', true)
       .order('name', { ascending: true });
 
-    if (error) throw error;
-    return (data || []) as VehicleType[];
-  },
-
-  /**
-   * Obtener tipos de vehículo filtrados por almacén activo.
-   * Si warehouseId es null → devuelve todos los de la org (acceso global).
-   */
-  async getByWarehouse(orgId: string, warehouseId: string | null, activeOnly = false): Promise<VehicleType[]> {
-    if (!warehouseId) {
-      return activeOnly ? this.getActive(orgId) : this.getAll(orgId);
-    }
-
-    const { data: vtwRows, error: vtwErr } = await supabase
-      .from('vehicle_type_warehouses')
-      .select('vehicle_type_id')
-      .eq('org_id', orgId)
-      .eq('warehouse_id', warehouseId);
-
-    if (vtwErr) throw vtwErr;
-
-    const vehicleTypeIds = (vtwRows ?? []).map((r: any) => r.vehicle_type_id as string);
-
-    if (vehicleTypeIds.length === 0) return [];
-
-    let query = supabase
-      .from('vehicle_types')
-      .select('*')
-      .eq('org_id', orgId)
-      .in('id', vehicleTypeIds)
-      .order('name', { ascending: true });
-
-    if (activeOnly) {
-      query = query.eq('active', true);
+    if (countryId) {
+      query = query.eq('country_id', countryId);
     }
 
     const { data, error } = await query;
@@ -67,44 +42,44 @@ export const vehicleTypesService = {
   },
 
   /**
-   * Obtener los warehouse IDs asignados a un tipo de vehículo.
+   * Obtener tipos de vehículo filtrados por país.
    */
-  async getVehicleTypeWarehouses(orgId: string, vehicleTypeId: string): Promise<string[]> {
-    const { data, error } = await supabase
-      .from('vehicle_type_warehouses')
-      .select('warehouse_id')
-      .eq('org_id', orgId)
-      .eq('vehicle_type_id', vehicleTypeId);
-
-    if (error) throw error;
-    return (data ?? []).map((r: any) => r.warehouse_id as string);
+  async getByCountry(orgId: string, countryId: string | null, activeOnly = false): Promise<VehicleType[]> {
+    if (!countryId) {
+      return activeOnly ? this.getActive(orgId) : this.getAll(orgId);
+    }
+    return activeOnly ? this.getActive(orgId, countryId) : this.getAll(orgId, countryId);
   },
 
   /**
-   * Asignar un tipo de vehículo a uno o varios almacenes (reemplaza asignaciones previas).
+   * Obtener tipos de vehículo visibles para un almacén.
+   * Resuelve el país del almacén y devuelve solo los tipos de ese país.
+   * Si warehouseId es null → devuelve todos los de la org (acceso global).
    */
-  async setVehicleTypeWarehouses(orgId: string, vehicleTypeId: string, warehouseIds: string[]): Promise<void> {
-    const { error: delErr } = await supabase
-      .from('vehicle_type_warehouses')
-      .delete()
+  async getByWarehouse(orgId: string, warehouseId: string | null, activeOnly = false): Promise<VehicleType[]> {
+    if (!warehouseId) {
+      return activeOnly ? this.getActive(orgId) : this.getAll(orgId);
+    }
+
+    const { data: wh, error: whErr } = await supabase
+      .from('warehouses')
+      .select('country_id')
+      .eq('id', warehouseId)
       .eq('org_id', orgId)
-      .eq('vehicle_type_id', vehicleTypeId);
+      .maybeSingle();
 
-    if (delErr) throw delErr;
+    if (whErr) throw whErr;
 
-    if (warehouseIds.length === 0) return;
+    const countryId = (wh?.country_id as string | null) ?? null;
+    if (!countryId) return [];
 
-    const { error: insErr } = await supabase
-      .from('vehicle_type_warehouses')
-      .insert(warehouseIds.map(wid => ({ org_id: orgId, vehicle_type_id: vehicleTypeId, warehouse_id: wid })));
-
-    if (insErr) throw insErr;
+    return this.getByCountry(orgId, countryId, activeOnly);
   },
 
-  async create(orgId: string, name: string): Promise<VehicleType> {
+  async create(orgId: string, name: string, countryId: string): Promise<VehicleType> {
     const { data, error } = await supabase
       .from('vehicle_types')
-      .insert({ org_id: orgId, name, active: true })
+      .insert({ org_id: orgId, name, country_id: countryId, active: true })
       .select()
       .single();
 
@@ -112,7 +87,10 @@ export const vehicleTypesService = {
     return data as VehicleType;
   },
 
-  async update(id: string, updates: Partial<Pick<VehicleType, 'name' | 'active'>>): Promise<VehicleType> {
+  async update(
+    id: string,
+    updates: Partial<Pick<VehicleType, 'name' | 'active' | 'country_id'>>,
+  ): Promise<VehicleType> {
     const { data, error } = await supabase
       .from('vehicle_types')
       .update(updates)
