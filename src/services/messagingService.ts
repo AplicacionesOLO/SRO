@@ -6,11 +6,32 @@ import type {
   MessagingAdminData,
 } from '@/types/messaging';
 
+const NETWORK_ERROR_PATTERNS = [
+  'failed to fetch',
+  'networkerror',
+  'load failed',
+  'network request failed',
+  'failed to send a request to the edge function',
+  'connection',
+  'timeout',
+];
+
+/** Traduce errores crudos de red/conexión a un mensaje amigable para el usuario. */
+function toFriendlyMessage(raw: string): string {
+  const value = (raw || '').trim();
+  if (!value) return 'Error de servidor';
+  const lower = value.toLowerCase();
+  if (NETWORK_ERROR_PATTERNS.some((p) => lower.includes(p))) {
+    return 'Sin conexión con el servidor. Verificá tu internet e intentá de nuevo.';
+  }
+  return value;
+}
+
 /**
  * Extrae un mensaje de error legible desde la respuesta de una edge function,
  * sin importar cómo el SDK envuelva el cuerpo (objeto, string JSON, o texto).
  */
-async function extractErrorMessage(error: unknown): Promise<string> {
+async function extractRawMessage(error: unknown): Promise<string> {
   const e = error as any;
   if (!e) return 'Error de servidor';
 
@@ -42,6 +63,10 @@ async function extractErrorMessage(error: unknown): Promise<string> {
 
   if (e.message && !e.message.includes('non-2xx')) return e.message;
   return 'Error de servidor';
+}
+
+async function extractErrorMessage(error: unknown): Promise<string> {
+  return toFriendlyMessage(await extractRawMessage(error));
 }
 
 async function invoke<T>(name: string, body?: unknown): Promise<T> {

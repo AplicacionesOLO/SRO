@@ -75,6 +75,8 @@ export function useMessaging(): UseMessagingReturn {
       setContacts(data.contacts);
       setConversations(data.conversations);
       setTotalUnread(data.total_unread);
+      // Si la reconexión fue exitosa, limpiamos cualquier error previo (p. ej. "Failed to fetch")
+      setError(null);
     } catch (err: any) {
       setError(err?.message || 'Error al cargar la mensajería');
     } finally {

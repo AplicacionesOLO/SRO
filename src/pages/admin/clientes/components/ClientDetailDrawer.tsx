@@ -22,6 +22,9 @@ interface ClientDetailDrawerProps {
   canUpdateRules: boolean;
   canViewProviders: boolean;
   canManageProviders: boolean;
+  loadingDetails?: boolean;
+  detailsError?: string | null;
+  onRetryDetails?: () => void;
   onClose: () => void;
   onUpdateClient: (data: { name: string; legal_id?: string; email?: string; phone?: string; address?: string; notes?: string; is_active: boolean }) => Promise<void>;
   onUpdateRules: (data: ClientRulesFormData) => Promise<void>;
@@ -44,6 +47,9 @@ export default function ClientDetailDrawer({
   canUpdateRules,
   canViewProviders,
   canManageProviders,
+  loadingDetails = false,
+  detailsError = null,
+  onRetryDetails,
   onClose,
   onUpdateClient,
   onUpdateRules,
@@ -298,6 +304,13 @@ export default function ClientDetailDrawer({
           </button>
         </div>
 
+        {/* Barra de progreso al cargar detalles en segundo plano */}
+        {loadingDetails && (
+          <div className="h-0.5 w-full bg-teal-100 overflow-hidden flex-shrink-0">
+            <div className="h-full w-1/3 bg-teal-500 animate-pulse" />
+          </div>
+        )}
+
         {/* Tabs */}
         <div className="border-b border-gray-200 px-6">
           <div className="flex gap-1">
@@ -352,6 +365,28 @@ export default function ClientDetailDrawer({
 
         {/* Content */}
         <div className="flex-1 overflow-y-auto p-6">
+          {detailsError && (
+            <div className="mb-4 p-3 bg-amber-50 border border-amber-200 rounded-lg">
+              <div className="flex items-start gap-2">
+                <i className="ri-error-warning-line text-amber-600 text-lg mt-0.5"></i>
+                <div className="flex-1">
+                  <p className="text-sm text-amber-800">
+                    No se pudieron cargar los detalles del cliente. La información básica sigue disponible.
+                  </p>
+                  {onRetryDetails && (
+                    <button
+                      onClick={onRetryDetails}
+                      disabled={loadingDetails}
+                      className="mt-2 text-sm font-medium text-amber-800 underline hover:text-amber-900 disabled:opacity-50 whitespace-nowrap"
+                    >
+                      {loadingDetails ? 'Reintentando...' : 'Reintentar'}
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
           {error && (
             <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg">
               <div className="flex items-start gap-2">

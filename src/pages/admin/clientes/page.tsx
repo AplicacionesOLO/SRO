@@ -36,6 +36,8 @@ export default function ClientesPage() {
   const [selectedClientDockIds, setSelectedClientDockIds] = useState<string[]>([]);
   const [allProviders, setAllProviders] = useState<Provider[]>([]);
   const [selectedClientProviders, setSelectedClientProviders] = useState<{ provider_id: string; is_default: boolean }[]>([]);
+  const [drawerLoading, setDrawerLoading] = useState(false);
+  const [drawerError, setDrawerError] = useState<string | null>(null);
 
   // Modal de confirmación
   const [confirmModal, setConfirmModal] = useState<{
@@ -222,35 +224,37 @@ export default function ClientesPage() {
   const handleViewDetail = async (client: Client) => {
     if (!can('admin.clients.view')) return;
 
+    // Abrimos el panel de inmediato para dar respuesta visual instantánea.
+    // Los datos extra (reglas, andenes, proveedores) se cargan por detrás.
+    setSelectedClient(client);
+    setSelectedClientRules(null);
+    setAllDocks([]);
+    setSelectedClientDockIds([]);
+    setAllProviders([]);
+    setSelectedClientProviders([]);
+    setDrawerError(null);
+    setDrawerLoading(true);
+    setShowDrawer(true);
+
     try {
-      // console.log('[ClientesPage] loading client detail', { clientId: client.id });
+      const [rules, docks, clientDockIds, providers, clientProviders] = await Promise.all([
+        clientsService.getClientRules(orgId!, client.id),
+        clientsService.listDocks(orgId!),
+        clientsService.getClientDocks(orgId!, client.id),
+        providersService.getByWarehouse(orgId!, activeWarehouseId, true),
+        clientsService.getClientProviders(orgId!, client.id),
+      ]);
 
-      const rules = await clientsService.getClientRules(orgId!, client.id);
       setSelectedClientRules(rules);
-
-      const docks = await clientsService.listDocks(orgId!);
       setAllDocks(docks);
-
-      const clientDockIds = await clientsService.getClientDocks(orgId!, client.id);
       setSelectedClientDockIds(clientDockIds);
-
-      const providers = await providersService.getByWarehouse(orgId!, activeWarehouseId, true);
       setAllProviders(providers);
-
-      const clientProviders = await clientsService.getClientProviders(orgId!, client.id);
       setSelectedClientProviders(clientProviders);
-
-      setSelectedClient(client);
-      setShowDrawer(true);
     } catch (error) {
-      // console.error('[ClientesPage] load detail error', error);
-      setConfirmModal({
-        isOpen: true,
-        type: 'error',
-        title: 'Error',
-        message: 'Error al cargar los detalles del cliente',
-        onConfirm: () => setConfirmModal((prev) => ({ ...prev, isOpen: false }))
-      });
+      // No cerramos el panel: mostramos el error dentro para que el usuario pueda reintentar.
+      setDrawerError(error instanceof Error ? error.message : 'No se pudieron cargar los detalles del cliente');
+    } finally {
+      setDrawerLoading(false);
     }
   };
 
@@ -573,7 +577,12 @@ export default function ClientesPage() {
             setSelectedClientDockIds([]);
             setAllProviders([]);
             setSelectedClientProviders([]);
+            setDrawerLoading(false);
+            setDrawerError(null);
           }}
+          loadingDetails={drawerLoading}
+          detailsError={drawerError}
+          onRetryDetails={() => selectedClient && handleViewDetail(selectedClient)}
           onUpdateClient={handleUpdateClientFromDrawer}
           onUpdateRules={handleUpdateRules}
           onUpdateDocks={handleUpdateDocks}
