@@ -519,7 +519,7 @@ export const dockAllocationService = {
   getEnabledDockIdsForSlot(
     clientDocks: { dockId: string; dockOrder: number }[],
     mode: 'SEQUENTIAL' | 'ODD_FIRST' | 'NONE' | null | undefined,
-    reservations: { dock_id: string; start_datetime: string; end_datetime: string; actual_end_datetime?: string | null; is_cancelled: boolean }[],
+    reservations: { dock_id: string; start_datetime: string; end_datetime: string; actual_end_datetime?: string | null; is_cancelled: boolean; status?: { code?: string | null } | null }[],
     slotStart: Date,
     slotEnd: Date
   ): Set<string> {
@@ -532,10 +532,17 @@ export const dockAllocationService = {
       if (r.is_cancelled) continue;
       const rStart = truncMin(new Date(r.start_datetime));
       // Fin efectivo: si la cita fue despachada antes, solo ocupa hasta su salida real.
+      // Si quedó en No arribó (NO_SHOW), solo ocupa 15 min visibles desde su inicio;
+      // el resto del horario vuelve a estar libre.
       const plannedEnd = new Date(r.end_datetime);
-      const effectiveEnd = r.actual_end_datetime && new Date(r.actual_end_datetime) < plannedEnd
-        ? new Date(r.actual_end_datetime)
-        : plannedEnd;
+      let effectiveEnd = plannedEnd;
+      if (r.actual_end_datetime && new Date(r.actual_end_datetime) < plannedEnd) {
+        effectiveEnd = new Date(r.actual_end_datetime);
+      }
+      if ((r.status?.code || '').toUpperCase() === 'NO_SHOW') {
+        const reduced = new Date(rStart.getTime() + 15 * 60_000);
+        if (reduced < effectiveEnd) effectiveEnd = reduced;
+      }
       const rEnd = truncMin(effectiveEnd);
       if (rStart < slotEnd && rEnd > slotStart) {
         busyDockIds.add(r.dock_id);

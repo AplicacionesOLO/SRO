@@ -278,17 +278,31 @@ Deno.serve(async (req) => {
 
     // Insertar logs en activity_log (NO reservation_activity_log)
     if (logs.length > 0) {
-      const logRows = logs.map((l) => ({
-        org_id,
-        entity_type: 'reservation',
-        entity_id: l.reservation_id,
-        action: 'updated',
-        field: 'status_id',
-        old_value: l.old_status,
-        new_value: l.new_status,
-        metadata: { reason: 'AUTO_NO_SHOW', source: 'pg_cron' },
-        actor_user_id: null,
-      }));
+      const logRows = logs.flatMap((l) => ([
+        {
+          org_id,
+          entity_type: 'reservation',
+          entity_id: l.reservation_id,
+          action: 'updated',
+          field: 'status_id',
+          old_value: l.old_status,
+          new_value: l.new_status,
+          metadata: { reason: 'AUTO_NO_SHOW', source: 'pg_cron' },
+          actor_user_id: null,
+        },
+        // Registro explícito: la cita quedó en No arribó y liberó su espacio.
+        {
+          org_id,
+          entity_type: 'reservation',
+          entity_id: l.reservation_id,
+          action: 'updated',
+          field: 'no_show_space_released',
+          old_value: null,
+          new_value: 'No arribó: la cita queda visible con 15 min y el resto del horario vuelve a estar disponible.',
+          metadata: { reason: 'AUTO_NO_SHOW', source: 'pg_cron', reduced_visible_minutes: 15 },
+          actor_user_id: null,
+        },
+      ]));
 
       const { error: logErr } = await supabase.from('activity_log').insert(logRows);
       if (logErr) {

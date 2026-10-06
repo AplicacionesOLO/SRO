@@ -18,6 +18,8 @@ import {
   isNoShowExpired,
   isExemptFromNoShow,
   resolveIsImported,
+  getNoShowReducedEnd,
+  isNoShowStatusCode,
 } from './noShowRules.ts';
 
 // ── Mini harness ─────────────────────────────────────────────────────────────
@@ -226,6 +228,38 @@ test('resolveIsImported: fuente de verdad y fallback por DUA', () => {
   assertEqual(resolveIsImported({ is_imported: null, dua: 'DUA-9' }), true, 'null + DUA → importada');
   assertEqual(resolveIsImported({ is_imported: null, dua: '   ' }), false, 'null + DUA vacío → nacional');
   assertEqual(resolveIsImported({ is_imported: null, dua: null }), false, 'null sin DUA → nacional');
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 5) No arribó → reducción del bloque a 15 min visibles (espacio liberado)
+// ─────────────────────────────────────────────────────────────────────────────
+
+test('getNoShowReducedEnd: cita de 1 hora → se reduce a 15 min', () => {
+  const reduced = getNoShowReducedEnd('2026-10-06T10:00:00.000Z', '2026-10-06T11:00:00.000Z');
+  assertEqual(reduced.toISOString(), '2026-10-06T10:15:00.000Z', 'fin reducido');
+});
+
+test('getNoShowReducedEnd: cita de exactamente 15 min → se mantiene', () => {
+  const reduced = getNoShowReducedEnd('2026-10-06T10:00:00.000Z', '2026-10-06T10:15:00.000Z');
+  assertEqual(reduced.toISOString(), '2026-10-06T10:15:00.000Z', 'fin reducido');
+});
+
+test('getNoShowReducedEnd: cita de 5 min → conserva su duración original', () => {
+  const reduced = getNoShowReducedEnd('2026-10-06T10:00:00.000Z', '2026-10-06T10:05:00.000Z');
+  assertEqual(reduced.toISOString(), '2026-10-06T10:05:00.000Z', 'fin reducido');
+});
+
+test('getNoShowReducedEnd: fecha inválida → devuelve el fin planificado', () => {
+  const reduced = getNoShowReducedEnd('invalido', '2026-10-06T10:05:00.000Z');
+  assertEqual(reduced.toISOString(), '2026-10-06T10:05:00.000Z', 'fin reducido');
+});
+
+test('isNoShowStatusCode reconoce NO_SHOW (case-insensitive)', () => {
+  assertEqual(isNoShowStatusCode('NO_SHOW'), true, 'NO_SHOW');
+  assertEqual(isNoShowStatusCode('no_show'), true, 'no_show');
+  assertEqual(isNoShowStatusCode('PENDING'), false, 'PENDING');
+  assertEqual(isNoShowStatusCode(null), false, 'null');
+  assertEqual(isNoShowStatusCode(undefined), false, 'undefined');
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

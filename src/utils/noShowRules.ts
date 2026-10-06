@@ -105,3 +105,32 @@ export function resolveIsImported(row: {
   if (row.is_imported == null) return !!(row.dua && row.dua.trim().length > 0);
   return false;
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Reducción visual de una cita en estado "No arribó"
+//
+// La cita NO se elimina del calendario, pero deja de ocupar todo su tiempo:
+// se conserva un bloque visible MÍNIMO (15 min desde su inicio) y el resto del
+// horario queda LIBRE para nuevas citas (igual que la salida anticipada).
+// Si la cita duraba menos de 15 min, conserva su duración original.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Minutos visibles mínimos que conserva una cita "No arribó" en el calendario. */
+export const NO_SHOW_MIN_VISIBLE_MINUTES = 15;
+
+/**
+ * Fin efectivo de una cita en estado "No arribó": inicio + 15 min visibles,
+ * nunca mayor que su fin planificado. El resto del tiempo queda libre.
+ */
+export function getNoShowReducedEnd(startDatetime: string, endDatetime: string): Date {
+  const start = new Date(startDatetime).getTime();
+  const plannedEnd = new Date(endDatetime).getTime();
+  if (Number.isNaN(start) || Number.isNaN(plannedEnd)) return new Date(endDatetime);
+  const reduced = start + NO_SHOW_MIN_VISIBLE_MINUTES * 60_000;
+  return new Date(Math.min(reduced, plannedEnd));
+}
+
+/** ¿El código de estado corresponde a "No arribó" (NO_SHOW)? */
+export function isNoShowStatusCode(code?: string | null): boolean {
+  return (code || '').toUpperCase() === 'NO_SHOW';
+}

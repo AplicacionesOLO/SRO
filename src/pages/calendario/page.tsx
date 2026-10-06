@@ -38,6 +38,7 @@ import {
   toWarehouseTimeString,
   getDatePartsInTimezone,
 } from '../../utils/timezoneUtils';
+import { getNoShowReducedEnd, isNoShowStatusCode } from '../../utils/noShowRules';
 
 // ── Persistencia de contexto visual (sessionStorage, patrón Casetilla) ─────
 const SESSION_KEY = 'calendar_ui_state';
@@ -683,17 +684,25 @@ export default function CalendarioPage() {
 
   const truncateToMinute = useCallback((d: Date): Date => new Date(Math.floor(d.getTime() / 60_000) * 60_000), []);
 
-  // Fin efectivo de una reserva: si fue despachada antes de su fin planificado
-  // (actual_end_datetime), el bloque se achica y solo ocupa hasta su salida real.
-  // NUNCA crece por encima del fin planificado.
+  const isNoShowReservation = useCallback((r: Reservation): boolean => {
+    return isNoShowStatusCode(r.status?.code);
+  }, []);
+
+  // Fin efectivo de una reserva en el calendario. NUNCA crece por encima del fin planificado.
+  //   * Despachada antes (actual_end_datetime): el bloque se achica hasta su salida real.
+  //   * No arribó (NO_SHOW): la cita no se elimina, pero se reduce a un bloque visible
+  //     mínimo (15 min desde su inicio) y el resto del tiempo queda LIBRE.
   const getReservationEffectiveEnd = useCallback((r: Reservation): Date => {
     const plannedEnd = new Date(r.end_datetime);
+    if (isNoShowReservation(r)) {
+      return getNoShowReducedEnd(r.start_datetime, r.end_datetime);
+    }
     if (r.actual_end_datetime) {
       const actualEnd = new Date(r.actual_end_datetime);
       if (actualEnd < plannedEnd) return actualEnd;
     }
     return plannedEnd;
-  }, []);
+  }, [isNoShowReservation]);
 
   const isSlotEligible = useCallback(
     (dockId: string, day: Date, timeSlot: TimeSlot, diagnose = false): boolean => {
@@ -1553,7 +1562,9 @@ export default function CalendarioPage() {
                                             const start = new Date(reservation.start_datetime);
                                             const plannedEnd = new Date(reservation.end_datetime);
                                             const effectiveEnd = getReservationEffectiveEnd(reservation);
-                                            const isEarlyExit = effectiveEnd.getTime() < plannedEnd.getTime();
+                                            const isReduced = effectiveEnd.getTime() < plannedEnd.getTime();
+                                            const isNoShowReduced = isReduced && isNoShowReservation(reservation);
+                                            const isEarlyExit = isReduced && !isNoShowReduced;
                                             const end = effectiveEnd;
                                             const clamped = clampEventToBusinessHours(day, start, end);
                                             if (!clamped) return null;
@@ -1563,7 +1574,7 @@ export default function CalendarioPage() {
                                             const canViewSensitiveR = isOwnerR || isPrivilegedUser || hasSameProviderR;
                                             return (
                                               <React.Fragment key={reservation.id}>
-                                              {isEarlyExit && (() => {
+                                              {(isEarlyExit || isNoShowReduced) && (() => {
                                                 const ghostTop = getTopFromBusinessStart(effectiveEnd);
                                                 const ghostHeight = calculateEventHeightDynamic(effectiveEnd, plannedEnd);
                                                 if (!Number.isFinite(ghostTop) || !Number.isFinite(ghostHeight) || ghostHeight <= 1) return null;
@@ -1573,8 +1584,8 @@ export default function CalendarioPage() {
                                                     style={{ top: `${ghostTop}px`, height: `${ghostHeight}px`, backgroundImage: 'repeating-linear-gradient(45deg, transparent, transparent 5px, rgba(107,114,128,0.18) 5px, rgba(107,114,128,0.18) 6px)' }}
                                                   >
                                                     <div className="h-full flex items-center justify-center gap-1 px-1">
-                                                      <i className="ri-logout-box-r-line text-gray-500 flex-shrink-0" style={{ fontSize: '10px' }}></i>
-                                                      <span className="text-[9px] font-semibold text-gray-500 truncate">Liberado · salida anticipada</span>
+                                                      <i className={`${isNoShowReduced ? 'ri-user-unfollow-line' : 'ri-logout-box-r-line'} text-gray-500 flex-shrink-0`} style={{ fontSize: '10px' }}></i>
+                                                      <span className="text-[9px] font-semibold text-gray-500 truncate">{isNoShowReduced ? 'Liberado · no arribó' : 'Liberado · salida anticipada'}</span>
                                                     </div>
                                                   </div>
                                                 );
@@ -1586,8 +1597,15 @@ export default function CalendarioPage() {
                                                   onClick={(e) => { if (selectionMode && overlapBypassEnabled) { const dateParts = getDatePartsInTimezone(start, warehouseTimezone); const clickSlot: TimeSlot = { hour: dateParts.hour, minute: dateParts.minute, label: '' }; handleCellClick(e, dock.id, day, clickSlot); return; } e.stopPropagation(); if (selectionMode) { setNotifyModal({ isOpen: true, type: 'warning', title: 'Espacio ocupado', message: 'Ese espacio ya está reservado. Seleccioná un espacio disponible (verde).' }); return; } handleSelectSlot({ dockId: dock.id, date: day.toISOString(), time: '', eventType: 'reservation', id: reservation.id, data: reservation, startTime: start, endTime: end }); }}
                                                   className={`absolute left-1 right-1 rounded-lg border border-l-4 shadow-sm hover:shadow transition-all overflow-hidden pointer-events-auto ${selectionMode && !overlapBypassEnabled ? 'cursor-not-allowed opacity-70' : selectionMode && overlapBypassEnabled ? 'cursor-pointer opacity-100 hover:opacity-35' : 'cursor-pointer'} ${extendsBeyondBusinessHours ? 'ring-1 ring-amber-400' : ''}`}
                                                   title={extendsBeyondBusinessHours ? 'Extiende fuera del horario operativo actual' : undefined}
-                                                  style={{ top: `${top}px`, height: `${height}px`, borderLeftColor: reservation.status?.color || '#6B7280', borderColor: hexToTint(reservation.status?.color || '#6B7280', 0.55), borderLeftWidth: '4px', backgroundColor: hexToTint(reservation.status?.color || '#6B7280', 0.84), minHeight: '52px' }}
+                                                  style={{ top: `${top}px`, height: `${height}px`, borderLeftColor: reservation.status?.color || '#6B7280', borderColor: hexToTint(reservation.status?.color || '#6B7280', 0.55), borderLeftWidth: '4px', backgroundColor: hexToTint(reservation.status?.color || '#6B7280', 0.84), minHeight: isNoShowReduced ? '0px' : '52px' }}
                                                 >
+                                                  {isNoShowReduced ? (
+                                                    <div className="h-full flex items-center gap-1 overflow-hidden" style={{ padding: '2px 7px' }}>
+                                                      <i className="ri-user-unfollow-line text-gray-600 flex-shrink-0" style={{ fontSize: '12px' }}></i>
+                                                      <span className="text-[11px] font-bold text-gray-800 truncate">#{reservation.id.slice(0, 8)}</span>
+                                                      <span className="text-[10px] font-semibold text-gray-600 truncate">· No arribó</span>
+                                                    </div>
+                                                  ) : (
                                                   <div className="h-full flex flex-col justify-between overflow-hidden" style={{ padding: '7px 9px 7px 9px' }}>
                                                     <div className="flex flex-col gap-0.5 overflow-hidden min-w-0 flex-1">
                                                       <div className="font-bold text-gray-900 truncate text-[13px] leading-tight">#{reservation.id.slice(0, 8)}</div>
@@ -1624,6 +1642,7 @@ export default function CalendarioPage() {
                                                       </div>
                                                     </div>
                                                   </div>
+                                                  )}
                                                 </div>
                                               </ReservationHoverCard>
                                               </React.Fragment>

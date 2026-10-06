@@ -460,6 +460,19 @@ function getActivityDescription(
       };
     }
 
+    // ── Espacio liberado por No arribó ───────────────────────────────────
+    if (log.field === 'no_show_space_released') {
+      return {
+        title: 'Espacio liberado por No Arribó',
+        subtitle: (
+          <span className="px-2 py-1 rounded-md bg-amber-50 border border-amber-200 text-xs text-amber-900 font-medium inline-flex items-center gap-1">
+            <i className="ri-user-unfollow-line w-3 h-3 inline-flex items-center justify-center"></i>
+            {log.new_value || 'La cita no se eliminó: queda visible con 15 min y el resto del horario volvió a estar disponible.'}
+          </span>
+        ),
+      };
+    }
+
     // ── Campos estándar ──────────────────────────────────────────────────
     // ── Salida anticipada (recorte del bloque en el calendario) ──
     if (log.field === 'actual_end_datetime') {
@@ -571,6 +584,7 @@ function getActionIcon(log: ActivityLog): string {
   if (log.field === 'consolidated_provider_removed') return 'ri-user-unfollow-line';
   if (log.field === 'consolidated_provider_changed') return 'ri-stack-line';
   if (log.field === 'status_id') return 'ri-checkbox-circle-line';
+  if (log.field === 'no_show_space_released') return 'ri-user-unfollow-line';
   if (log.field === 'actual_end_datetime') return 'ri-logout-box-r-line';
   if (log.field === 'start_datetime' || log.field === 'end_datetime') return 'ri-calendar-line';
   if (log.field === 'dock_id') return 'ri-building-line';
@@ -593,6 +607,7 @@ function getActionColor(log: ActivityLog): string {
   if (log.field === 'consolidated_provider_added') return 'text-green-600';
   if (log.field === 'consolidated_provider_removed') return 'text-red-600';
   if (log.field === 'consolidated_provider_changed') return 'text-teal-600';
+  if (log.field === 'no_show_space_released') return 'text-amber-600';
   if (log.field === 'actual_end_datetime') return 'text-amber-600';
   return 'text-gray-600';
 }

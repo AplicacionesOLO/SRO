@@ -10,11 +10,17 @@ const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12
 
 /**
  * Fin efectivo de una reserva existente (en ms).
- * Nunca es mayor que el fin planificado: si la cita fue despachada antes
- * (actual_end_datetime), el espacio no usado queda libre para nuevas citas.
+ * Nunca es mayor que el fin planificado:
+ *   * Si la cita fue despachada antes (actual_end_datetime), su espacio no usado queda libre.
+ *   * Si está en estado NO_SHOW (No arribó), solo ocupa 15 min visibles desde su inicio;
+ *     el resto del tiempo queda libre para nuevas citas.
  */
-function effectiveEndMs(_startIso: string, endIso: string, actualEndIso: string | null): number {
+function effectiveEndMs(startIso: string, endIso: string, actualEndIso: string | null, isNoShow = false): number {
+  const startMs = new Date(startIso).getTime();
   const endMs = new Date(endIso).getTime();
+  if (isNoShow) {
+    return Math.min(endMs, startMs + 15 * 60 * 1000);
+  }
   if (!actualEndIso) return endMs;
   const actualMs = new Date(actualEndIso).getTime();
   return Math.min(endMs, actualMs);
@@ -291,6 +297,20 @@ Deno.serve(async (req) => {
       }
     }
 
+    // ── Estado NO_SHOW (No arribó): su espacio liberado no debe bloquear nuevas citas ──
+    let noShowStatusId: string | null = null;
+    try {
+      const { data: noShowRow } = await supabase
+        .from('reservation_statuses')
+        .select('id')
+        .eq('org_id', org_id)
+        .eq('code', 'NO_SHOW')
+        .maybeSingle();
+      noShowStatusId = noShowRow?.id ?? null;
+    } catch (_e) {
+      noShowStatusId = null;
+    }
+
     // ── OVERLAP CHECK ─────────────────────────────────────────────────────
     // Si overlap_bypass viene explícitamente en true desde el frontend,
     // saltamos TODOS los chequeos de solapamiento. El frontend ya verificó
@@ -343,8 +363,8 @@ Deno.serve(async (req) => {
             } else if (overlappingReservations && overlappingReservations.length > 0) {
               const newStartMs = new Date(start_datetime).getTime();
               for (const existing of overlappingReservations) {
-                // Fin efectivo: si la cita ya fue despachada antes, su espacio no usado está libre.
-                if (newStartMs >= effectiveEndMs(existing.start_datetime, existing.end_datetime, existing.actual_end_datetime)) {
+                // Fin efectivo: si la cita ya fue despachada antes o quedó en No arribó, su espacio no usado está libre.
+                if (newStartMs >= effectiveEndMs(existing.start_datetime, existing.end_datetime, existing.actual_end_datetime, noShowStatusId != null && existing.status_id === noShowStatusId)) {
                   continue;
                 }
                 if (allowedStatusIds.length > 0 && existing.status_id && allowedStatusIds.includes(existing.status_id)) {
@@ -382,7 +402,7 @@ Deno.serve(async (req) => {
           // ── FALLBACK OVERLAP CHECK (replaces DB exclusion constraint) ─────
           const { data: overlapRows, error: fallbackErr } = await supabase
             .from('reservations')
-            .select('id, start_datetime, end_datetime, actual_end_datetime')
+            .select('id, start_datetime, end_datetime, actual_end_datetime, status_id')
             .eq('org_id', org_id)
             .eq('dock_id', dock_id)
             .eq('is_cancelled', false)
@@ -391,7 +411,7 @@ Deno.serve(async (req) => {
 
           const newStartMs = new Date(start_datetime).getTime();
           const hasOverlap = (overlapRows || []).some((r: any) =>
-            newStartMs < effectiveEndMs(r.start_datetime, r.end_datetime, r.actual_end_datetime)
+            newStartMs < effectiveEndMs(r.start_datetime, r.end_datetime, r.actual_end_datetime, noShowStatusId != null && r.status_id === noShowStatusId)
           );
 
           if (fallbackErr) {
