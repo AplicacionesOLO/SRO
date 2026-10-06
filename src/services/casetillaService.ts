@@ -4,6 +4,7 @@ import { getStartOfDayInTimezone, getEndOfDayInTimezone, DEFAULT_TIMEZONE } from
 import { emailTriggerService } from './emailTriggerService';
 import { clientStatusSequenceRulesService } from './clientStatusSequenceRulesService';
 import { activityLogService } from './activityLogService';
+import { evaluateNoShow, resolveIsImported } from '../utils/noShowRules';
 
 // ─── Tipos de segregación ────────────────────────────────────────────────────
 export interface CasetillaClientOption {
@@ -54,19 +55,18 @@ type DurationReportFilters = {
 };
 
 class CasetillaService {
-  // ─── Helper: construir rango UTC desde fecha local del almacén ────────────
+  // ─── Helper: construir rango UTC desde un rango de fechas local del almacén ─
   /**
-   * Convierte un Date de UI al rango UTC [start, end] del día en el timezone del almacén.
-   * Si no hay timezone, usa fallback seguro sin romper.
+   * Convierte un rango de fechas de UI al rango UTC [start, end] en el timezone del almacén.
+   * Va desde el inicio del día `from` hasta el fin del día `to`.
    */
-  private _buildDateFilterParams(selectedDate: Date, timezone?: string | null): { fromIso: string; toIso: string } | null {
+  private _buildRangeFilterParams(fromDate: Date, toDate: Date, timezone?: string | null): { fromIso: string; toIso: string } | null {
     const tz = timezone || DEFAULT_TIMEZONE;
     try {
-      const fromIso = getStartOfDayInTimezone(selectedDate, tz).toISOString();
-      const toIso = getEndOfDayInTimezone(selectedDate, tz).toISOString();
+      const fromIso = getStartOfDayInTimezone(fromDate, tz).toISOString();
+      const toIso = getEndOfDayInTimezone(toDate, tz).toISOString();
       return { fromIso, toIso };
     } catch {
-      // Fallback seguro: si el timezone no existe, devolvemos null para no filtrar
       return null;
     }
   }
@@ -201,15 +201,16 @@ class CasetillaService {
 
     const { data: whData } = await supabase
       .from('warehouses')
-      .select('id, timezone, no_show_tolerance_minutes')
+      .select('id, timezone, no_show_tolerance_minutes, no_show_exclude_imported')
       .in('id', whIds)
       .eq('org_id', orgId);
 
-    const whMap = new Map<string, { timezone: string; tolerance: number | null }>();
+    const whMap = new Map<string, { timezone: string; tolerance: number | null; excludeImported: boolean }>();
     (whData ?? []).forEach((w: any) => {
       whMap.set(w.id as string, {
         timezone: (w.timezone as string) || 'America/Costa_Rica',
         tolerance: w.no_show_tolerance_minutes != null ? Number(w.no_show_tolerance_minutes) : null,
+        excludeImported: w.no_show_exclude_imported === true,
       });
     });
 
@@ -220,16 +221,23 @@ class CasetillaService {
       if (!whId) return true; // sin warehouse info → dejar pasar
 
       const wh = whMap.get(whId);
-      if (!wh || wh.tolerance == null || wh.tolerance <= 0) return true; // sin tolerancia → dejar pasar
+      if (!wh) return true;
 
-      if (!r.start_datetime) return true; // sin hora de cita → no evaluar
+      // Regla centralizada (ver src/utils/noShowRules.ts):
+      //  - cancelada → nunca se marca
+      //  - importada + almacén excluye importados → nunca se marca
+      //  - sin tolerancia / sin inicio → no aplica
+      //  - vencida → se quita de pendientes (el proceso la marcará No arribó)
+      const decision = evaluateNoShow({
+        startDatetime: r.start_datetime,
+        toleranceMinutes: wh.tolerance,
+        isCancelled: r.is_cancelled,
+        isImported: resolveIsImported(r),
+        excludeImported: wh.excludeImported,
+        now,
+      });
 
-      // Convertir start_datetime a zona horaria del almacén y agregar tolerancia
-      const start = new Date(r.start_datetime);
-      // start_datetime ya es UTC en DB, usamos la fecha directa
-      const cutoff = new Date(start.getTime() + wh.tolerance * 60_000);
-
-      return now <= cutoff; // solo dejar si ahora <= cutoff
+      return decision !== 'mark';
     });
   }
 
@@ -237,7 +245,7 @@ class CasetillaService {
   async checkNoShowExpired(reservationId: string, orgId: string): Promise<{ expired: boolean; message: string }> {
     const { data: res, error } = await supabase
       .from('reservations')
-      .select('id, dock_id, start_datetime, status_id')
+      .select('id, dock_id, start_datetime, status_id, is_cancelled, is_imported, dua')
       .eq('id', reservationId)
       .eq('org_id', orgId)
       .maybeSingle();
@@ -256,19 +264,20 @@ class CasetillaService {
 
     const { data: wh } = await supabase
       .from('warehouses')
-      .select('timezone, no_show_tolerance_minutes')
+      .select('timezone, no_show_tolerance_minutes, no_show_exclude_imported')
       .eq('id', dock.warehouse_id)
       .eq('org_id', orgId)
       .maybeSingle();
 
-    if (!wh || wh.no_show_tolerance_minutes == null || wh.no_show_tolerance_minutes <= 0) {
-      return { expired: false, message: '' };
-    }
+    const decision = evaluateNoShow({
+      startDatetime: res.start_datetime,
+      toleranceMinutes: wh?.no_show_tolerance_minutes ?? null,
+      isCancelled: res.is_cancelled,
+      isImported: resolveIsImported(res),
+      excludeImported: wh?.no_show_exclude_imported ?? false,
+    });
 
-    const start = new Date(res.start_datetime);
-    const cutoff = new Date(start.getTime() + Number(wh.no_show_tolerance_minutes) * 60_000);
-
-    if (new Date() > cutoff) {
+    if (decision === 'mark') {
       return {
         expired: true,
         message: 'Esta cita superó el tiempo permitido de ingreso y ya no puede procesarse desde Punto de Control.',
@@ -635,7 +644,8 @@ class CasetillaService {
     orgId: string,
     allowedWarehouseIds?: string[] | null,
     clientId?: string | null,
-    selectedDate?: Date | null,
+    dateFrom?: Date | null,
+    dateTo?: Date | null,
     timezone?: string | null
   ) {
     try {
@@ -648,14 +658,13 @@ class CasetillaService {
 
       let rows = reservations as PendingReservationRow[];
 
-      // ─── FILTRO POR FECHA: aplicar desde base de datos si se puede ────────
-      if (selectedDate) {
-        const dateRange = this._buildDateFilterParams(selectedDate, timezone);
+      // ─── FILTRO POR RANGO DE FECHAS: start_datetime dentro del rango ───────
+      if (dateFrom) {
+        const dateRange = this._buildRangeFilterParams(dateFrom, dateTo ?? dateFrom, timezone);
         if (dateRange) {
-          // Filtrar por start_datetime dentro del rango UTC del día seleccionado
           const { fromIso, toIso } = dateRange;
           rows = rows.filter((r) => {
-            if (!r.start_datetime) return false; // sin fecha → no coincide con el día
+            if (!r.start_datetime) return false; // sin fecha → no coincide con el rango
             const start = new Date(r.start_datetime);
             return start >= new Date(fromIso) && start <= new Date(toIso);
           });
@@ -836,11 +845,12 @@ class CasetillaService {
     searchTerm: string,
     allowedWarehouseIds?: string[] | null,
     clientId?: string | null,
-    selectedDate?: Date | null,
+    dateFrom?: Date | null,
+    dateTo?: Date | null,
     timezone?: string | null
   ) {
     try {
-      const allReservations = await this.getPendingReservations(orgId, allowedWarehouseIds, clientId, selectedDate, timezone);
+      const allReservations = await this.getPendingReservations(orgId, allowedWarehouseIds, clientId, dateFrom, dateTo, timezone);
 
       if (!searchTerm.trim()) return allReservations;
 
@@ -866,7 +876,8 @@ async getExitEligibleReservations(
   orgId: string,
   allowedWarehouseIds?: string[] | null,
   clientId?: string | null,
-  selectedDate?: Date | null,
+  dateFrom?: Date | null,
+  dateTo?: Date | null,
   timezone?: string | null
 ) {
   try {
@@ -885,8 +896,8 @@ async getExitEligibleReservations(
     });
 
     // 2) Traer ingresos ordenados (último ingreso primero) — paginado para superar el límite de 1000 filas
-    // ─── FILTRO POR FECHA: solo ingresos del día seleccionado (created_at) ──
-    const dateRange = selectedDate ? this._buildDateFilterParams(selectedDate, timezone) : null;
+    // ─── FILTRO POR RANGO DE FECHAS: solo ingresos creados dentro del rango ──
+    const dateRange = dateFrom ? this._buildRangeFilterParams(dateFrom, dateTo ?? dateFrom, timezone) : null;
 
     const ingresos = await this._fetchAll<any>((from, to) => {
       let q = supabase
@@ -1170,18 +1181,21 @@ async getExitEligibleReservations(
           if (dock?.warehouse_id) {
             const { data: wh } = await supabase
               .from('warehouses')
-              .select('timezone, no_show_tolerance_minutes')
+              .select('timezone, no_show_tolerance_minutes, no_show_exclude_imported')
               .eq('id', dock.warehouse_id)
               .eq('org_id', orgId)
               .maybeSingle();
 
-            if (wh && wh.no_show_tolerance_minutes != null && wh.no_show_tolerance_minutes > 0) {
-              const start = new Date(res.start_datetime);
-              const cutoff = new Date(start.getTime() + Number(wh.no_show_tolerance_minutes) * 60_000);
+            const noShowDecision = evaluateNoShow({
+              startDatetime: res.start_datetime,
+              toleranceMinutes: wh?.no_show_tolerance_minutes ?? null,
+              isCancelled: res.is_cancelled,
+              isImported: resolveIsImported(res),
+              excludeImported: wh?.no_show_exclude_imported ?? false,
+            });
 
-              if (new Date() > cutoff) {
-                return { state: 'expired_no_show', reservation: null };
-              }
+            if (noShowDecision === 'mark') {
+              return { state: 'expired_no_show', reservation: null };
             }
           }
         }
@@ -2354,7 +2368,8 @@ async getExitEligibleReservations(
     orgId: string,
     allowedWarehouseIds?: string[] | null,
     clientId?: string | null,
-    selectedDate?: Date | null,
+    dateFrom?: Date | null,
+    dateTo?: Date | null,
     timezone?: string | null
   ) {
     try {
@@ -2395,9 +2410,9 @@ async getExitEligibleReservations(
         .eq('is_cancelled', false)
         .order('start_datetime', { ascending: false });
 
-      // ─── FILTRO POR FECHA: aplicar rango start_datetime en DB ───────────
-      if (selectedDate) {
-        const dateRange = this._buildDateFilterParams(selectedDate, timezone);
+      // ─── FILTRO POR RANGO DE FECHAS: start_datetime dentro del rango en DB ─
+      if (dateFrom) {
+        const dateRange = this._buildRangeFilterParams(dateFrom, dateTo ?? dateFrom, timezone);
         if (dateRange) {
           q = q
             .gte('start_datetime', dateRange.fromIso)

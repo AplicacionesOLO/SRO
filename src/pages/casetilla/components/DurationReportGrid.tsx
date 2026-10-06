@@ -53,6 +53,8 @@ interface DurationReportGridProps {
   orgId: string;
   allowedWarehouseIds?: string[] | null;
   clientId?: string | null;
+  rangeFrom?: string;
+  rangeTo?: string;
 }
 
 type PageSize = 10 | 30 | 50 | 100 | 'all';
@@ -158,12 +160,19 @@ function PhotoBadge({
   );
 }
 
-export default function DurationReportGrid({ orgId, allowedWarehouseIds, clientId }: DurationReportGridProps) {
+export default function DurationReportGrid({ orgId, allowedWarehouseIds, clientId, rangeFrom, rangeTo }: DurationReportGridProps) {
   const [data, setData] = useState<DurationReportRow[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [searchTerm, setSearchTerm] = useSessionStorageState('casetilla_duration_searchTerm', '');
   const [dateFrom, setDateFrom] = useSessionStorageState('casetilla_duration_dateFrom', '');
   const [dateTo, setDateTo] = useSessionStorageState('casetilla_duration_dateTo', '');
+
+  // Sincronizar con el rango global del módulo (reemplaza la fecha única)
+  useEffect(() => {
+    if (rangeFrom !== undefined) setDateFrom(rangeFrom);
+    if (rangeTo !== undefined) setDateTo(rangeTo);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rangeFrom, rangeTo]);
   const [pageSize, setPageSize] = useState<PageSize>(10);
   const [currentPage, setCurrentPage] = useState(1);
 

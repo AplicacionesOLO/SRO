@@ -15,8 +15,9 @@ import ProviderDistributionGrid from './components/ProviderDistributionGrid';
 import { ConfirmModal } from '../../components/base/ConfirmModal';
 import QRScannerModal from '../../components/feature/QRScannerModal';
 import { casetillaService } from '../../services/casetillaService';
+import { casetillaReportService } from '../../services/casetillaReportService';
 import { supabase } from '../../lib/supabase';
-import { toWarehouseDateString, DEFAULT_TIMEZONE } from '../../utils/timezoneUtils';
+import { toWarehouseDateString, formatInWarehouseTimezone, DEFAULT_TIMEZONE } from '../../utils/timezoneUtils';
 import type { PendingReservation, ExitEligibleReservation, NoShowReservation } from '../../types/casetilla';
 import { useNavigate } from 'react-router-dom';
 
@@ -33,7 +34,8 @@ interface PersistedUIState {
   fotosSalida: string[];
   selectedReservation: PendingReservation | null;
   selectedExitReservation: ExitEligibleReservation | null;
-  selectedDate: string | null; // ISO string YYYY-MM-DD
+  dateFrom: string | null; // ISO string YYYY-MM-DD
+  dateTo: string | null; // ISO string YYYY-MM-DD
   reportTab: 'duration' | 'provider';
 }
 
@@ -73,13 +75,12 @@ export default function CasetillaPage() {
     loading: activeWhLoading,
   } = useActiveWarehouse();
 
-  // ── FECHA: estado con persistencia en sessionStorage ──────────────────────
+  // ── FECHA: rango con persistencia en sessionStorage ───────────────────────
   const todayStr = toWarehouseDateString(new Date(), DEFAULT_TIMEZONE);
-  const persistedDate = readSession().selectedDate;
-  const [selectedDate, setSelectedDate] = useState<string>(() => {
-    // Si hay una fecha persistida, usarla; sino hoy
-    return persistedDate || todayStr;
-  });
+  const persistedFrom = readSession().dateFrom;
+  const persistedTo = readSession().dateTo;
+  const [dateFrom, setDateFromRaw] = useState<string>(() => persistedFrom || todayStr);
+  const [dateTo, setDateToRaw] = useState<string>(() => persistedTo || todayStr);
 
   const [viewMode, setViewModeRaw] = useState<ViewMode>(() => readSession().viewMode || 'HOME');
   const [fotosIngreso, setFotosIngresoRaw] = useState<string[]>(() => {
@@ -132,8 +133,8 @@ export default function CasetillaPage() {
   void canCreate;
 
   useEffect(() => {
-    writeSession({ viewMode, fotosIngreso, fotosSalida, selectedReservation, selectedExitReservation, selectedDate, reportTab });
-  }, [viewMode, fotosIngreso, fotosSalida, selectedReservation, selectedExitReservation, selectedDate, reportTab]);
+    writeSession({ viewMode, fotosIngreso, fotosSalida, selectedReservation, selectedExitReservation, dateFrom, dateTo, reportTab });
+  }, [viewMode, fotosIngreso, fotosSalida, selectedReservation, selectedExitReservation, dateFrom, dateTo, reportTab]);
 
   const setViewMode = useCallback((vm: ViewMode) => setViewModeRaw(vm), []);
   const setFotosIngreso = useCallback((urls: string[]) => {
@@ -147,11 +148,46 @@ export default function CasetillaPage() {
   const setSelectedReservation = useCallback((r: PendingReservation | null) => setSelectedReservationRaw(r), []);
   const setSelectedExitReservation = useCallback((r: ExitEligibleReservation | null) => setSelectedExitReservationRaw(r), []);
 
-  // ── Helper: convertir selectedDate string a Date para los servicios ──────
-  const getSelectedDateAsDate = useCallback((): Date => {
-    const [y, m, d] = selectedDate.split('-').map(Number);
+  // ── Helpers: rango de fechas → Date y etiquetas ──────────────────────────
+  const toLocalDate = useCallback((s: string): Date => {
+    const [y, m, d] = s.split('-').map(Number);
     return new Date(Date.UTC(y, m - 1, d, 12, 0, 0)); // medio día UTC para evitar edge cases de TZ
-  }, [selectedDate]);
+  }, []);
+
+  const rangeFromDate = toLocalDate(dateFrom);
+  const rangeToDate = toLocalDate(dateTo);
+
+  const formatShortDate = useCallback((s: string): string => {
+    return new Date(s + 'T12:00:00').toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit', year: 'numeric' });
+  }, []);
+
+  const isRangeToday = dateFrom === todayStr && dateTo === todayStr;
+  const rangeLabel = dateFrom === dateTo
+    ? (dateFrom === todayStr ? 'hoy' : `el ${formatShortDate(dateFrom)}`)
+    : `del ${formatShortDate(dateFrom)} al ${formatShortDate(dateTo)}`;
+
+  // Ajusta el rango y vuelve al inicio al cambiar fechas
+  const applyDateFrom = useCallback((value: string) => {
+    if (!value) return;
+    setDateFromRaw(value);
+    setDateToRaw((prev) => (prev < value ? value : prev));
+    setViewModeRaw('HOME');
+  }, []);
+
+  const applyDateTo = useCallback((value: string) => {
+    if (!value) return;
+    setDateToRaw(value);
+    setDateFromRaw((prev) => (prev > value ? value : prev));
+    setViewModeRaw('HOME');
+  }, []);
+
+  const resetRangeToToday = useCallback(() => {
+    setDateFromRaw(todayStr);
+    setDateToRaw(todayStr);
+    setViewModeRaw('HOME');
+  }, [todayStr]);
+
+  const [isExporting, setIsExporting] = useState(false);
 
   // ── Cargar datos SOLO cuando scope esté resuelto ─────────────────────────
   useEffect(() => {
@@ -159,32 +195,32 @@ export default function CasetillaPage() {
       loadPendingReservations();
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [viewMode, orgId, canView, scopeLoading, activeWhLoading, selectedClientId, effectiveWarehouseIds, selectedDate]);
+  }, [viewMode, orgId, canView, scopeLoading, activeWhLoading, selectedClientId, effectiveWarehouseIds, dateFrom, dateTo]);
 
   useEffect(() => {
     if (viewMode === 'SALIDA' && orgId && canView && !scopeLoading && !activeWhLoading) {
       loadExitEligibleReservations();
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [viewMode, orgId, canView, scopeLoading, activeWhLoading, selectedClientId, effectiveWarehouseIds, selectedDate]);
+  }, [viewMode, orgId, canView, scopeLoading, activeWhLoading, selectedClientId, effectiveWarehouseIds, dateFrom, dateTo]);
 
   useEffect(() => {
     if (viewMode === 'NO_SHOW' && orgId && canView && !scopeLoading && !activeWhLoading) {
       loadNoShowReservations();
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [viewMode, orgId, canView, scopeLoading, activeWhLoading, selectedClientId, effectiveWarehouseIds, selectedDate]);
+  }, [viewMode, orgId, canView, scopeLoading, activeWhLoading, selectedClientId, effectiveWarehouseIds, dateFrom, dateTo]);
 
   const loadPendingReservations = async () => {
     if (!orgId) return;
     setIsLoadingReservations(true);
     try {
-      const dateObj = getSelectedDateAsDate();
       const data = await casetillaService.getPendingReservations(
         orgId,
         effectiveWarehouseIds,
         selectedClientId,
-        dateObj,
+        rangeFromDate,
+        rangeToDate,
         activeTimezone
       );
       setPendingReservations(data);
@@ -196,12 +232,12 @@ export default function CasetillaPage() {
     if (!orgId) return;
     setIsLoadingExitReservations(true);
     try {
-      const dateObj = getSelectedDateAsDate();
       const data = await casetillaService.getExitEligibleReservations(
         orgId,
         effectiveWarehouseIds,
         selectedClientId,
-        dateObj,
+        rangeFromDate,
+        rangeToDate,
         activeTimezone
       );
       setExitEligibleReservations(data);
@@ -213,12 +249,12 @@ export default function CasetillaPage() {
     if (!orgId) return;
     setIsLoadingNoShow(true);
     try {
-      const dateObj = getSelectedDateAsDate();
       const data = await casetillaService.getNoShowReservations(
         orgId,
         effectiveWarehouseIds,
         selectedClientId,
-        dateObj,
+        rangeFromDate,
+        rangeToDate,
         activeTimezone
       );
       setNoShowReservations(data);
@@ -638,6 +674,97 @@ export default function CasetillaPage() {
     setModal({ isOpen: true, type, title, message, showCancel: false, onConfirm: onConfirm || closeModal, onCancel: undefined });
   };
 
+  // ── Descargar reporte .xlsx de todas las reservas del rango ───────────────
+  const handleDownloadRangeReport = useCallback(async () => {
+    if (!orgId || isExporting) return;
+    setIsExporting(true);
+    try {
+      const rows = await casetillaReportService.getReservationsRangeReport(
+        orgId,
+        rangeFromDate,
+        rangeToDate,
+        activeTimezone,
+        effectiveWarehouseIds,
+        selectedClientId
+      );
+
+      if (rows.length === 0) {
+        showModal('info', 'Sin datos', `No hay reservas en ${rangeLabel === 'hoy' ? 'el día de hoy' : `el rango ${rangeLabel}`}.`);
+        return;
+      }
+
+      const XLSX = await import('xlsx');
+      const clientLabel = selectedClientId ? (scopeClients.find(c => c.id === selectedClientId)?.name ?? 'Todos') : 'Todos';
+      const warehouseLabel = activeWarehouse?.name ?? 'Todos los almacenes permitidos';
+
+      const metadataRows = [
+        ['Reporte', 'Reservas por rango de fechas'],
+        ['Almacén', warehouseLabel],
+        ['Cliente', clientLabel],
+        ['Desde', dateFrom],
+        ['Hasta', dateTo],
+        ['Total reservas', rows.length],
+        ['Generado', new Date().toLocaleString('es-ES')],
+        [],
+      ];
+      const metadataWs = XLSX.utils.aoa_to_sheet(metadataRows);
+
+      const headers = [
+        'Cliente', 'Almacén', 'Proveedor', 'Chofer', 'Matrícula', 'DUA', 'N° Pedido',
+        'Inicio cita', 'Fin cita', 'Ingreso', 'Salida', 'Duración (HH:mm)', 'Duración (min)', 'Estado',
+      ];
+
+      const fmtDT = (iso: string | null, tz: string): string => {
+        if (!iso) return '';
+        return formatInWarehouseTimezone(new Date(iso), tz, {
+          day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false,
+        });
+      };
+
+      const fmtDur = (mins: number | null): string => {
+        if (mins == null) return '';
+        const h = Math.floor(mins / 60);
+        const m = mins % 60;
+        return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+      };
+
+      const dataRows: (string | number)[][] = [headers];
+      rows.forEach((r) => {
+        dataRows.push([
+          r.client_name || '—',
+          r.warehouse_name,
+          r.provider_name,
+          r.chofer,
+          r.matricula,
+          r.dua || '—',
+          r.order_request_number || '—',
+          fmtDT(r.start_datetime, r.warehouse_timezone),
+          fmtDT(r.end_datetime, r.warehouse_timezone),
+          fmtDT(r.ingreso_at, r.warehouse_timezone),
+          fmtDT(r.salida_at, r.warehouse_timezone),
+          fmtDur(r.duracion_minutos),
+          r.duracion_minutos ?? '',
+          r.status_name || '',
+        ]);
+      });
+
+      const dataWs = XLSX.utils.aoa_to_sheet(dataRows);
+      dataWs['!cols'] = headers.map((h) => ({ wch: Math.max(14, h.length + 2) }));
+
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, metadataWs, 'Resumen');
+      XLSX.utils.book_append_sheet(wb, dataWs, 'Reservas');
+
+      const suffix = dateFrom === dateTo ? dateFrom : `${dateFrom}_a_${dateTo}`;
+      XLSX.writeFile(wb, `Reporte_Reservas_${suffix}.xlsx`);
+    } catch (err: any) {
+      showModal('error', 'Error', err?.message || 'No se pudo generar el reporte. Intentá de nuevo.');
+    } finally {
+      setIsExporting(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orgId, isExporting, rangeFromDate, rangeToDate, activeTimezone, effectiveWarehouseIds, selectedClientId, dateFrom, dateTo, rangeLabel, scopeClients, activeWarehouse]);
+
   if (!canView) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
@@ -693,32 +820,53 @@ export default function CasetillaPage() {
               )}
             </div>
             <div className="flex flex-col sm:flex-row gap-3 items-end">
-              {/* Selector de fecha */}
-              <div className="flex items-center gap-2">
-                <label className="text-sm font-medium text-gray-700 whitespace-nowrap">
-                  <i className="ri-calendar-line mr-1"></i>Fecha:
-                </label>
-                <input
-                  type="date"
-                  value={selectedDate}
-                  onChange={(e) => {
-                    const newDate = e.target.value;
-                    if (newDate) {
-                      setSelectedDate(newDate);
-                      setViewModeRaw('HOME');
-                    }
-                  }}
-                  className="text-sm border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-teal-500 focus:border-transparent bg-white cursor-pointer"
-                />
-                {selectedDate !== todayStr && (
+              {/* Selector de rango de fechas */}
+              <div className="flex items-end gap-2">
+                <div className="flex flex-col">
+                  <label className="text-xs font-medium text-gray-500 mb-1 whitespace-nowrap">
+                    <i className="ri-calendar-line mr-1"></i>Desde
+                  </label>
+                  <input
+                    type="date"
+                    value={dateFrom}
+                    max={dateTo}
+                    onChange={(e) => applyDateFrom(e.target.value)}
+                    className="text-sm border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-teal-500 focus:border-transparent bg-white cursor-pointer"
+                  />
+                </div>
+                <div className="flex flex-col">
+                  <label className="text-xs font-medium text-gray-500 mb-1 whitespace-nowrap">
+                    <i className="ri-calendar-check-line mr-1"></i>Hasta
+                  </label>
+                  <input
+                    type="date"
+                    value={dateTo}
+                    min={dateFrom}
+                    onChange={(e) => applyDateTo(e.target.value)}
+                    className="text-sm border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-teal-500 focus:border-transparent bg-white cursor-pointer"
+                  />
+                </div>
+                {!isRangeToday && (
                   <button
-                    onClick={() => { setSelectedDate(todayStr); setViewModeRaw('HOME'); }}
-                    className="text-xs px-2 py-1 bg-teal-50 text-teal-700 rounded-md hover:bg-teal-100 transition-colors whitespace-nowrap cursor-pointer"
+                    onClick={resetRangeToToday}
+                    className="text-xs px-2.5 py-2 bg-teal-50 text-teal-700 rounded-md hover:bg-teal-100 transition-colors whitespace-nowrap cursor-pointer"
+                    title="Volver al día de hoy"
                   >
                     Hoy
                   </button>
                 )}
               </div>
+
+              {/* Descargar reporte del rango */}
+              <button
+                onClick={handleDownloadRangeReport}
+                disabled={isExporting}
+                className="inline-flex items-center justify-center gap-2 px-4 py-2 text-sm bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors whitespace-nowrap cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
+                title="Descargar todas las reservas del rango en Excel (.xlsx)"
+              >
+                <i className={isExporting ? 'ri-loader-4-line animate-spin' : 'ri-file-excel-2-line'}></i>
+                {isExporting ? 'Generando...' : 'Descargar .xlsx'}
+              </button>
               {/* Selector de cliente */}
               {scopeClients.length > 0 && (
                 <div className="flex items-center gap-2">
@@ -748,10 +896,10 @@ export default function CasetillaPage() {
               Filtrando por: {scopeClients.find(c => c.id === selectedClientId)?.name}
             </div>
           )}
-          {selectedDate !== todayStr && (
+          {!isRangeToday && (
             <div className="mt-2 inline-flex items-center gap-1.5 px-3 py-1 bg-amber-50 border border-amber-200 rounded-full text-xs text-amber-700 font-medium">
               <i className="ri-calendar-event-line"></i>
-              Fecha seleccionada: {new Date(selectedDate + 'T12:00:00').toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit', year: 'numeric' })}
+              Rango seleccionado: {formatShortDate(dateFrom)} — {formatShortDate(dateTo)}
             </div>
           )}
         </div>
@@ -899,10 +1047,7 @@ export default function CasetillaPage() {
                 <div>
                   <h2 className="text-xl sm:text-2xl font-bold text-gray-900">Reservas Pendientes</h2>
                   <p className="text-sm text-gray-600 mt-1">
-                    {selectedDate === todayStr
-                      ? 'Reservas pendientes para hoy'
-                      : `Reservas pendientes para el ${new Date(selectedDate + 'T12:00:00').toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit', year: 'numeric' })}`
-                    }
+                    {`Reservas pendientes ${rangeLabel}`}
                   </p>
                 </div>
                 <div className="flex items-center gap-2">
@@ -942,10 +1087,7 @@ export default function CasetillaPage() {
                 <div>
                   <h2 className="text-xl sm:text-2xl font-bold text-gray-900">Registrar Salida</h2>
                   <p className="text-sm text-gray-600 mt-1">
-                    {selectedDate === todayStr
-                      ? 'Reservas disponibles para salida hoy'
-                      : `Reservas disponibles para salida el ${new Date(selectedDate + 'T12:00:00').toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit', year: 'numeric' })}`
-                    }
+                    {`Reservas disponibles para salida ${rangeLabel}`}
                   </p>
                 </div>
                 <div className="flex items-center gap-2">
@@ -1003,7 +1145,7 @@ export default function CasetillaPage() {
                 </button>
               </div>
             </div>
-            <DurationReportGrid orgId={orgId!} allowedWarehouseIds={effectiveWarehouseIds} clientId={selectedClientId} />
+            <DurationReportGrid orgId={orgId!} allowedWarehouseIds={effectiveWarehouseIds} clientId={selectedClientId} rangeFrom={dateFrom} rangeTo={dateTo} />
           </div>
         )}
 
@@ -1025,7 +1167,8 @@ export default function CasetillaPage() {
               allowedWarehouseIds={effectiveWarehouseIds}
               scopeWarehouseIds={scopeWarehouseIds}
               clientId={selectedClientId}
-              selectedDate={getSelectedDateAsDate()}
+              dateFrom={rangeFromDate}
+              dateTo={rangeToDate}
               timezone={activeTimezone}
               warehouseName={activeWarehouse?.name}
               clientName={selectedClientId ? scopeClients.find(c => c.id === selectedClientId)?.name : undefined}
@@ -1069,7 +1212,7 @@ export default function CasetillaPage() {
             </div>
 
             {reportTab === 'duration' && (
-              <DurationReportGrid orgId={orgId!} allowedWarehouseIds={effectiveWarehouseIds} clientId={selectedClientId} />
+              <DurationReportGrid orgId={orgId!} allowedWarehouseIds={effectiveWarehouseIds} clientId={selectedClientId} rangeFrom={dateFrom} rangeTo={dateTo} />
             )}
             {reportTab === 'provider' && canViewProviderDistribution && (
               <ProviderDistributionGrid
@@ -1077,7 +1220,8 @@ export default function CasetillaPage() {
                 allowedWarehouseIds={effectiveWarehouseIds}
                 scopeWarehouseIds={scopeWarehouseIds}
                 clientId={selectedClientId}
-                selectedDate={getSelectedDateAsDate()}
+                dateFrom={rangeFromDate}
+              dateTo={rangeToDate}
                 timezone={activeTimezone}
                 warehouseName={activeWarehouse?.name}
                 clientName={selectedClientId ? scopeClients.find(c => c.id === selectedClientId)?.name : undefined}
@@ -1093,10 +1237,7 @@ export default function CasetillaPage() {
                 <div>
                   <h2 className="text-xl sm:text-2xl font-bold text-gray-900">No arribó</h2>
                   <p className="text-sm text-gray-600 mt-1">
-                    {selectedDate === todayStr
-                      ? 'Reservas marcadas como No arribó para hoy'
-                      : `Reservas marcadas como No arribó para el ${new Date(selectedDate + 'T12:00:00').toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit', year: 'numeric' })}`
-                    }
+                    {`Reservas marcadas como No arribó ${rangeLabel}`}
                   </p>
                 </div>
                 <button onClick={() => { clearSession(); setViewModeRaw('HOME'); }} className="inline-flex items-center justify-center gap-2 px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors whitespace-nowrap cursor-pointer">

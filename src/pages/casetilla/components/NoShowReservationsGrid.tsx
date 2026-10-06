@@ -1,4 +1,5 @@
 import { useState, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
 import type { NoShowReservation } from '../../../types/casetilla';
 
 interface NoShowReservationsGridProps {
@@ -27,7 +28,20 @@ function formatDateTime(iso: string | null | undefined): string {
 }
 
 export default function NoShowReservationsGrid({ reservations, isLoading }: NoShowReservationsGridProps) {
+  const navigate = useNavigate();
   const [searchTerm, setSearchTerm] = useState('');
+
+  // Abre la reserva en el Calendario (deep-link con fecha para posicionarla)
+  const handleOpenReservation = (reservation: NoShowReservation) => {
+    const params = new URLSearchParams();
+    params.set('reservation', reservation.id);
+    const iso = reservation.start_datetime || reservation.created_at;
+    if (iso) {
+      const day = String(iso).slice(0, 10);
+      if (day) params.set('date', day);
+    }
+    navigate(`/calendario?${params.toString()}`);
+  };
 
   const filtered = useMemo(() => {
     if (!searchTerm.trim()) return reservations;
@@ -94,6 +108,7 @@ export default function NoShowReservationsGrid({ reservations, isLoading }: NoSh
             <table className="w-full">
               <thead className="bg-gray-50 border-b border-gray-200">
                 <tr>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider whitespace-nowrap">ID</th>
                   <th className="px-4 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider whitespace-nowrap">DUA</th>
                   <th className="px-4 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider whitespace-nowrap">MATRÍCULA</th>
                   <th className="px-4 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider whitespace-nowrap">CHOFER</th>
@@ -108,6 +123,16 @@ export default function NoShowReservationsGrid({ reservations, isLoading }: NoSh
               <tbody className="bg-white divide-y divide-gray-200">
                 {filtered.map((reservation) => (
                   <tr key={reservation.id} className="hover:bg-gray-50 transition-colors">
+                    <td className="px-4 py-3 whitespace-nowrap">
+                      <button
+                        onClick={() => handleOpenReservation(reservation)}
+                        className="inline-flex items-center gap-1 text-xs font-semibold text-teal-700 hover:text-teal-900 hover:underline whitespace-nowrap cursor-pointer"
+                        title={`Abrir la reserva ${reservation.id} en el calendario`}
+                      >
+                        <i className="ri-external-link-line"></i>
+                        #{reservation.id.slice(0, 8)}
+                      </button>
+                    </td>
                     <td className="px-4 py-3 text-sm text-gray-900 font-medium whitespace-nowrap">{safeText(reservation.dua)}</td>
                     <td className="px-4 py-3 text-sm text-gray-900 whitespace-nowrap">{safeText(reservation.placa)}</td>
                     <td className="px-4 py-3 text-sm text-gray-900 whitespace-nowrap">{safeText(reservation.chofer)}</td>
@@ -134,6 +159,14 @@ export default function NoShowReservationsGrid({ reservations, isLoading }: NoSh
                 key={reservation.id}
                 className="bg-white border border-gray-200 rounded-lg p-4 space-y-3"
               >
+                <button
+                  onClick={() => handleOpenReservation(reservation)}
+                  className="inline-flex items-center gap-1 text-xs font-semibold text-teal-700 hover:text-teal-900 hover:underline whitespace-nowrap cursor-pointer"
+                  title={`Abrir la reserva ${reservation.id} en el calendario`}
+                >
+                  <i className="ri-external-link-line"></i>
+                  #{reservation.id.slice(0, 8)}
+                </button>
                 <div className="flex items-center justify-between gap-3">
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 mb-1">

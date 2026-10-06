@@ -14,7 +14,7 @@ export const warehousesService = {
   async getWarehouses(orgId: string): Promise<Warehouse[]> {
     const { data, error } = await supabase
       .from('warehouses')
-      .select('id, org_id, name, location, country_id, business_start_time, business_end_time, slot_interval_minutes, timezone, no_show_tolerance_minutes, created_at')
+      .select('id, org_id, name, location, country_id, business_start_time, business_end_time, slot_interval_minutes, timezone, no_show_tolerance_minutes, no_show_exclude_imported, created_at')
       .eq('org_id', orgId)
       .order('created_at', { ascending: false });
 
@@ -45,8 +45,9 @@ export const warehousesService = {
         slot_interval_minutes: formData.slot_interval_minutes || 60,
         timezone: formData.timezone || 'America/Costa_Rica',
         no_show_tolerance_minutes: formData.no_show_tolerance_minutes ?? null,
+        no_show_exclude_imported: formData.no_show_exclude_imported ?? false,
       })
-      .select('id, org_id, name, location, country_id, business_start_time, business_end_time, slot_interval_minutes, timezone, no_show_tolerance_minutes, created_at')
+      .select('id, org_id, name, location, country_id, business_start_time, business_end_time, slot_interval_minutes, timezone, no_show_tolerance_minutes, no_show_exclude_imported, created_at')
       .single();
 
     if (error) {
@@ -76,10 +77,11 @@ export const warehousesService = {
         slot_interval_minutes: formData.slot_interval_minutes || 60,
         timezone: formData.timezone || 'America/Costa_Rica',
         no_show_tolerance_minutes: formData.no_show_tolerance_minutes ?? null,
+        no_show_exclude_imported: formData.no_show_exclude_imported ?? false,
       })
       .eq('id', id)
       .eq('org_id', orgId)
-      .select('id, org_id, name, location, country_id, business_start_time, business_end_time, slot_interval_minutes, timezone, no_show_tolerance_minutes, created_at')
+      .select('id, org_id, name, location, country_id, business_start_time, business_end_time, slot_interval_minutes, timezone, no_show_tolerance_minutes, no_show_exclude_imported, created_at')
       .single();
 
     if (error) {

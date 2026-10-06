@@ -74,7 +74,8 @@ interface ProviderDistributionGridProps {
   allowedWarehouseIds?: string[] | null;
   scopeWarehouseIds?: string[] | null;
   clientId?: string | null;
-  selectedDate: Date;
+  dateFrom: Date;
+  dateTo: Date;
   timezone: string;
   warehouseName?: string;
   clientName?: string;
@@ -89,7 +90,8 @@ export default function ProviderDistributionGrid({
   allowedWarehouseIds,
   scopeWarehouseIds,
   clientId,
-  selectedDate: globalSelectedDate,
+  dateFrom: globalDateFrom,
+  dateTo: globalDateTo,
   timezone,
   warehouseName,
   clientName,
@@ -109,8 +111,8 @@ export default function ProviderDistributionGrid({
   const [pageSize, setPageSize] = useState<PageSize>(10);
   const [viewMode, setViewMode] = useSessionStorageState<ViewMode>('casetilla_provider_viewMode', 'ALL');
   const [currentPage, setCurrentPage] = useState(1);
-  const [fromDate, setFromDate] = useSessionStorageState('casetilla_provider_fromDate', toISODate(globalSelectedDate));
-  const [toDate, setToDate] = useSessionStorageState('casetilla_provider_toDate', toISODate(globalSelectedDate));
+  const [fromDate, setFromDate] = useSessionStorageState('casetilla_provider_fromDate', toISODate(globalDateFrom));
+  const [toDate, setToDate] = useSessionStorageState('casetilla_provider_toDate', toISODate(globalDateTo));
   const [dateError, setDateError] = useState<string | null>(null);
   const [earliestDate, setEarliestDate] = useState<string | null>(null);
   const [isLoadingEarliest, setIsLoadingEarliest] = useState(false);
@@ -129,30 +131,31 @@ export default function ProviderDistributionGrid({
   // los filtros persistidos al regresar de otra ruta
   const isFirstSync = useRef(true);
 
-  // Sincronizar con fecha global del módulo y recargar automáticamente
+  // Sincronizar con el rango global del módulo y recargar automáticamente
   useEffect(() => {
-    const newDate = toISODate(globalSelectedDate);
+    const newFrom = toISODate(globalDateFrom);
+    const newTo = toISODate(globalDateTo);
     // En el primer montaje, si hay filtros persistidos, no sobrescribirlos
     if (isFirstSync.current) {
       isFirstSync.current = false;
       // Solo actualizar refs si no hay fecha persistida (first visit ever)
       if (!fromDate && !toDate) {
-        setFromDate(newDate);
-        setToDate(newDate);
-        fromDateRef.current = newDate;
-        toDateRef.current = newDate;
+        setFromDate(newFrom);
+        setToDate(newTo);
+        fromDateRef.current = newFrom;
+        toDateRef.current = newTo;
         loadReport();
       }
       return;
     }
-    setFromDate(newDate);
-    setToDate(newDate);
+    setFromDate(newFrom);
+    setToDate(newTo);
     setDateError(null);
-    fromDateRef.current = newDate;
-    toDateRef.current = newDate;
+    fromDateRef.current = newFrom;
+    toDateRef.current = newTo;
     loadReport();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [globalSelectedDate]);
+  }, [globalDateFrom, globalDateTo]);
 
   // Cargar reporte
   const loadReport = useCallback(async () => {
@@ -439,9 +442,8 @@ export default function ProviderDistributionGrid({
   const handleClearFilters = () => {
     setSearchTerm('');
     setSelectedProvider('');
-    const resetDate = toISODate(globalSelectedDate);
-    setFromDate(resetDate);
-    setToDate(resetDate);
+    setFromDate(toISODate(globalDateFrom));
+    setToDate(toISODate(globalDateTo));
     setDateError(null);
     setViewMode('ALL');
     setCurrentPage(1);

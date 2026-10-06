@@ -9,6 +9,8 @@ export interface Warehouse {
   slot_interval_minutes?: number | null;
   timezone: string; // IANA timezone, e.g. 'America/Costa_Rica'
   no_show_tolerance_minutes?: number | null;
+  /** Si está activo, las reservas importadas no se marcan automáticamente como No arribó. */
+  no_show_exclude_imported?: boolean | null;
   created_at: string;
 }
 
@@ -21,4 +23,6 @@ export interface WarehouseFormData {
   slot_interval_minutes: number;
   timezone: string; // IANA timezone
   no_show_tolerance_minutes?: number | null;
+  /** Si está activo, las reservas importadas no se marcan automáticamente como No arribó. */
+  no_show_exclude_imported?: boolean | null;
 }

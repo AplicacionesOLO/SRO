@@ -4,6 +4,7 @@ interface WarehouseConfig {
   id: string;
   timezone: string;
   no_show_tolerance_minutes: number;
+  no_show_exclude_imported: boolean;
 }
 
 interface Reservation {
@@ -12,6 +13,7 @@ interface Reservation {
   dock_id: string;
   start_datetime: string;
   status_id: string;
+  is_imported?: boolean | null;
 }
 
 const corsHeaders = {
@@ -27,6 +29,7 @@ Deno.serve(async (req) => {
   try {
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+    const supabaseAnonKey = Deno.env.get('SUPABASE_ANON_KEY')!;
 
     const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey, { auth: { persistSession: false } });
 
@@ -42,12 +45,12 @@ Deno.serve(async (req) => {
       isCronMode = true;
     } else if (jwt) {
       // ── MODO USUARIO: validar JWT ────────────────────────────────────────
-      const supabaseAuth = createClient(supabaseUrl, supabaseServiceKey, {
+      // Cliente anónimo EXCLUSIVO para validar el JWT (nunca con service role)
+      const supabaseAuth = createClient(supabaseUrl, supabaseAnonKey, {
         auth: { persistSession: false },
-        global: { headers: { Authorization: `Bearer ${jwt}` } },
       });
 
-      const { data: { user }, error: userErr } = await supabaseAuth.auth.getUser();
+      const { data: { user }, error: userErr } = await supabaseAuth.auth.getUser(jwt);
 
       if (userErr || !user) {
         return new Response(JSON.stringify({ error: 'Token inválido', detail: userErr?.message }), {
@@ -121,7 +124,7 @@ Deno.serve(async (req) => {
     // 2) Obtener warehouses con tolerancia configurada
     const { data: warehouses, error: whErr } = await supabase
       .from('warehouses')
-      .select('id, timezone, no_show_tolerance_minutes')
+      .select('id, timezone, no_show_tolerance_minutes, no_show_exclude_imported')
       .eq('org_id', org_id)
       .not('no_show_tolerance_minutes', 'is', null)
       .gt('no_show_tolerance_minutes', 0);
@@ -162,6 +165,7 @@ Deno.serve(async (req) => {
         id: w.id as string,
         timezone: (w.timezone as string) || 'America/Costa_Rica',
         no_show_tolerance_minutes: Number(w.no_show_tolerance_minutes),
+        no_show_exclude_imported: w.no_show_exclude_imported === true,
       });
     });
 
@@ -170,7 +174,7 @@ Deno.serve(async (req) => {
     //    Esto detecta reservas que avanzaron manualmente sin pasar por IN.
     const { data: reservations, error: resErr } = await supabase
       .from('reservations')
-      .select('id, org_id, dock_id, start_datetime, status_id')
+      .select('id, org_id, dock_id, start_datetime, status_id, is_imported, dua')
       .eq('org_id', org_id)
       .eq('is_cancelled', false)
       .neq('status_id', noShowStatusId)
@@ -210,6 +214,14 @@ Deno.serve(async (req) => {
 
       const wh = whMap.get(whId);
       if (!wh) continue;
+
+      // Excluir cargas importadas si el almacén lo tiene configurado:
+      // la aduana puede demorar en liberar, así se conserva el espacio y el
+      // IN/OUT todavía puede registrar el ingreso aunque pase la tolerancia.
+      const isImported =
+        r.is_imported === true ||
+        (r.is_imported == null && !!(r.dua && String(r.dua).trim().length > 0));
+      if (wh.no_show_exclude_imported && isImported) continue;
 
       const start = new Date(r.start_datetime as string);
       const cutoff = new Date(start.getTime() + wh.no_show_tolerance_minutes * 60_000);

@@ -35,6 +35,7 @@ export default function WarehouseModal({
     slot_interval_minutes: 60,
     timezone: 'America/Costa_Rica',
     no_show_tolerance_minutes: null,
+    no_show_exclude_imported: false,
   });
 
   const [selectedClientIds, setSelectedClientIds] = useState<string[]>([]);
@@ -63,6 +64,7 @@ export default function WarehouseModal({
         slot_interval_minutes: (warehouse as any).slot_interval_minutes || 60,
         timezone: warehouse.timezone || 'America/Costa_Rica',
         no_show_tolerance_minutes: (warehouse as any).no_show_tolerance_minutes ?? null,
+        no_show_exclude_imported: (warehouse as any).no_show_exclude_imported ?? false,
       });
       setSelectedClientIds(assignedClientIds || []);
       setShowDraftBanner(false);
@@ -74,7 +76,7 @@ export default function WarehouseModal({
         setDraftAgeLabel(getDraftAge(draft.savedAt));
         setShowDraftBanner(true);
       } else {
-        setFormData({ name: '', location: '', country_id: '', business_start_time: '06:00', business_end_time: '17:00', slot_interval_minutes: 60, timezone: 'America/Costa_Rica', no_show_tolerance_minutes: null });
+        setFormData({ name: '', location: '', country_id: '', business_start_time: '06:00', business_end_time: '17:00', slot_interval_minutes: 60, timezone: 'America/Costa_Rica', no_show_tolerance_minutes: null, no_show_exclude_imported: false });
         setSelectedClientIds([]);
         setShowDraftBanner(false);
       }
@@ -191,7 +193,7 @@ export default function WarehouseModal({
                       className="px-3 py-1.5 text-xs font-semibold bg-teal-600 text-white rounded-lg hover:bg-teal-700 transition-colors whitespace-nowrap">
                       Continuar con el borrador
                     </button>
-                    <button type="button" onClick={() => { clearDraft(); setFormData({ name: '', location: '', country_id: '', business_start_time: '06:00', business_end_time: '17:00', slot_interval_minutes: 60, timezone: 'America/Costa_Rica' }); setSelectedClientIds([]); setShowDraftBanner(false); }}
+                    <button type="button" onClick={() => { clearDraft(); setFormData({ name: '', location: '', country_id: '', business_start_time: '06:00', business_end_time: '17:00', slot_interval_minutes: 60, timezone: 'America/Costa_Rica', no_show_tolerance_minutes: null, no_show_exclude_imported: false }); setSelectedClientIds([]); setShowDraftBanner(false); }}
                       className="px-3 py-1.5 text-xs font-medium border border-gray-300 bg-white text-gray-700 rounded-lg hover:bg-gray-50 transition-colors whitespace-nowrap">
                       Descartar y empezar nuevo
                     </button>
@@ -365,6 +367,24 @@ export default function WarehouseModal({
                 <p className="mt-1 text-xs text-gray-500">
                   Tiempo máximo permitido después de la hora de la cita antes de marcarla como No arribó. Dejar vacío para desactivar.
                 </p>
+              </div>
+
+              <div>
+                <label className="flex items-start gap-3 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={!!formData.no_show_exclude_imported}
+                    onChange={(e) => setFormData({ ...formData, no_show_exclude_imported: e.target.checked })}
+                    disabled={saving}
+                    className="mt-0.5 w-4 h-4 text-teal-600 border-gray-300 rounded focus:ring-teal-500 cursor-pointer"
+                  />
+                  <span>
+                    <span className="block text-sm font-medium text-gray-700">Excluir cargas importadas de No Arribó</span>
+                    <span className="block text-xs text-gray-500 mt-0.5">
+                      Las reservas marcadas como Importado no se marcarán automáticamente como No arribó (por ejemplo, si la aduana demora en liberar). Se conserva el espacio y el IN/OUT todavía puede registrar el ingreso.
+                    </span>
+                  </span>
+                </label>
               </div>
             </div>
           </div>
