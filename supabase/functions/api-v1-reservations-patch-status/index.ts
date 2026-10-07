@@ -29,9 +29,13 @@ Deno.serve(async (req) => {
     const token = authHeader.replace('Bearer ', '');
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+    const supabaseAnonKey = Deno.env.get('SUPABASE_ANON_KEY')!;
     const supabase = createClient(supabaseUrl, supabaseKey, { auth: { persistSession: false } });
 
-    const { data: { user }, error: authError } = await supabase.auth.getUser(token);
+    // Cliente anónimo EXCLUSIVO para validar el JWT del llamador (nunca service role)
+    const authClient = createClient(supabaseUrl, supabaseAnonKey, { auth: { persistSession: false } });
+
+    const { data: { user }, error: authError } = await authClient.auth.getUser(token);
     if (authError || !user) {
       return new Response(JSON.stringify({ error: 'Invalid or expired token' }), {
         status: 401,
@@ -92,7 +96,7 @@ Deno.serve(async (req) => {
     // Fetch reservation to validate access and current state
     const { data: reservation } = await supabase
       .from('reservations')
-      .select('id, org_id, status_id, is_cancelled, dock_id')
+      .select('id, org_id, status_id, is_cancelled, dock_id, is_internal_transfer')
       .eq('id', reservationId)
       .eq('org_id', orgId)
       .maybeSingle();
@@ -138,22 +142,27 @@ Deno.serve(async (req) => {
     // Validar secuencia de estados (con bypass por rol del usuario autenticado).
     // p_enforce_no_reversion=true bloquea retrocesos en la secuencia para la API,
     // incluso si el usuario tiene rol de bypass.
-    const { data: validation } = await supabase.rpc('validate_status_sequence', {
-      p_org_id: orgId,
-      p_reservation_id: reservationId,
-      p_new_status_id: body.status_id,
-      p_user_id: userId,
-      p_enforce_no_reversion: true,
-    });
+    //
+    // Excepción: Traslado Interno → la secuencia de estados (incluye los estados
+    // ligados al IN/OUT) no aplica; se permite cualquier cambio de estado.
+    if ((reservation as any).is_internal_transfer !== true) {
+      const { data: validation } = await supabase.rpc('validate_status_sequence', {
+        p_org_id: orgId,
+        p_reservation_id: reservationId,
+        p_new_status_id: body.status_id,
+        p_user_id: userId,
+        p_enforce_no_reversion: true,
+      });
 
-    if (validation && validation.allowed === false) {
-      return new Response(
-        JSON.stringify({
-          error: validation.message || 'Secuencia de estados inválida',
-          code: 'STATUS_SEQUENCE_BLOCKED',
-        }),
-        { status: 409, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      if (validation && validation.allowed === false) {
+        return new Response(
+          JSON.stringify({
+            error: validation.message || 'Secuencia de estados inválida',
+            code: 'STATUS_SEQUENCE_BLOCKED',
+          }),
+          { status: 409, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
     }
 
     const now = new Date().toISOString();

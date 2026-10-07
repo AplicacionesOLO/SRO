@@ -38,6 +38,7 @@ import {
   DEFAULT_TIMEZONE,
 } from '../../../utils/timezoneUtils';
 import { sameDayCutoffService } from '../../../services/sameDayCutoffService';
+import { clientInternalTransferRulesService } from '../../../services/clientInternalTransferRulesService';
 
 interface ReservationModalProps {
   isOpen: boolean;
@@ -129,6 +130,8 @@ export default function ReservationModal({
   });
 
   const [isImported, setIsImported] = useState(false);
+  const [isInternalTransfer, setIsInternalTransfer] = useState(false);
+  const [canUseInternalTransfer, setCanUseInternalTransfer] = useState(false);
   const [openingFileId, setOpeningFileId] = useState<string | null>(null);
   const [openFileError, setOpenFileError] = useState<string>('');
   const [files, setFiles] = useState<FileItem[]>([]);
@@ -390,6 +393,7 @@ export default function ReservationModal({
     });
     setFiles([]);
     setIsImported(defaults?.is_imported != null ? !!defaults.is_imported : !!(defaults?.dua));
+    setIsInternalTransfer(!!defaults?.is_internal_transfer);
     setCancelReason('');
     setManualOverride(false);
     setSuggestedMinutes(null);
@@ -510,6 +514,19 @@ export default function ReservationModal({
     loadReservationFiles();
   }, [isOpen, orgId, reservation?.id, canViewSensitive]);
 
+  // ── Autorización de Traslado Interno para el cliente de esta reserva ──
+  useEffect(() => {
+    if (!isOpen || !orgId || !user?.id) { setCanUseInternalTransfer(false); return; }
+    const clientId = (reservation as any)?.client_id ?? defaults?.client_id ?? null;
+    if (!clientId) { setCanUseInternalTransfer(false); return; }
+    let cancelled = false;
+    clientInternalTransferRulesService.isUserAuthorized(orgId, clientId, user.id).then(ok => {
+      if (!cancelled) setCanUseInternalTransfer(ok);
+    }).catch(() => { if (!cancelled) setCanUseInternalTransfer(false); });
+    return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, orgId, user?.id, reservation?.id, defaults?.client_id]);
+
   useEffect(() => {
     if (!isOpen) {
       initSessionRef.current = '';
@@ -549,6 +566,7 @@ export default function ReservationModal({
       });
       const reservationIsImported = (reservation as any).is_imported;
       setIsImported(reservationIsImported != null ? !!reservationIsImported : !!(reservation.dua));
+      setIsInternalTransfer(!!(reservation as any).is_internal_transfer);
       setCancelReason(reservation.cancel_reason || '');
       setManualOverride(false);
       setSuggestedMinutes(null);
@@ -804,6 +822,7 @@ export default function ReservationModal({
       operation_type: formData.operationType || null,
       is_imported: isImported, is_cancelled: isCancelledStatus,
       cancel_reason: isCancelledStatus ? cancelReason : null, is_consolidated: isConsolidated,
+      is_internal_transfer: isInternalTransfer,
       ...(defaults?.client_id ? { client_id: defaults.client_id } : {}),
       bl_number: (formData.operationType === 'zona_franca' && isImported) ? (formData.blNumber?.trim() || null) : null,
       quantity_value: (() => {
@@ -829,7 +848,7 @@ export default function ReservationModal({
       }
     }
     // Pre-validación de secuencia de estados (solo edición + cambio de status real)
-    if (reservation && formData.statusId !== reservation.status_id && !bypassConfirmedRef.current) {
+    if (reservation && formData.statusId !== reservation.status_id && !bypassConfirmedRef.current && !isInternalTransfer) {
       try {
         const validation = await clientStatusSequenceRulesService.validateTransition(
           orgId,
@@ -873,7 +892,8 @@ export default function ReservationModal({
           formData.blNumber === ((reservation as any).bl_number || '') &&
           isImported === !!((reservation as any).is_imported ?? !!(reservation.dua)) &&
           cancelReason === (reservation.cancel_reason || '') &&
-          isConsolidated === !!reservation.is_consolidated;
+          isConsolidated === !!reservation.is_consolidated &&
+          isInternalTransfer === !!(reservation as any).is_internal_transfer;
         if (isStatusOnlyChange) {
           saved = await calendarService.updateReservationStatus(reservation.id, formData.statusId);
         } else {
@@ -1360,6 +1380,24 @@ export default function ReservationModal({
                               />
                               <label htmlFor="consolidated-check" className="text-sm text-gray-700 cursor-pointer select-none">
                                 Reserva consolidada
+                              </label>
+                            </div>
+                          )}
+
+                          {/* ✅ Checkbox Traslado Interno (solo usuarios autorizados por la regla del cliente) */}
+                          {(canUseInternalTransfer || isInternalTransfer) && (
+                            <div className="flex items-center gap-2 mt-1">
+                              <input
+                                type="checkbox"
+                                id="internal-transfer-check"
+                                checked={isInternalTransfer}
+                                onChange={(e) => setIsInternalTransfer(e.target.checked)}
+                                disabled={isReadOnly}
+                                className="w-4 h-4 rounded border-gray-300 text-teal-600 focus:ring-teal-500 cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
+                              />
+                              <label htmlFor="internal-transfer-check" className="text-sm text-gray-700 cursor-pointer select-none flex items-center gap-1.5">
+                                Traslado Interno
+                                <span className="text-xs text-gray-400">(sin No Arribó ni fotos IN/OUT)</span>
                               </label>
                             </div>
                           )}

@@ -9,6 +9,7 @@ import { dockAllocationService } from '../../../services/dockAllocationService';
 import { useAuth } from '../../../contexts/AuthContext';
 import SearchSelect from '../../../components/base/SearchSelect';
 import { formatProviderLabel } from '../../../utils/providerFormat';
+import { clientInternalTransferRulesService } from '../../../services/clientInternalTransferRulesService';
 import { supabase } from '../../../lib/supabase';
 
 interface PreReservationMiniModalProps {
@@ -27,6 +28,7 @@ interface PreReservationMiniModalProps {
     quantityValue?: number | null;
     isConsolidated?: boolean;
     consolidatedProviders?: Array<{ provider_id: string; provider_name: string; package_quantity: number }>;
+    isInternalTransfer?: boolean;
   }) => void;
 }
 
@@ -75,6 +77,10 @@ export default function PreReservationMiniModal({
   const [consolidatedProviderId, setConsolidatedProviderId] = useState('');
   const [consolidatedQuantity, setConsolidatedQuantity] = useState('');
   const [consolidatedError, setConsolidatedError] = useState('');
+
+  // Traslado Interno (solo visible para usuarios autorizados en la regla del cliente)
+  const [isInternalTransfer, setIsInternalTransfer] = useState(false);
+  const [canUseInternalTransfer, setCanUseInternalTransfer] = useState(false);
 
   // Estados expand/collapse para secciones colapsables en reserva consolidada
   const [expandConsolidated, setExpandConsolidated] = useState(false);
@@ -273,6 +279,46 @@ export default function PreReservationMiniModal({
     resolveClient();
   }, [isOpen, orgId, selectedProviderId, warehouseId]);
 
+  // ── Autorización de Traslado Interno: ¿el usuario está en la lista del cliente? ──
+  useEffect(() => {
+    if (!isOpen || !orgId || !user?.id) {
+      setCanUseInternalTransfer(false);
+      return;
+    }
+    let cancelled = false;
+
+    const run = async () => {
+      let authClientId: string | null = null;
+      if (isConsolidated) {
+        const first = consolidatedProviders[0];
+        if (!first) { if (!cancelled) setCanUseInternalTransfer(false); return; }
+        try {
+          const ids = await dockAllocationService.resolveClientIdsFromProvider(orgId, first.provider_id, warehouseId);
+          authClientId = ids[0] ?? null;
+        } catch {
+          authClientId = null;
+        }
+      } else {
+        authClientId = resolvedClientId || null;
+      }
+
+      if (!authClientId) {
+        if (!cancelled) setCanUseInternalTransfer(false);
+        return;
+      }
+      const ok = await clientInternalTransferRulesService.isUserAuthorized(orgId, authClientId, user!.id);
+      if (!cancelled) setCanUseInternalTransfer(ok);
+    };
+
+    run();
+    return () => { cancelled = true; };
+  }, [isOpen, orgId, user?.id, resolvedClientId, isConsolidated, consolidatedProviders, warehouseId]);
+
+  // Si pierde autorización, apagar el check
+  useEffect(() => {
+    if (!canUseInternalTransfer) setIsInternalTransfer(false);
+  }, [canUseInternalTransfer]);
+
   // Resetear form cuando se cierra
   useEffect(() => {
     if (!isOpen) {
@@ -290,6 +336,8 @@ export default function PreReservationMiniModal({
       setConsolidatedProviderId('');
       setConsolidatedQuantity('');
       setConsolidatedError('');
+      setIsInternalTransfer(false);
+      setCanUseInternalTransfer(false);
       setProviders([]);
       setUserProviderIds(new Set());
       setUserProviderCount(-1);
@@ -486,6 +534,7 @@ export default function PreReservationMiniModal({
       quantityValue: qty,
       isConsolidated,
       consolidatedProviders: isConsolidated ? consolidatedProviders : undefined,
+      isInternalTransfer,
     });
   };
 
@@ -498,6 +547,7 @@ export default function PreReservationMiniModal({
     setConsolidatedProviderId('');
     setConsolidatedQuantity('');
     setConsolidatedError('');
+    setIsInternalTransfer(false);
     onClose();
   };
 
@@ -649,37 +699,53 @@ export default function PreReservationMiniModal({
               </div>
               )}
 
-              {/* Checkbox Reserva Consolidada */}
+              {/* Checkboxes: Consolidada + Traslado Interno */}
               {!isNoProviders && (
-                <div className="flex items-center gap-2">
-                  <input
-                    type="checkbox"
-                    id="pre-consolidated-check"
-                    checked={isConsolidated}
-                    onChange={(e) => {
-                      const checked = e.target.checked;
-                      setIsConsolidated(checked);
-                      if (checked) {
-                        setSelectedProviderId('');
-                        setQuantityValue('');
-                        setResolvedClientId('');
-                        setResolvedClientIds([]);
-                        setClientError('');
-                      } else {
-                        setConsolidatedProviders([]);
-                        setConsolidatedProviderId('');
-                        setConsolidatedQuantity('');
-                        setConsolidatedError('');
-                        if (isSingleProvider) {
-                          setSelectedProviderId(providers[0]?.id || '');
+                <div className="flex items-center gap-4 flex-wrap">
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      id="pre-consolidated-check"
+                      checked={isConsolidated}
+                      onChange={(e) => {
+                        const checked = e.target.checked;
+                        setIsConsolidated(checked);
+                        if (checked) {
+                          setSelectedProviderId('');
+                          setQuantityValue('');
+                          setResolvedClientId('');
+                          setResolvedClientIds([]);
+                          setClientError('');
+                        } else {
+                          setConsolidatedProviders([]);
+                          setConsolidatedProviderId('');
+                          setConsolidatedQuantity('');
+                          setConsolidatedError('');
+                          if (isSingleProvider) {
+                            setSelectedProviderId(providers[0]?.id || '');
+                          }
                         }
-                      }
-                    }}
-                    className="w-4 h-4 rounded border-gray-300 text-teal-600 focus:ring-teal-500 cursor-pointer"
-                  />
-                  <label htmlFor="pre-consolidated-check" className="text-sm text-gray-700 cursor-pointer select-none">
-                    Reserva consolidada
-                  </label>
+                      }}
+                      className="w-4 h-4 rounded border-gray-300 text-teal-600 focus:ring-teal-500 cursor-pointer"
+                    />
+                    <label htmlFor="pre-consolidated-check" className="text-sm text-gray-700 cursor-pointer select-none">
+                      Reserva consolidada
+                    </label>
+                  </div>
+                  {canUseInternalTransfer && (
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        id="pre-internal-transfer-check"
+                        checked={isInternalTransfer}
+                        onChange={(e) => setIsInternalTransfer(e.target.checked)}
+                        className="w-4 h-4 rounded border-gray-300 text-teal-600 focus:ring-teal-500 cursor-pointer"
+                      />
+                      <label htmlFor="pre-internal-transfer-check" className="text-sm text-gray-700 cursor-pointer select-none">
+                        Traslado Interno
+                      </label>
+                    </div>
+                  )}
                 </div>
               )}
 

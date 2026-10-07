@@ -182,6 +182,7 @@ export default function CalendarioPage() {
   const [preConsolidatedProviders, setPreConsolidatedProviders] = useState<
     Array<{ provider_id: string; provider_name: string; package_quantity: number }>
   >([]);
+  const [preIsInternalTransfer, setPreIsInternalTransfer] = useState(false);
   const [sameDayCutoffInfo, setSameDayCutoffInfo] = useState<{
     blocked: boolean;
     cutoffTimeStr: string | null;
@@ -801,11 +802,11 @@ export default function CalendarioPage() {
         setReserveModalSlot({ ...copyFields, dock_id: dockId, start_datetime: cellStart.toISOString(), end_datetime: calculatedEnd.toISOString() });
         setCopyOfReservationId(_copyOfId || null); setCopyDraft(null);
       } else {
-        setReserveModalSlot({ dock_id: dockId, start_datetime: cellStart.toISOString(), end_datetime: calculatedEnd.toISOString(), cargo_type: preCargoTypeId, shipper_provider: preProviderId, provider_name: preProviderName, client_id: preClientId, quantity_value: preQuantityValue, is_consolidated: preIsConsolidated, consolidated_providers: preConsolidatedProviders });
+        setReserveModalSlot({ dock_id: dockId, start_datetime: cellStart.toISOString(), end_datetime: calculatedEnd.toISOString(), cargo_type: preCargoTypeId, shipper_provider: preProviderId, provider_name: preProviderName, client_id: preClientId, quantity_value: preQuantityValue, is_consolidated: preIsConsolidated, consolidated_providers: preConsolidatedProviders, is_internal_transfer: preIsInternalTransfer });
       }
       setSelectedReservation(null); setReserveModalOpen(true);
       console.timeEnd('[NewReservation] ── handleCellClick → modal open ──');
-      setSelectionMode(false); setRequiredMinutes(0); setPreCargoTypeId(''); setPreProviderId(''); setPreProviderName(''); setPreQuantityValue(null); setPreIsConsolidated(false); setPreConsolidatedProviders([]);
+      setSelectionMode(false); setRequiredMinutes(0); setPreCargoTypeId(''); setPreProviderId(''); setPreProviderName(''); setPreQuantityValue(null); setPreIsConsolidated(false); setPreConsolidatedProviders([]); setPreIsInternalTransfer(false);
       return;
     }
     handleSelectSlot({ dockId, date: day.toISOString(), time: timeSlot.label, eventType: 'free', startTime: cellStart, endTime: cellEnd });
@@ -903,11 +904,12 @@ export default function CalendarioPage() {
   const [notifyModal, setNotifyModal] = useState({ isOpen: false, type: 'info' as 'info' | 'warning' | 'error' | 'success', title: '', message: '' });
   const [refreshErrorBanner, setRefreshErrorBanner] = useState(false);
 
-  const handlePreReservationConfirm = useCallback(async (payload: { cargoTypeId: string; providerId: string; providerName?: string; clientId: string; clientIds: string[]; requiredMinutes: number; quantityValue?: number | null; isConsolidated?: boolean; consolidatedProviders?: Array<{ provider_id: string; provider_name: string; package_quantity: number }> }) => {
+  const handlePreReservationConfirm = useCallback(async (payload: { cargoTypeId: string; providerId: string; providerName?: string; clientId: string; clientIds: string[]; requiredMinutes: number; quantityValue?: number | null; isConsolidated?: boolean; consolidatedProviders?: Array<{ provider_id: string; provider_name: string; package_quantity: number }>; isInternalTransfer?: boolean }) => {
     console.time('[NewReservation] ══ handlePreReservationConfirm TOTAL ══');
     setPreCargoTypeId(payload.cargoTypeId); setPreProviderId(payload.providerId); setPreProviderName(payload.providerName || ''); setPreClientId(payload.clientId || payload.clientIds?.[0] || null); setRequiredMinutes(payload.requiredMinutes); setPreQuantityValue(payload.quantityValue ?? null); setPreModalOpen(false);
     setPreIsConsolidated(payload.isConsolidated ?? false);
     setPreConsolidatedProviders(payload.consolidatedProviders ?? []);
+    setPreIsInternalTransfer(payload.isInternalTransfer ?? false);
     setAllocationLoading(true); setAllocationError(''); setAllocationRule(null);
     setSameDayCutoffInfo(null);
 
@@ -1060,7 +1062,7 @@ export default function CalendarioPage() {
   }, [orgId, warehouseId]);
 
   const handleExitSelectionMode = useCallback(() => {
-    setSelectionMode(false); setRequiredMinutes(0); setPreCargoTypeId(''); setPreProviderId(''); setPreProviderName(''); setPreClientId(null); setPreQuantityValue(null); setPreIsConsolidated(false); setPreConsolidatedProviders([]); setAllocationRule(null); setAllocationError(''); setEnabledDockIds(new Set()); setSameDayCutoffInfo(null); setOverlapBypassEnabled(false);
+    setSelectionMode(false); setRequiredMinutes(0); setPreCargoTypeId(''); setPreProviderId(''); setPreProviderName(''); setPreClientId(null); setPreQuantityValue(null); setPreIsConsolidated(false); setPreConsolidatedProviders([]); setPreIsInternalTransfer(false); setAllocationRule(null); setAllocationError(''); setEnabledDockIds(new Set()); setSameDayCutoffInfo(null); setOverlapBypassEnabled(false);
   }, []);
 
   useEffect(() => { if (!orgId) return; providersService.getActive(orgId).then(setProviders).catch(() => {}); }, [orgId]);
@@ -1140,6 +1142,7 @@ export default function CalendarioPage() {
       quantity_value: (sourceReservation as any).quantity_value ?? null,
       is_consolidated: !!sourceReservation.is_consolidated,
       consolidated_providers: consolidatedProviders,
+      is_internal_transfer: !!(sourceReservation as any).is_internal_transfer,
     };
     setReserveModalOpen(false); setSelectedReservation(null); setReserveModalSlot(null); setCopyOfReservationId(null);
     setCopyDraft(draft);

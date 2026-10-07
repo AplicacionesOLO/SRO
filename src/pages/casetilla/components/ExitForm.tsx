@@ -19,6 +19,8 @@ interface ExitFormProps {
   onFotosChange?: (urls: string[]) => void;
   /** Clave de sessionStorage para persistencia directa del PhotoUploader */
   photoSessionKey?: string;
+  /** Si es false, las fotos no son obligatorias (ej: Traslado Interno). Por defecto true. */
+  photosRequired?: boolean;
 }
 
 export default function ExitForm({
@@ -29,7 +31,8 @@ export default function ExitForm({
   orgId,
   initialFotos = [],
   onFotosChange,
-  photoSessionKey
+  photoSessionKey,
+  photosRequired = true
 }: ExitFormProps) {
   const [showConfirm, setShowConfirm] = useState(false);
   // Fuente de verdad: array completo de PhotoItem (incluye uploading)
@@ -44,27 +47,30 @@ export default function ExitForm({
   };
 
   const handleSubmitClick = () => {
-    const errorCount    = photoItems.filter((p) => p.status === 'error').length;
-    const capturedCount = photoItems.filter((p) => p.status !== 'error').length;
+    // Traslado Interno: fotos opcionales → se salta la validación de fotos.
+    if (photosRequired) {
+      const errorCount    = photoItems.filter((p) => p.status === 'error').length;
+      const capturedCount = photoItems.filter((p) => p.status !== 'error').length;
 
-    if (errorCount > 0 && capturedCount < 3) {
-      const faltanCount = 3 - capturedCount;
-      setPhotoError(
-        `${errorCount} foto${errorCount !== 1 ? 's' : ''} no se pudo${errorCount !== 1 ? 'ron' : ''} subir correctamente. ` +
-        `${faltanCount > 0 ? `Aún faltan ${faltanCount} foto${faltanCount !== 1 ? 's' : ''} válidas. ` : ''}` +
-        'Usá el botón "Reintentar" en las fotos con error.'
-      );
-      return;
-    }
-    if (capturedCount < 3) {
-      const faltanCount = 3 - capturedCount;
-      setPhotoError(`Se requieren al menos 3 fotos. Faltan ${faltanCount} foto${faltanCount !== 1 ? 's' : ''}.`);
-      return;
-    }
-    const doneCount = photoItems.filter((p) => p.status === 'done').length;
-    if (doneCount < capturedCount) {
-      setPhotoError('Hay fotos subiendo. Espera un momento e intenta de nuevo.');
-      return;
+      if (errorCount > 0 && capturedCount < 3) {
+        const faltanCount = 3 - capturedCount;
+        setPhotoError(
+          `${errorCount} foto${errorCount !== 1 ? 's' : ''} no se pudo${errorCount !== 1 ? 'ron' : ''} subir correctamente. ` +
+          `${faltanCount > 0 ? `Aún faltan ${faltanCount} foto${faltanCount !== 1 ? 's' : ''} válidas. ` : ''}` +
+          'Usá el botón "Reintentar" en las fotos con error.'
+        );
+        return;
+      }
+      if (capturedCount < 3) {
+        const faltanCount = 3 - capturedCount;
+        setPhotoError(`Se requieren al menos 3 fotos. Faltan ${faltanCount} foto${faltanCount !== 1 ? 's' : ''}.`);
+        return;
+      }
+      const doneCount = photoItems.filter((p) => p.status === 'done').length;
+      if (doneCount < capturedCount) {
+        setPhotoError('Hay fotos subiendo. Espera un momento e intenta de nuevo.');
+        return;
+      }
     }
     setPhotoError(null);
     setShowConfirm(true);

@@ -8,11 +8,13 @@
 // Reglas de negocio:
 //   1. Una reserva CANCELADA nunca se marca No arribó (se canceló, no es que
 //      no llegó). El estado de cancelación se mantiene.
-//   2. Si el almacén tiene activada la exclusión de importados, las reservas
+//   2. Una reserva de TRASLADO INTERNO nunca se marca No arribó: es un
+//      movimiento dentro del mismo almacén, sin paso por el punto IN/OUT.
+//   3. Si el almacén tiene activada la exclusión de importados, las reservas
 //      con carga IMPORTADA nunca se marcan No arribó (la aduana puede tardar),
 //      así se conserva el espacio y el IN/OUT igual puede registrar el ingreso.
-//   3. Si el almacén no tiene tolerancia configurada (> 0), no aplica la regla.
-//   4. Si ya pasó la hora de la cita + la tolerancia (y no hay ingreso), se marca.
+//   4. Si el almacén no tiene tolerancia configurada (> 0), no aplica la regla.
+//   5. Si ya pasó la hora de la cita + la tolerancia (y no hay ingreso), se marca.
 //
 // Nota: este archivo es intencionalmente puro (sin imports, sin efectos) para
 // poder ejecutarse en cualquier entorno (navegador, Deno, tests con Node).
@@ -22,6 +24,7 @@ export type NoShowDecision =
   | 'mark' // hay que marcar No arribó
   | 'keep' // todavía está dentro de la tolerancia → no marcar
   | 'skip_cancelled' // está cancelada → nunca marcar
+  | 'skip_internal_transfer' // es un Traslado Interno → nunca marcar
   | 'skip_imported' // es importada y el almacén excluye importados → nunca marcar
   | 'skip_no_tolerance' // el almacén no tiene tolerancia configurada → no aplica
   | 'skip_no_start'; // no hay hora de cita para evaluar → no aplica
@@ -37,6 +40,8 @@ export interface NoShowEvaluationInput {
   isImported?: boolean | null;
   /** El almacén tiene activada la exclusión de importados. */
   excludeImported?: boolean | null;
+  /** La reserva es un Traslado Interno (exenta de No Arribó). */
+  isInternalTransfer?: boolean | null;
   /** Momento a comparar (por defecto: ahora). Inyectable para tests. */
   now?: Date;
 }
@@ -49,8 +54,10 @@ export function isExemptFromNoShow(params: {
   isCancelled?: boolean | null;
   isImported?: boolean | null;
   excludeImported?: boolean | null;
+  isInternalTransfer?: boolean | null;
 }): boolean {
   if (params.isCancelled === true) return true;
+  if (params.isInternalTransfer === true) return true;
   if (params.excludeImported === true && params.isImported === true) return true;
   return false;
 }
@@ -78,9 +85,10 @@ export function isNoShowExpired(params: {
  * Es la función que usan la lista de pendientes, el bloqueo de ingreso y el QR.
  */
 export function evaluateNoShow(input: NoShowEvaluationInput): NoShowDecision {
-  const { startDatetime, toleranceMinutes, isCancelled, isImported, excludeImported, now } = input;
+  const { startDatetime, toleranceMinutes, isCancelled, isImported, excludeImported, isInternalTransfer, now } = input;
 
   if (isCancelled === true) return 'skip_cancelled';
+  if (isInternalTransfer === true) return 'skip_internal_transfer';
   if (excludeImported === true && isImported === true) return 'skip_imported';
   if (toleranceMinutes == null || Number(toleranceMinutes) <= 0) return 'skip_no_tolerance';
   if (!startDatetime) return 'skip_no_start';

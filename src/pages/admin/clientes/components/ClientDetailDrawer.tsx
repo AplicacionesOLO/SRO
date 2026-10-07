@@ -8,6 +8,7 @@ import RuleBlock from './RuleBlock';
 import SameDayCutoffRuleBlock from './SameDayCutoffRuleBlock';
 import ClientOverlapRulesTab from './ClientOverlapRulesTab';
 import ClientStatusSequenceRulesTab from './ClientStatusSequenceRulesTab';
+import ClientInternalTransferRulesTab from './ClientInternalTransferRulesTab';
 
 interface ClientDetailDrawerProps {
   isOpen: boolean;
@@ -932,6 +933,26 @@ export default function ClientDetailDrawer({
                 onToggle={() => toggleRule('status-sequence')}
               >
                 <ClientStatusSequenceRulesTab
+                  orgId={client.org_id}
+                  clientId={client.id}
+                  canManage={canUpdateRules}
+                />
+              </RuleBlock>
+
+              {/* ── BLOQUE 8: Traslado Interno ── */}
+              <RuleBlock
+                icon="ri-exchange-box-line"
+                iconBg="bg-teal-100"
+                iconColor="text-teal-600"
+                title="Traslado Interno"
+                description="Define qué usuarios pueden ver y usar el check 'Traslado Interno' al crear reservas de este cliente. Las reservas marcadas quedan exentas de No Arribó, no exigen fotos en IN/OUT y pueden omitir los estados ligados al IN/OUT."
+                badge="Por cliente"
+                badgeColor="bg-teal-100 text-teal-700"
+                scope="client"
+                isOpen={openRuleId === 'internal-transfer'}
+                onToggle={() => toggleRule('internal-transfer')}
+              >
+                <ClientInternalTransferRulesTab
                   orgId={client.org_id}
                   clientId={client.id}
                   canManage={canUpdateRules}

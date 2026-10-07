@@ -30,6 +30,8 @@ type PendingReservationRow = {
   end_datetime: string | null;
   // ✅ Fuente de verdad real para Nacional/Importado
   is_imported: boolean | null;
+  // ✅ Traslado Interno (exento de No Arribó)
+  is_internal_transfer?: boolean | null;
 };
 
 // ✅ Nuevo tipo para reservas elegibles para salida
@@ -234,6 +236,7 @@ class CasetillaService {
         isCancelled: r.is_cancelled,
         isImported: resolveIsImported(r),
         excludeImported: wh.excludeImported,
+        isInternalTransfer: (r as any).is_internal_transfer === true,
         now,
       });
 
@@ -245,7 +248,7 @@ class CasetillaService {
   async checkNoShowExpired(reservationId: string, orgId: string): Promise<{ expired: boolean; message: string }> {
     const { data: res, error } = await supabase
       .from('reservations')
-      .select('id, dock_id, start_datetime, status_id, is_cancelled, is_imported, dua')
+      .select('id, dock_id, start_datetime, status_id, is_cancelled, is_imported, dua, is_internal_transfer')
       .eq('id', reservationId)
       .eq('org_id', orgId)
       .maybeSingle();
@@ -275,6 +278,7 @@ class CasetillaService {
       isCancelled: res.is_cancelled,
       isImported: resolveIsImported(res),
       excludeImported: wh?.no_show_exclude_imported ?? false,
+      isInternalTransfer: (res as any).is_internal_transfer === true,
     });
 
     if (decision === 'mark') {
@@ -347,6 +351,19 @@ class CasetillaService {
   // { allowed, bypassed, message }. Fail-open: si la validación no puede
   // ejecutarse (error de red/RPC), devuelve allowed=true para no romper flujos.
   private async _validateTransition(orgId: string, reservationId: string, newStatusId: string, userId: string): Promise<{ allowed: boolean; bypassed: boolean; message: string }> {
+    // Traslado Interno → la secuencia de estados (incluye los estados ligados
+    // al IN/OUT) no aplica; se permite cualquier cambio de estado.
+    try {
+      const { data: itRes } = await supabase
+        .from('reservations')
+        .select('is_internal_transfer')
+        .eq('id', reservationId)
+        .maybeSingle();
+      if ((itRes as any)?.is_internal_transfer === true) {
+        return { allowed: true, bypassed: false, message: '' };
+      }
+    } catch { /* fail-open: seguir con la validación normal */ }
+
     try {
       return await clientStatusSequenceRulesService.validateTransition(orgId, reservationId, newStatusId, userId);
     } catch {
@@ -658,6 +675,22 @@ class CasetillaService {
 
       let rows = reservations as PendingReservationRow[];
 
+      // ─── TRASLADO INTERNO: adjuntar el flag (puede no venir del RPC) ───
+      try {
+        const idsForIt = rows.map((r) => r.id).filter(Boolean);
+        const internalSet = new Set<string>();
+        for (let i = 0; i < idsForIt.length; i += 100) {
+          const batch = idsForIt.slice(i, i + 100);
+          const { data: itRows } = await supabase
+            .from('reservations')
+            .select('id, is_internal_transfer')
+            .eq('org_id', orgId)
+            .in('id', batch);
+          (itRows ?? []).forEach((row: any) => { if (row.is_internal_transfer === true) internalSet.add(row.id); });
+        }
+        rows = rows.map((r) => ({ ...r, is_internal_transfer: internalSet.has(r.id) }));
+      } catch { /* non-blocking */ }
+
       // ─── FILTRO POR RANGO DE FECHAS: start_datetime dentro del rango ───────
       if (dateFrom) {
         const dateRange = this._buildRangeFilterParams(dateFrom, dateTo ?? dateFrom, timezone);
@@ -831,6 +864,7 @@ class CasetillaService {
           warehouse_name: whName ?? 'N/A',
           created_at: r.created_at,
           is_imported,
+          is_internal_transfer: (r as any).is_internal_transfer === true,
           cargo_type_name: cargoTypeName || null,
           start_datetime: r.start_datetime ?? null,
         };
@@ -996,7 +1030,8 @@ async getExitEligibleReservations(
         dock_id,
         created_at,
         status_id,
-        is_cancelled
+        is_cancelled,
+        is_internal_transfer
       `)
       .eq('org_id', orgId)
       .eq('is_cancelled', false)
@@ -1113,6 +1148,7 @@ async getExitEligibleReservations(
         status_name: statusInfo?.name ?? null,
         status_code: statusInfo?.code ?? null,
         status_id: r.status_id ?? null,
+        is_internal_transfer: (r as any).is_internal_transfer === true,
       };
     });
   } catch (error: any) {
@@ -1132,7 +1168,7 @@ async getExitEligibleReservations(
       // 1) Traer la reserva
       const { data: res, error } = await supabase
         .from('reservations')
-        .select('id, status_id, is_cancelled, driver, truck_plate, dua, dock_id, org_id, shipper_provider, purchase_order, order_request_number, created_at, cargo_type, is_imported, notes, start_datetime, end_datetime')
+        .select('id, status_id, is_cancelled, driver, truck_plate, dua, dock_id, org_id, shipper_provider, purchase_order, order_request_number, created_at, cargo_type, is_imported, is_internal_transfer, notes, start_datetime, end_datetime')
         .eq('id', reservationId)
         .eq('org_id', orgId)
         .maybeSingle();
@@ -1192,6 +1228,7 @@ async getExitEligibleReservations(
               isCancelled: res.is_cancelled,
               isImported: resolveIsImported(res),
               excludeImported: wh?.no_show_exclude_imported ?? false,
+              isInternalTransfer: (res as any).is_internal_transfer === true,
             });
 
             if (noShowDecision === 'mark') {
@@ -1218,6 +1255,7 @@ async getExitEligibleReservations(
           start_datetime: res.start_datetime,
           end_datetime: res.end_datetime,
           is_imported: res.is_imported,
+          is_internal_transfer: (res as any).is_internal_transfer === true,
         };
         return { state: 'pending', reservation: row };
       }

@@ -181,6 +181,69 @@ test('Importada detectada por DUA (is_imported null) + exclusión ON → skip_im
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// 2b) NUEVA regla: Traslado Interno (exento de No Arribó)
+// ─────────────────────────────────────────────────────────────────────────────
+
+test('Traslado Interno vencido → skip_internal_transfer', () => {
+  const r = evaluateNoShow({
+    startDatetime: minutesBeforeNow(999),
+    toleranceMinutes: 30,
+    isCancelled: false,
+    isImported: false,
+    isInternalTransfer: true,
+    now: NOW,
+  });
+  assertEqual(r, 'skip_internal_transfer', 'decisión');
+});
+
+test('Traslado Interno dentro de tolerancia → skip_internal_transfer', () => {
+  const r = evaluateNoShow({
+    startDatetime: minutesBeforeNow(5),
+    toleranceMinutes: 30,
+    isCancelled: false,
+    isInternalTransfer: true,
+    now: NOW,
+  });
+  assertEqual(r, 'skip_internal_transfer', 'decisión');
+});
+
+test('Traslado Interno + cancelada → skip_cancelled tiene prioridad', () => {
+  const r = evaluateNoShow({
+    startDatetime: minutesBeforeNow(999),
+    toleranceMinutes: 30,
+    isCancelled: true,
+    isInternalTransfer: true,
+    now: NOW,
+  });
+  assertEqual(r, 'skip_cancelled', 'decisión');
+});
+
+test('Nacional vencida sin Traslado Interno → sigue marcándose (mark)', () => {
+  const r = evaluateNoShow({
+    startDatetime: minutesBeforeNow(999),
+    toleranceMinutes: 30,
+    isCancelled: false,
+    isImported: false,
+    isInternalTransfer: false,
+    now: NOW,
+  });
+  assertEqual(r, 'mark', 'decisión');
+});
+
+test('shouldMarkNoShow: Traslado Interno nunca se marca', () => {
+  assertEqual(
+    shouldMarkNoShow({ startDatetime: minutesBeforeNow(999), toleranceMinutes: 30, isCancelled: false, isInternalTransfer: true, now: NOW }),
+    false,
+    'traslado interno'
+  );
+});
+
+test('isExemptFromNoShow: Traslado Interno es exento', () => {
+  assertEqual(isExemptFromNoShow({ isInternalTransfer: true }), true, 'traslado interno');
+  assertEqual(isExemptFromNoShow({ isInternalTransfer: false, isCancelled: false }), false, 'no traslado');
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // 3) Frontera de tiempo
 // ─────────────────────────────────────────────────────────────────────────────
 

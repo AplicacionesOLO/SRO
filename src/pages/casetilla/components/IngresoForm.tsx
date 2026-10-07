@@ -15,6 +15,8 @@ interface IngresoFormProps {
   photoSessionKey?: string;
   /** Clave de sessionStorage para persistir formData entre remounts (ej: Android abre cámara) */
   formDataSessionKey?: string;
+  /** Si es false, las fotos no son obligatorias (ej: Traslado Interno). Por defecto true. */
+  photosRequired?: boolean;
 }
 
 function detectOverwrites(
@@ -47,6 +49,7 @@ function IngresoForm({
   onFotosChange,
   photoSessionKey,
   formDataSessionKey,
+  photosRequired = true,
 }: IngresoFormProps) {
   const [formData, setFormData] = useState<CreateCasetillaIngresoInput>(() => {
     // Intentar restaurar desde sessionStorage primero (remount por cámara en Android)
@@ -124,37 +127,38 @@ function IngresoForm({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    // Contar fotos disponibles: done + uploading (ya capturadas, pueden terminar)
-    const errorCount   = photoItems.filter((p) => p.status === 'error').length;
-    const capturedCount = photoItems.filter((p) => p.status !== 'error').length;
+    // Traslado Interno: fotos opcionales → se salta toda la validación de fotos.
+    if (photosRequired) {
+      // Contar fotos disponibles: done + uploading (ya capturadas, pueden terminar)
+      const errorCount   = photoItems.filter((p) => p.status === 'error').length;
+      const capturedCount = photoItems.filter((p) => p.status !== 'error').length;
 
-    if (errorCount > 0 && capturedCount < 3) {
-      const faltanCount = 3 - capturedCount;
-      setPhotoError(
-        `${errorCount} foto${errorCount !== 1 ? 's' : ''} no se pudo${errorCount !== 1 ? 'ron' : ''} subir correctamente. ` +
-        `${faltanCount > 0 ? `Aún faltan ${faltanCount} foto${faltanCount !== 1 ? 's' : ''} válidas. ` : ''}` +
-        'Usá el botón "Reintentar" en las fotos con error.'
-      );
-      return;
-    }
-    if (errorCount > 0 && capturedCount >= 3) {
-      // Hay suficientes fotos válidas, pero algunas fallaron — continuar con las buenas
-      setPhotoError(null);
-    }
-    if (capturedCount < 3) {
-      const faltanCount = 3 - capturedCount;
-      setPhotoError(`Se requieren al menos 3 fotos. Faltan ${faltanCount} foto${faltanCount !== 1 ? 's' : ''}.`);
-      return;
+      if (errorCount > 0 && capturedCount < 3) {
+        const faltanCount = 3 - capturedCount;
+        setPhotoError(
+          `${errorCount} foto${errorCount !== 1 ? 's' : ''} no se pudo${errorCount !== 1 ? 'ron' : ''} subir correctamente. ` +
+          `${faltanCount > 0 ? `Aún faltan ${faltanCount} foto${faltanCount !== 1 ? 's' : ''} válidas. ` : ''}` +
+          'Usá el botón "Reintentar" en las fotos con error.'
+        );
+        return;
+      }
+      if (errorCount > 0 && capturedCount >= 3) {
+        setPhotoError(null);
+      }
+      if (capturedCount < 3) {
+        const faltanCount = 3 - capturedCount;
+        setPhotoError(`Se requieren al menos 3 fotos. Faltan ${faltanCount} foto${faltanCount !== 1 ? 's' : ''}.`);
+        return;
+      }
+      const doneCount = photoItems.filter((p) => p.status === 'done').length;
+      if (doneCount < capturedCount) {
+        setPhotoError('Hay fotos subiendo. Espera un momento e intenta de nuevo.');
+        return;
+      }
     }
 
     // Usar solo las URLs de fotos done para el submit
     const fotosDone = photoItems.filter((p) => p.status === 'done' && p.uploadedUrl).map((p) => p.uploadedUrl!);
-
-    // Si hay fotos aún subiendo, esperar un momento y reintentar
-    if (fotosDone.length < capturedCount) {
-      setPhotoError('Hay fotos subiendo. Espera un momento e intenta de nuevo.');
-      return;
-    }
 
     setPhotoError(null);
     const submitData = { ...formData, fotos: fotosDone };

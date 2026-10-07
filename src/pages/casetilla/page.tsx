@@ -588,6 +588,7 @@ export default function CasetillaPage() {
             warehouse_name: warehouseName,
             created_at: reservation.created_at,
             is_imported: reservation.is_imported === true || (reservation.is_imported == null && !!(reservation.dua && reservation.dua.trim().length > 0)),
+            is_internal_transfer: reservation.is_internal_transfer === true,
             cargo_type_name: cargoTypeName,
           };
 
@@ -654,6 +655,7 @@ export default function CasetillaPage() {
             numero_pedido: reservation.order_request_number ?? '',
             fecha_ingreso: ingRow?.created_at ?? null,
             created_at: reservation.created_at,
+            is_internal_transfer: reservation.is_internal_transfer === true,
           };
 
           setFotosSalidaRaw([]);
@@ -1033,6 +1035,7 @@ export default function CasetillaPage() {
               linkedReservation={selectedReservation}
               initialFotos={fotosIngreso} onFotosChange={setFotosIngreso} photoSessionKey={FOTOS_INGRESO_KEY}
               formDataSessionKey={FORM_DATA_INGRESO_KEY}
+              photosRequired={!(selectedReservation?.is_internal_transfer)}
               onSubmit={handleSubmitIngreso}
               onCancel={() => { setSelectedReservation(null); setFotosIngresoRaw([]); clearSession(); setViewModeRaw('HOME'); }}
               isSubmitting={isSubmitting}
@@ -1125,6 +1128,7 @@ export default function CasetillaPage() {
             <ExitForm
               orgId={orgId!} reservation={selectedExitReservation}
               initialFotos={fotosSalida} onFotosChange={setFotosSalida} photoSessionKey={FOTOS_SALIDA_KEY}
+              photosRequired={!(selectedExitReservation?.is_internal_transfer)}
               onSubmit={handleSubmitSalida}
               onCancel={() => { setSelectedExitReservation(null); setFotosSalidaRaw([]); clearSession(); setViewModeRaw('SALIDA'); }}
               isSubmitting={isSubmitting}

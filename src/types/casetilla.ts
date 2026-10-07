@@ -51,6 +51,8 @@ export interface PendingReservation {
    * Determina si el campo DUA es obligatorio en el formulario de ingreso.
    */
   is_imported?: boolean;
+  /** true si la reserva es un Traslado Interno (no exige fotos en IN/OUT) */
+  is_internal_transfer?: boolean;
   /** Nombre resuelto del cargo_type (para debug/display) */
   cargo_type_name?: string | null;
 }
@@ -89,6 +91,8 @@ export interface ExitEligibleReservation {
   status_code?: string | null;
   /** ID del status actual — necesario para el trigger de email en createSalida */
   status_id?: string | null;
+  /** true si la reserva es un Traslado Interno (no exige fotos en IN/OUT) */
+  is_internal_transfer?: boolean;
 }
 
 // Reserva marcada como No arribó

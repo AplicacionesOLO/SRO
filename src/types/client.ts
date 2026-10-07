@@ -142,3 +142,19 @@ export interface ClientStatusSequenceRuleFormData {
   bypass_user_ids: string[];
   is_active: boolean;
 }
+
+// Regla de Traslado Interno (usuarios autorizados a ver/usar el check por cliente)
+export interface ClientInternalTransferRule {
+  id: string;
+  org_id: string;
+  client_id: string;
+  allowed_user_ids: string[];
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ClientInternalTransferRuleFormData {
+  allowed_user_ids: string[];
+  is_active: boolean;
+}

@@ -51,6 +51,12 @@ export interface Reservation {
   /** Cantidad capturada para tipos de carga dinámicos (contenedores, bultos, líneas, etc.) */
   quantity_value?: number | null;
 
+  /**
+   * Traslado Interno: movimiento dentro del mismo almacén.
+   * Exento de No Arribó, sin fotos obligatorias y con estados IN/OUT omitibles.
+   */
+  is_internal_transfer?: boolean;
+
   /** URL pública del QR simple */
   qr_image_url?: string | null;
   /** URL pública de la ficha de cita completa */
@@ -532,6 +538,17 @@ const tryExtractPathFromFileUrl = (fileUrlOrPath: string) => {
  * Lanza error con mensaje claro solo cuando la transición es inválida.
  */
 async function validateStatusTransition(orgId: string, reservationId: string, newStatusId: string, userId?: string | null): Promise<void> {
+  // Traslado Interno → la secuencia de estados (incluye los estados ligados al
+  // IN/OUT) no aplica. Se permite cualquier cambio de estado.
+  try {
+    const { data: itRes } = await supabase
+      .from('reservations')
+      .select('is_internal_transfer')
+      .eq('id', reservationId)
+      .maybeSingle();
+    if ((itRes as any)?.is_internal_transfer === true) return;
+  } catch { /* fail-open */ }
+
   let result: { allowed: boolean; bypassed: boolean; message: string } | null = null;
   try {
     const { data, error } = await supabase.rpc('validate_status_sequence', {
@@ -571,7 +588,7 @@ export const calendarService = {
            purchase_order, order_request_number, shipper_provider, client_id,
            operation_type, is_imported, bl_number, quantity_value, notes,
            transport_type, cargo_type, vehicle_type, created_by, created_at, updated_by, updated_at,
-           is_consolidated, qr_image_url, qr_card_image_url, recurrence`
+           is_consolidated, is_internal_transfer, qr_image_url, qr_card_image_url, recurrence`
         )
         .eq('org_id', orgId)
         .eq('is_cancelled', false)

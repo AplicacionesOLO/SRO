@@ -14,6 +14,7 @@ interface Reservation {
   start_datetime: string;
   status_id: string;
   is_imported?: boolean | null;
+  is_internal_transfer?: boolean | null;
 }
 
 const corsHeaders = {
@@ -174,7 +175,7 @@ Deno.serve(async (req) => {
     //    Esto detecta reservas que avanzaron manualmente sin pasar por IN.
     const { data: reservations, error: resErr } = await supabase
       .from('reservations')
-      .select('id, org_id, dock_id, start_datetime, status_id, is_imported, dua')
+      .select('id, org_id, dock_id, start_datetime, status_id, is_imported, is_internal_transfer, dua')
       .eq('org_id', org_id)
       .eq('is_cancelled', false)
       .neq('status_id', noShowStatusId)
@@ -214,6 +215,10 @@ Deno.serve(async (req) => {
 
       const wh = whMap.get(whId);
       if (!wh) continue;
+
+      // Traslado Interno: nunca se marca No Arribó (movimiento dentro del mismo
+      // almacén, sin paso por el punto IN/OUT).
+      if (r.is_internal_transfer === true) continue;
 
       // Excluir cargas importadas si el almacén lo tiene configurado:
       // la aduana puede demorar en liberar, así se conserva el espacio y el

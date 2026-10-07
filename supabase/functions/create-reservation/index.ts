@@ -457,7 +457,7 @@ Deno.serve(async (req) => {
       'shipper_provider', 'driver', 'dua', 'invoice', 'status_id', 'notes',
       'transport_type', 'cargo_type', 'vehicle_type', 'operation_type', 'is_imported',
       'is_cancelled', 'cancel_reason', 'cancelled_by', 'cancelled_at',
-      'is_consolidated', 'bl_number', 'quantity_value', 'recurrence',
+      'is_consolidated', 'is_internal_transfer', 'bl_number', 'quantity_value', 'recurrence',
     ]);
 
     for (const [key, value] of Object.entries(otherFields)) {
