@@ -1,339 +1,51 @@
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
-
-interface WarehouseConfig {
-  id: string;
-  timezone: string;
-  no_show_tolerance_minutes: number;
-  no_show_exclude_imported: boolean;
-}
-
-interface Reservation {
-  id: string;
-  org_id: string;
-  dock_id: string;
-  start_datetime: string;
-  status_id: string;
-  is_imported?: boolean | null;
-  is_internal_transfer?: boolean | null;
-}
+// ─────────────────────────────────────────────────────────────────────────────
+// ⚠️  FUNCIÓN DESACTIVADA — NO USAR
+//
+// La regla "No arribó" (No-Show) automática tiene UNA SOLA fuente de verdad:
+//
+//      public.auto_mark_no_show_v5()   ← ejecutada por el cron
+//
+// El cron `auto-mark-no-show-every-5-min` (*/5 * * * *) corre literalmente:
+//      SELECT auto_mark_no_show_v5()
+//
+// Esta Edge Function `auto-mark-no-show` quedó OBSOLETA y desactivada a
+// propósito. Tenía una implementación PARALELA de la misma regla, que podía
+// desincronizarse de la función de base de datos — fue justo lo que causó el
+// incidente de octubre (reservas importadas / traslados marcados por error,
+// porque la lógica buena vivía aquí y el cron no la usaba).
+//
+// El cron NUNCA la llamó y el frontend tampoco. Se conserva únicamente como
+// referencia y para que cualquier llamador externo antiguo reciba una respuesta
+// explícita en lugar de un 401/404 confuso: ahora responde 410 Gone.
+//
+// Si en el futuro hace falta un endpoint para disparar el marcado manualmente,
+// NO reactivar este archivo: crear un wrapper que ejecute
+//      SELECT public.auto_mark_no_show_v5()
+// y que devuelva su resultado. Una sola lógica, un solo lugar.
+// ─────────────────────────────────────────────────────────────────────────────
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-Deno.serve(async (req) => {
+const DEPRECATION_PAYLOAD = {
+  error: 'Función desactivada',
+  code: 'FUNCTION_DISABLED',
+  detail:
+    'auto-mark-no-show fue desactivada a propósito. La fuente de verdad única de la regla No Arribó es la función de base de datos public.auto_mark_no_show_v5(), ejecutada por el cron "auto-mark-no-show-every-5-min" cada 5 minutos.',
+};
+
+Deno.serve((req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders });
   }
 
-  try {
-    const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-    const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-    const supabaseAnonKey = Deno.env.get('SUPABASE_ANON_KEY')!;
+  // No ejecuta ninguna lógica de negocio ni toca la base de datos.
+  console.warn('[auto-mark-no-show] Invocación RECHAZADA: función desactivada.');
 
-    const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey, { auth: { persistSession: false } });
-
-    const authHeader = req.headers.get('Authorization');
-    const jwt = authHeader?.replace('Bearer ', '').trim();
-
-    // ── MODO CRON: validar header interno con service role key ──────────────
-    const cronSecret = req.headers.get('X-Internal-Cron-Secret');
-    let isCronMode = false;
-    let userId: string | null = null;
-
-    if (cronSecret && cronSecret === supabaseServiceKey) {
-      isCronMode = true;
-    } else if (jwt) {
-      // ── MODO USUARIO: validar JWT ────────────────────────────────────────
-      // Cliente anónimo EXCLUSIVO para validar el JWT (nunca con service role)
-      const supabaseAuth = createClient(supabaseUrl, supabaseAnonKey, {
-        auth: { persistSession: false },
-      });
-
-      const { data: { user }, error: userErr } = await supabaseAuth.auth.getUser(jwt);
-
-      if (userErr || !user) {
-        return new Response(JSON.stringify({ error: 'Token inválido', detail: userErr?.message }), {
-          status: 401,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        });
-      }
-
-      userId = user.id;
-    } else {
-      return new Response(JSON.stringify({ error: 'Autenticación requerida' }), {
-        status: 401,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
-    }
-
-    const body = await req.json().catch(() => null);
-    const { org_id } = body || {};
-
-    if (!org_id) {
-      return new Response(JSON.stringify({ error: 'org_id requerido' }), {
-        status: 400,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
-    }
-
-    // ── VALIDACIÓN ORG (solo modo usuario) ───────────────────────────────
-    if (!isCronMode && userId) {
-      const { data: profile } = await supabaseAdmin
-        .from('profiles')
-        .select('org_id')
-        .eq('id', userId)
-        .maybeSingle();
-
-      const { data: userOrg } = await supabaseAdmin
-        .from('user_org_roles')
-        .select('org_id')
-        .eq('user_id', userId)
-        .eq('org_id', org_id)
-        .maybeSingle();
-
-      const belongsToOrg = (profile && profile.org_id === org_id) || (userOrg && userOrg.org_id === org_id);
-
-      if (!belongsToOrg) {
-        return new Response(JSON.stringify({ error: 'No tenés permisos para esta organización' }), {
-          status: 403,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        });
-      }
-    }
-
-    const supabase = supabaseAdmin;
-
-    // 1) Obtener status NO_SHOW
-    const { data: noShowStatus, error: noShowErr } = await supabase
-      .from('reservation_statuses')
-      .select('id')
-      .eq('org_id', org_id)
-      .eq('code', 'NO_SHOW')
-      .maybeSingle();
-
-    if (noShowErr || !noShowStatus) {
-      return new Response(JSON.stringify({ error: 'Status NO_SHOW no encontrado para esta org', detail: noShowErr?.message }), {
-        status: 400,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
-    }
-
-    const noShowStatusId = noShowStatus.id;
-
-    // 2) Obtener warehouses con tolerancia configurada
-    const { data: warehouses, error: whErr } = await supabase
-      .from('warehouses')
-      .select('id, timezone, no_show_tolerance_minutes, no_show_exclude_imported')
-      .eq('org_id', org_id)
-      .not('no_show_tolerance_minutes', 'is', null)
-      .gt('no_show_tolerance_minutes', 0);
-
-    if (whErr) throw whErr;
-    if (!warehouses || warehouses.length === 0) {
-      return new Response(JSON.stringify({ processed: 0, message: 'No hay warehouses con tolerancia configurada' }), {
-        status: 200,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
-    }
-
-    // 3) Obtener docks de esos warehouses
-    const whIds = warehouses.map((w: any) => w.id);
-    const { data: docks, error: dockErr } = await supabase
-      .from('docks')
-      .select('id, warehouse_id')
-      .eq('org_id', org_id)
-      .in('warehouse_id', whIds);
-
-    if (dockErr) throw dockErr;
-    if (!docks || docks.length === 0) {
-      return new Response(JSON.stringify({ processed: 0, message: 'No hay docks en los warehouses con tolerancia' }), {
-        status: 200,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
-    }
-
-    const dockIds = (docks as any[]).map((d) => d.id as string);
-    const dockToWh = new Map<string, string>();
-    (docks as any[]).forEach((d) => {
-      dockToWh.set(d.id as string, d.warehouse_id as string);
-    });
-
-    const whMap = new Map<string, WarehouseConfig>();
-    (warehouses as any[]).forEach((w) => {
-      whMap.set(w.id as string, {
-        id: w.id as string,
-        timezone: (w.timezone as string) || 'America/Costa_Rica',
-        no_show_tolerance_minutes: Number(w.no_show_tolerance_minutes),
-        no_show_exclude_imported: w.no_show_exclude_imported === true,
-      });
-    });
-
-    // 4) Buscar reservas NO_CANCELLED, NO_SHOW, sin ingreso, vencidas por tolerancia
-    //    Ya NO se limita a PENDING/CONFIRMED — evalúa cualquier estado excepto NO_SHOW.
-    //    Esto detecta reservas que avanzaron manualmente sin pasar por IN.
-    const { data: reservations, error: resErr } = await supabase
-      .from('reservations')
-      .select('id, org_id, dock_id, start_datetime, status_id, is_imported, is_internal_transfer, dua')
-      .eq('org_id', org_id)
-      .eq('is_cancelled', false)
-      .neq('status_id', noShowStatusId)
-      .in('dock_id', dockIds)
-      .not('start_datetime', 'is', null)
-      .order('start_datetime', { ascending: false })
-      .limit(500);
-
-    if (resErr) throw resErr;
-    if (!reservations || reservations.length === 0) {
-      return new Response(JSON.stringify({ processed: 0, message: 'No hay reservas candidatas para marcar' }), {
-        status: 200,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
-    }
-
-    // 5) Excluir reservas que ya tienen ingreso en casetilla_ingresos
-    const resIds = (reservations as any[]).map((r) => r.id as string);
-    const { data: ingresos, error: ingErr } = await supabase
-      .from('casetilla_ingresos')
-      .select('reservation_id')
-      .eq('org_id', org_id)
-      .in('reservation_id', resIds);
-
-    if (ingErr) throw ingErr;
-    const ingresoSet = new Set(((ingresos as any[]) || []).map((i) => i.reservation_id as string));
-
-    const now = new Date();
-    const candidatas: Reservation[] = [];
-
-    for (const r of reservations as any[]) {
-      const rid = r.id as string;
-      if (ingresoSet.has(rid)) continue;
-
-      const whId = dockToWh.get(r.dock_id as string);
-      if (!whId) continue;
-
-      const wh = whMap.get(whId);
-      if (!wh) continue;
-
-      // Traslado Interno: nunca se marca No Arribó (movimiento dentro del mismo
-      // almacén, sin paso por el punto IN/OUT).
-      if (r.is_internal_transfer === true) continue;
-
-      // Excluir cargas importadas si el almacén lo tiene configurado:
-      // la aduana puede demorar en liberar, así se conserva el espacio y el
-      // IN/OUT todavía puede registrar el ingreso aunque pase la tolerancia.
-      const isImported =
-        r.is_imported === true ||
-        (r.is_imported == null && !!(r.dua && String(r.dua).trim().length > 0));
-      if (wh.no_show_exclude_imported && isImported) continue;
-
-      const start = new Date(r.start_datetime as string);
-      const cutoff = new Date(start.getTime() + wh.no_show_tolerance_minutes * 60_000);
-
-      if (now > cutoff) {
-        candidatas.push({
-          id: rid,
-          org_id: r.org_id as string,
-          dock_id: r.dock_id as string,
-          start_datetime: r.start_datetime as string,
-          status_id: r.status_id as string,
-        });
-      }
-    }
-
-    if (candidatas.length === 0) {
-      return new Response(JSON.stringify({ processed: 0, message: 'Ninguna reserva superó el tiempo de tolerancia' }), {
-        status: 200,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
-    }
-
-    // 6) Actualizar estado a NO_SHOW en batch de 50
-    const BATCH_SIZE = 50;
-    let updated = 0;
-    const logs: { reservation_id: string; old_status: string; new_status: string }[] = [];
-
-    for (let i = 0; i < candidatas.length; i += BATCH_SIZE) {
-      const batch = candidatas.slice(i, i + BATCH_SIZE);
-      const batchIds = batch.map((c) => c.id);
-
-      const { error: updErr } = await supabase
-        .from('reservations')
-        .update({ status_id: noShowStatusId, updated_at: now.toISOString() })
-        .eq('org_id', org_id)
-        .in('id', batchIds);
-
-      if (updErr) {
-        console.error('[auto-mark-no-show] Error actualizando batch', updErr);
-        continue;
-      }
-
-      updated += batch.length;
-
-      // 7) Registrar en activity_log
-      for (const c of batch) {
-        logs.push({
-          reservation_id: c.id,
-          old_status: c.status_id,
-          new_status: noShowStatusId,
-        });
-      }
-    }
-
-    // Insertar logs en activity_log (NO reservation_activity_log)
-    if (logs.length > 0) {
-      const logRows = logs.flatMap((l) => ([
-        {
-          org_id,
-          entity_type: 'reservation',
-          entity_id: l.reservation_id,
-          action: 'updated',
-          field: 'status_id',
-          old_value: l.old_status,
-          new_value: l.new_status,
-          metadata: { reason: 'AUTO_NO_SHOW', source: 'pg_cron' },
-          actor_user_id: null,
-        },
-        // Registro explícito: la cita quedó en No arribó y liberó su espacio.
-        {
-          org_id,
-          entity_type: 'reservation',
-          entity_id: l.reservation_id,
-          action: 'updated',
-          field: 'no_show_space_released',
-          old_value: null,
-          new_value: 'No arribó: la cita queda visible con 15 min y el resto del horario vuelve a estar disponible.',
-          metadata: { reason: 'AUTO_NO_SHOW', source: 'pg_cron', reduced_visible_minutes: 15 },
-          actor_user_id: null,
-        },
-      ]));
-
-      const { error: logErr } = await supabase.from('activity_log').insert(logRows);
-      if (logErr) {
-        console.error('[auto-mark-no-show] Error registrando logs', logErr);
-      }
-    }
-
-    return new Response(
-      JSON.stringify({
-        processed: updated,
-        total_candidates: candidatas.length,
-        message: `Se marcaron ${updated} reservas como No arribó`,
-      }),
-      {
-        status: 200,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      }
-    );
-  } catch (error: any) {
-    console.error('[auto-mark-no-show] Error:', error);
-    return new Response(
-      JSON.stringify({ error: 'Error interno', detail: error?.message || String(error) }),
-      {
-        status: 500,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      }
-    );
-  }
+  return new Response(JSON.stringify(DEPRECATION_PAYLOAD), {
+    status: 410,
+    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+  });
 });
