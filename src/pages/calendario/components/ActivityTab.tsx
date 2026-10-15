@@ -19,6 +19,8 @@ export function ActivityTab({ orgId, reservationId, docks, statuses }: ActivityT
   const [error, setError] = useState<string | null>(null);
   // Todos los estados (incluyendo inactivos) para resolver UUIDs históricos
   const [allStatuses, setAllStatuses] = useState<Array<{ id: string; name: string; color: string }>>([]);
+  // Estados resueltos vía función segura (funciona para TODOS los roles)
+  const [labelStatuses, setLabelStatuses] = useState<Array<{ id: string; name: string; color: string }>>([]);
 
   // Cargar todos los estados al montar (sin filtrar is_active)
   useEffect(() => {
@@ -30,6 +32,25 @@ export function ActivityTab({ orgId, reservationId, docks, statuses }: ActivityT
     });
   }, [orgId]);
 
+  // Resolver los estados referidos en el historial con la función segura
+  // (no depende de la RLS de reservation_statuses → funciona en roles restringidos)
+  useEffect(() => {
+    if (!orgId || logs.length === 0) { setLabelStatuses([]); return; }
+    const ids = new Set<string>();
+    logs.forEach((log) => {
+      if (log.field === 'status_id') {
+        if (log.old_value) ids.add(log.old_value);
+        if (log.new_value) ids.add(log.new_value);
+      }
+      const metaStatusId = (log.metadata as Record<string, unknown> | null)?.status_id;
+      if (typeof metaStatusId === 'string' && metaStatusId) ids.add(metaStatusId);
+    });
+    if (ids.size === 0) { setLabelStatuses([]); return; }
+    activityLogService.resolveStatusLabels(orgId, [...ids])
+      .then((rows) => setLabelStatuses(rows))
+      .catch(() => { setLabelStatuses([]); });
+  }, [orgId, logs]);
+
   // Mapas rápidos para resolver IDs -> nombre
   const dockNameById = useMemo(() => {
     const map = new Map<string, string>();
@@ -37,15 +58,17 @@ export function ActivityTab({ orgId, reservationId, docks, statuses }: ActivityT
     return map;
   }, [docks]);
 
-  // Combina todos los estados (prop filtrado + fetch completo) para máxima cobertura histórica
+  // Combina todos los estados (RPC seguro + fetch completo + prop) para máxima cobertura histórica
   const statusById = useMemo(() => {
     const map = new Map<string, { name: string; color: string }>();
-    // Primero los del fetch completo (incluye inactivos)
+    // Primero los resueltos por la función segura (máxima prioridad)
+    labelStatuses.forEach(s => map.set(s.id, { name: s.name, color: s.color }));
+    // Los del fetch completo (incluye inactivos)
     allStatuses.forEach(s => map.set(s.id, { name: s.name, color: s.color }));
     // Luego los del prop (por si hay recientes aún no en el fetch)
     statuses.forEach(s => map.set(s.id, { name: s.name, color: s.color }));
     return map;
-  }, [allStatuses, statuses]);
+  }, [labelStatuses, allStatuses, statuses]);
 
   useEffect(() => {
     if (!orgId || !reservationId) {

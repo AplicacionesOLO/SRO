@@ -64,42 +64,79 @@ export const activityLogService = {
       firstLog: data?.[0] || null
     });*/
 
-    // ✅ Opcional: resolver actor_user_id contra profiles (sin romper si falla)
+    // ✅ Resolver actor_user_id → nombre.
+    //    Se usa la función segura get_actor_labels (SECURITY DEFINER) para que
+    //    cualquier rol pueda ver el nombre del autor, sin depender de la RLS de profiles.
     if (data && data.length > 0) {
-      const actorIds = [...new Set(data.map(log => log.actor_user_id).filter(Boolean))];
-      
+      const actorIds = [...new Set(data.map(log => log.actor_user_id).filter(Boolean))] as string[];
+
       if (actorIds.length > 0) {
-        //console.log('[ActivityLogService] 🔍 Fetching actors', { actorIds });
-        
-        // ✅ Usar columnas reales: id, name, email
+        const { data: labels, error: labelsError } = await supabase.rpc('get_actor_labels', {
+          _actor_ids: actorIds,
+        });
+
+        if (!labelsError && labels) {
+          const labelsMap = new Map(
+            (labels as Array<{ id: string; name: string }>).map(p => [p.id, {
+              id: p.id,
+              name: p.name || 'Usuario',
+            }])
+          );
+
+          return data.map(log => ({
+            ...log,
+            actor: log.actor_user_id ? (labelsMap.get(log.actor_user_id) ?? null) : null
+          }));
+        }
+
+        // Fallback: select directo (puede fallar por RLS en roles restringidos)
         const { data: profiles, error: profilesError } = await supabase
           .from('profiles')
           .select('id, name, email')
           .in('id', actorIds);
 
-        if (profilesError) {
-          // console.warn('[ActivityLogService] ⚠️ Could not fetch profiles (RLS?)', profilesError);
-        } else {
-          //console.log('[ActivityLogService] ✅ Actors fetched', { count: profiles?.length || 0 });
-          
-          // ✅ Mapear actores a los logs con fallback: name || email || 'Usuario'
+        if (!profilesError) {
           const profilesMap = new Map(
-            profiles?.map(p => [p.id, {
+            (profiles || []).map(p => [p.id, {
               id: p.id,
               name: p.name || p.email || 'Usuario',
               email: p.email
-            }]) || []
+            }])
           );
-          
+
           return data.map(log => ({
             ...log,
-            actor: log.actor_user_id ? profilesMap.get(log.actor_user_id) : null
+            actor: log.actor_user_id ? (profilesMap.get(log.actor_user_id) ?? null) : null
           }));
         }
       }
     }
 
     return data || [];
+  },
+
+  /**
+   * Traduce una lista de IDs de estado a { nombre, color } usando una función
+   * segura (SECURITY DEFINER). Funciona para cualquier rol, sin depender de la
+   * RLS de reservation_statuses, y solo devuelve los IDs solicitados.
+   */
+  async resolveStatusLabels(
+    orgId: string,
+    statusIds: string[]
+  ): Promise<Array<{ id: string; name: string; color: string }>> {
+    if (!orgId || !statusIds || statusIds.length === 0) return [];
+
+    try {
+      const { data, error } = await supabase.rpc('get_status_labels', {
+        _org_id: orgId,
+        _status_ids: statusIds,
+      });
+
+      if (error) return [];
+      return (data || []) as Array<{ id: string; name: string; color: string }>;
+    } catch {
+      return [];
+    }
   },
 
   /**
