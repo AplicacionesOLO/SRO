@@ -2,6 +2,18 @@ import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../../../lib/supabase';
 import { useFormDraft, getDraftAge } from '../../../hooks/useReservationDraft';
 import { ConfirmModal } from '../../../components/base/ConfirmModal';
+import {
+  getOrgUsersForPicker,
+  getOrgRolesForPicker,
+  OrgUserOption,
+  OrgRoleOption,
+} from '@/services/orgUsersService';
+import {
+  DockVisibility,
+  DockVisibilityMode,
+  getDockVisibility,
+  saveDockVisibility,
+} from '@/services/dockVisibilityService';
 
 interface DockCategory {
   id: string;
@@ -27,6 +39,8 @@ interface Dock {
   status_id: string;
   is_active: boolean;
   warehouse_id?: string | null;
+  visible_user_id?: string | null;
+  visibility_mode?: 'all' | 'users' | 'roles' | null;
 }
 
 interface Warehouse {
@@ -70,6 +84,16 @@ export default function DockModal({ dock, categories, statuses, orgId, onClose, 
   });
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
   const [loadingWarehouses, setLoadingWarehouses] = useState(true);
+  const [orgUsers, setOrgUsers] = useState<OrgUserOption[]>([]);
+  const [orgRoles, setOrgRoles] = useState<OrgRoleOption[]>([]);
+  const [loadingUsers, setLoadingUsers] = useState(true);
+
+  // ── Visibilidad del andén ────────────────────────────────────────────────
+  const [visibilityMode, setVisibilityMode] = useState<DockVisibilityMode>('all');
+  const [selectedUserIds, setSelectedUserIds] = useState<string[]>([]);
+  const [selectedRoleIds, setSelectedRoleIds] = useState<string[]>([]);
+  const [userSearch, setUserSearch] = useState('');
+  const [loadingVisibility, setLoadingVisibility] = useState(false);
   const [saving, setSaving] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [hexInputValue, setHexInputValue] = useState('');
@@ -107,6 +131,56 @@ export default function DockModal({ dock, categories, statuses, orgId, onClose, 
   }, [orgId]);
 
   useEffect(() => {
+    const loadUsers = async () => {
+      try {
+        setLoadingUsers(true);
+        const [users, roles] = await Promise.all([
+          getOrgUsersForPicker(orgId),
+          getOrgRolesForPicker(orgId),
+        ]);
+        setOrgUsers(users);
+        setOrgRoles(roles);
+      } catch {
+        setOrgUsers([]);
+        setOrgRoles([]);
+      } finally {
+        setLoadingUsers(false);
+      }
+    };
+
+    if (orgId) {
+      loadUsers();
+    }
+  }, [orgId]);
+
+  // Carga la visibilidad configurada del andén (usuarios / roles)
+  useEffect(() => {
+    const loadVisibility = async () => {
+      if (!dock?.id) {
+        setVisibilityMode('all');
+        setSelectedUserIds([]);
+        setSelectedRoleIds([]);
+        return;
+      }
+      try {
+        setLoadingVisibility(true);
+        const visibility = await getDockVisibility(dock.id);
+        setVisibilityMode(visibility.mode);
+        setSelectedUserIds(visibility.userIds);
+        setSelectedRoleIds(visibility.roleIds);
+      } catch {
+        setVisibilityMode(dock.visibility_mode === 'roles' ? 'roles' : dock.visible_user_id ? 'users' : 'all');
+        setSelectedUserIds(dock.visible_user_id ? [dock.visible_user_id] : []);
+        setSelectedRoleIds([]);
+      } finally {
+        setLoadingVisibility(false);
+      }
+    };
+
+    loadVisibility();
+  }, [dock?.id]);
+
+  useEffect(() => {
     if (dock) {
       const color = dock.header_color || '';
       setFormData({
@@ -123,7 +197,8 @@ export default function DockModal({ dock, categories, statuses, orgId, onClose, 
     } else {
       const draft = readDraft();
       if (draft) {
-        setFormData(draft.formData);
+        const { visible_user_id: _legacy, ...draftRest } = draft.formData as any;
+        setFormData(draftRest);
         setHexInputValue(draft.formData.header_color || '');
         setDraftAgeLabel(getDraftAge(draft.savedAt));
         setShowDraftBanner(true);
@@ -163,6 +238,12 @@ export default function DockModal({ dock, categories, statuses, orgId, onClose, 
     }
     if (formData.header_color && !isValidHex(formData.header_color)) {
       newErrors.header_color = 'Color inválido. Usa formato #RRGGBB';
+    }
+    if (visibilityMode === 'users' && selectedUserIds.length === 0) {
+      newErrors.visibility = 'Seleccioná al menos un usuario (o volvé a "Todos")';
+    }
+    if (visibilityMode === 'roles' && selectedRoleIds.length === 0) {
+      newErrors.visibility = 'Seleccioná al menos un rol (o volvé a "Todos")';
     }
 
     setErrors(newErrors);
@@ -232,6 +313,8 @@ export default function DockModal({ dock, categories, statuses, orgId, onClose, 
         updated_at: new Date().toISOString()
       };
 
+      let savedDockId = dock?.id ?? '';
+
       if (dock) {
         const { error } = await supabase
           .from('docks')
@@ -240,14 +323,26 @@ export default function DockModal({ dock, categories, statuses, orgId, onClose, 
 
         if (error) throw error;
       } else {
-        const { error } = await supabase
+        const { data: createdDock, error } = await supabase
           .from('docks')
           .insert({
             org_id: orgId,
             ...dataToSave
-          });
+          })
+          .select('id')
+          .single();
 
         if (error) throw error;
+        savedDockId = createdDock?.id ?? '';
+      }
+
+      if (savedDockId) {
+        const visibility: DockVisibility = {
+          mode: visibilityMode,
+          userIds: selectedUserIds,
+          roleIds: selectedRoleIds,
+        };
+        await saveDockVisibility(savedDockId, visibility);
       }
 
       clearDraft();
@@ -260,6 +355,31 @@ export default function DockModal({ dock, categories, statuses, orgId, onClose, 
   };
 
   const previewColor = isValidHex(formData.header_color) ? formData.header_color : null;
+
+  const filteredUsers = orgUsers.filter((u) => {
+    const term = userSearch.trim().toLowerCase();
+    if (!term) return true;
+    return u.name.toLowerCase().includes(term) || (u.email ?? '').toLowerCase().includes(term);
+  });
+
+  const toggleUser = (id: string) => {
+    setSelectedUserIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+    setErrors((prev) => ({ ...prev, visibility: '' }));
+  };
+
+  const toggleRole = (id: string) => {
+    setSelectedRoleIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+    setErrors((prev) => ({ ...prev, visibility: '' }));
+  };
+
+  const visibilityIsPrivate = visibilityMode !== 'all';
+
+  const selectedUserNames = selectedUserIds
+    .map((id) => orgUsers.find((u) => u.id === id)?.name || 'Usuario')
+    .slice(0, 4);
+  const selectedRoleNames = selectedRoleIds
+    .map((id) => orgRoles.find((r) => r.id === id)?.name || 'Rol')
+    .slice(0, 4);
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
@@ -292,7 +412,7 @@ export default function DockModal({ dock, categories, statuses, orgId, onClose, 
                       className="px-3 py-1.5 text-xs font-semibold bg-teal-600 text-white rounded-lg hover:bg-teal-700 transition-colors whitespace-nowrap">
                       Continuar con el borrador
                     </button>
-                    <button type="button" onClick={() => { clearDraft(); setFormData({ name: '', reference: '', header_color: '', category_id: categories[0]?.id || '', status_id: statuses[0]?.id || '', warehouse_id: '', is_active: true }); setHexInputValue(''); setShowDraftBanner(false); }}
+                    <button type="button" onClick={() => { clearDraft(); setFormData({ name: '', reference: '', header_color: '', category_id: categories[0]?.id || '', status_id: statuses[0]?.id || '', warehouse_id: '', is_active: true }); setHexInputValue(''); setShowDraftBanner(false); setVisibilityMode('all'); setSelectedUserIds([]); setSelectedRoleIds([]); }}
                       className="px-3 py-1.5 text-xs font-medium border border-gray-300 bg-white text-gray-700 rounded-lg hover:bg-gray-50 transition-colors whitespace-nowrap">
                       Descartar y empezar nuevo
                     </button>
@@ -440,6 +560,167 @@ export default function DockModal({ dock, categories, statuses, orgId, onClose, 
                   </option>
                 ))}
               </select>
+            )}
+          </div>
+
+          {/* Visibilidad del andén */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Visibilidad del andén
+            </label>
+
+            <div className="flex items-center gap-1 p-1 bg-gray-100 rounded-lg">
+              {([
+                { key: 'all', label: 'Todos', icon: 'ri-earth-line' },
+                { key: 'users', label: 'Usuarios', icon: 'ri-user-line' },
+                { key: 'roles', label: 'Roles', icon: 'ri-shield-user-line' },
+              ] as const).map((opt) => (
+                <button
+                  key={opt.key}
+                  type="button"
+                  onClick={() => {
+                    setVisibilityMode(opt.key);
+                    setErrors((prev) => ({ ...prev, visibility: '' }));
+                  }}
+                  className={`flex-1 flex items-center justify-center gap-1.5 px-2 py-1.5 text-xs font-semibold rounded-md transition-colors whitespace-nowrap ${
+                    visibilityMode === opt.key
+                      ? 'bg-white text-teal-700 shadow-sm'
+                      : 'text-gray-600 hover:text-gray-900'
+                  }`}
+                >
+                  <i className={`${opt.icon} w-4 h-4 flex items-center justify-center`}></i>
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+
+            {visibilityMode === 'all' && (
+              <p className="mt-2 text-xs text-gray-500">
+                Andén normal: lo ve cualquiera que tenga acceso al almacén, según su rol.
+              </p>
+            )}
+
+            {visibilityMode === 'users' && (
+              <div className="mt-3">
+                {loadingUsers || loadingVisibility ? (
+                  <div className="w-full px-4 py-3 text-sm border border-gray-300 rounded-lg bg-gray-50 text-gray-500 text-center">
+                    Cargando usuarios...
+                  </div>
+                ) : orgUsers.length === 0 ? (
+                  <div className="w-full px-4 py-3 text-sm border border-gray-300 rounded-lg bg-gray-50 text-gray-500 text-center">
+                    No hay usuarios disponibles en la organización
+                  </div>
+                ) : (
+                  <>
+                    <div className="relative mb-2">
+                      <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm w-4 h-4 flex items-center justify-center"></i>
+                      <input
+                        type="text"
+                        value={userSearch}
+                        onChange={(e) => setUserSearch(e.target.value)}
+                        placeholder="Buscar usuario..."
+                        className="w-full pl-9 pr-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent"
+                      />
+                    </div>
+                    <div className="max-h-44 overflow-y-auto border border-gray-300 rounded-lg divide-y divide-gray-100">
+                      {filteredUsers.length === 0 ? (
+                        <p className="px-3 py-3 text-xs text-gray-500 text-center">Sin resultados</p>
+                      ) : (
+                        filteredUsers.map((u) => (
+                          <label
+                            key={u.id}
+                            className="flex items-center gap-2.5 px-3 py-2 cursor-pointer hover:bg-gray-50 transition-colors"
+                          >
+                            <input
+                              type="checkbox"
+                              checked={selectedUserIds.includes(u.id)}
+                              onChange={() => toggleUser(u.id)}
+                              className="w-4 h-4 text-teal-600 border-gray-300 rounded focus:ring-teal-500"
+                            />
+                            <span className="min-w-0 flex-1">
+                              <span className="block text-sm text-gray-900 truncate">{u.name}</span>
+                              {u.email && (
+                                <span className="block text-[11px] text-gray-500 truncate">{u.email}</span>
+                              )}
+                            </span>
+                          </label>
+                        ))
+                      )}
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+
+            {visibilityMode === 'roles' && (
+              <div className="mt-3">
+                {loadingUsers ? (
+                  <div className="w-full px-4 py-3 text-sm border border-gray-300 rounded-lg bg-gray-50 text-gray-500 text-center">
+                    Cargando roles...
+                  </div>
+                ) : orgRoles.length === 0 ? (
+                  <div className="w-full px-4 py-3 text-sm border border-gray-300 rounded-lg bg-gray-50 text-gray-500 text-center">
+                    No hay roles asignados en la organización
+                  </div>
+                ) : (
+                  <div className="max-h-44 overflow-y-auto border border-gray-300 rounded-lg divide-y divide-gray-100">
+                    {orgRoles.map((r) => (
+                      <label
+                        key={r.id}
+                        className="flex items-center gap-2.5 px-3 py-2 cursor-pointer hover:bg-gray-50 transition-colors"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={selectedRoleIds.includes(r.id)}
+                          onChange={() => toggleRole(r.id)}
+                          className="w-4 h-4 text-teal-600 border-gray-300 rounded focus:ring-teal-500"
+                        />
+                        <span className="text-sm text-gray-900 truncate">{r.name}</span>
+                      </label>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {errors.visibility && (
+              <p className="mt-1 text-xs text-red-500">{errors.visibility}</p>
+            )}
+
+            {(selectedUserNames.length > 0 || selectedRoleNames.length > 0) && (
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {visibilityMode === 'users'
+                  ? selectedUserNames.map((name, idx) => (
+                      <span
+                        key={`${name}-${idx}`}
+                        className="inline-flex items-center gap-1 px-2 py-0.5 bg-teal-50 text-teal-700 border border-teal-200 rounded-full text-[11px] font-medium"
+                      >
+                        {name}
+                      </span>
+                    ))
+                  : selectedRoleNames.map((name, idx) => (
+                      <span
+                        key={`${name}-${idx}`}
+                        className="inline-flex items-center gap-1 px-2 py-0.5 bg-teal-50 text-teal-700 border border-teal-200 rounded-full text-[11px] font-medium"
+                      >
+                        {name}
+                      </span>
+                    ))}
+                {(visibilityMode === 'users' ? selectedUserIds.length : selectedRoleIds.length) > 4 && (
+                  <span className="inline-flex items-center px-2 py-0.5 bg-gray-100 text-gray-600 rounded-full text-[11px] font-medium">
+                    +{(visibilityMode === 'users' ? selectedUserIds.length : selectedRoleIds.length) - 4} más
+                  </span>
+                )}
+              </div>
+            )}
+
+            {visibilityIsPrivate && (
+              <div className="mt-2 flex items-start gap-2 px-3 py-2 bg-amber-50 border border-amber-200 rounded-lg">
+                <i className="ri-lock-line text-amber-600 text-base w-4 h-4 flex items-center justify-center flex-shrink-0 mt-0.5"></i>
+                <p className="text-xs text-amber-800">
+                  Andén privado: solo lo verán {visibilityMode === 'users' ? 'los usuarios seleccionados' : 'los usuarios con los roles seleccionados'}. Nadie más lo verá, ni otros administradores.
+                </p>
+              </div>
             )}
           </div>
 

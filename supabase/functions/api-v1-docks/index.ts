@@ -39,12 +39,51 @@ async function resolveVisibleDockIds(
     }
   }
 
-  let docksQuery = supabase.from('docks').select('id').eq('org_id', orgId);
+  let docksQuery = supabase.from('docks').select('id, visible_user_id, visibility_mode').eq('org_id', orgId);
   if (allowedWarehouseIds) {
     docksQuery = docksQuery.in('warehouse_id', allowedWarehouseIds);
   }
   const { data: allDocks } = await docksQuery;
-  const allDockIds: string[] = (allDocks || []).map((d: any) => d.id);
+
+  // Andenes privados: visibles solo para los usuarios/roles asignados
+  const { data: myRoleRows } = await supabase
+    .from('user_org_roles')
+    .select('role_id')
+    .eq('user_id', userId)
+    .eq('org_id', orgId);
+  const myRoleIds = (myRoleRows || []).map((r: any) => r.role_id).filter(Boolean);
+
+  const dockIdsToCheck = (allDocks || []).map((d: any) => d.id);
+  let allowedByUser: string[] = [];
+  let allowedByRole: string[] = [];
+
+  if (dockIdsToCheck.length > 0) {
+    const { data: du } = await supabase
+      .from('dock_visible_users')
+      .select('dock_id')
+      .eq('user_id', userId)
+      .in('dock_id', dockIdsToCheck);
+    allowedByUser = (du || []).map((r: any) => r.dock_id);
+
+    if (myRoleIds.length > 0) {
+      const { data: dr } = await supabase
+        .from('dock_visible_roles')
+        .select('dock_id')
+        .in('role_id', myRoleIds)
+        .in('dock_id', dockIdsToCheck);
+      allowedByRole = (dr || []).map((r: any) => r.dock_id);
+    }
+  }
+
+  const allDockIds: string[] = (allDocks || [])
+    .filter((d: any) => {
+      // Compatibilidad con el campo legado de un solo usuario
+      if (d.visible_user_id) return d.visible_user_id === userId;
+      if (d.visibility_mode === 'users') return allowedByUser.includes(d.id);
+      if (d.visibility_mode === 'roles') return allowedByRole.includes(d.id);
+      return true;
+    })
+    .map((d: any) => d.id);
   if (allDockIds.length === 0) return [];
 
   const { data: userClients } = await supabase
@@ -119,13 +158,20 @@ Deno.serve(async (req) => {
     }
 
     const token = authHeader.replace('Bearer ', '');
+    // Cliente ANON solo para validar el token del llamador
+    const supabaseAuth = createClient(
+      Deno.env.get('SUPABASE_URL')!,
+      Deno.env.get('SUPABASE_ANON_KEY')!,
+      { auth: { persistSession: false } }
+    );
+    // Cliente service-role solo para operaciones privilegiadas de base de datos
     const supabase = createClient(
       Deno.env.get('SUPABASE_URL')!,
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
       { auth: { persistSession: false } }
     );
 
-    const { data: { user }, error: authError } = await supabase.auth.getUser(token);
+    const { data: { user }, error: authError } = await supabaseAuth.auth.getUser(token);
     if (authError || !user) {
       return new Response(JSON.stringify({ error: 'Invalid or expired token' }), {
         status: 401,

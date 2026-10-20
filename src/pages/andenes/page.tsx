@@ -7,6 +7,8 @@ import { supabase } from '../../lib/supabase';
 import DockModal from './components/DockModal';
 import { sortDocksByNameNumber } from '../../utils/sortDocks';
 import WarehouseSelector from '../../components/feature/WarehouseSelector';
+import { getOrgUsersForPicker, getOrgRolesForPicker, OrgUserOption, OrgRoleOption } from '@/services/orgUsersService';
+import { getDockVisibilityLinks } from '@/services/dockVisibilityService';
 
 interface DockCategory {
   id: string;
@@ -37,6 +39,8 @@ interface Dock {
   category_id: string;
   status_id: string;
   warehouse_id: string | null;
+  visible_user_id?: string | null;
+  visibility_mode?: 'all' | 'users' | 'roles' | null;
   is_active: boolean;
   created_at: string;
   updated_at: string;
@@ -65,6 +69,10 @@ export default function AndenesPage() {
   const [categories, setCategories] = useState<DockCategory[]>([]);
   const [statuses, setStatuses] = useState<DockStatus[]>([]);
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
+  const [orgUsers, setOrgUsers] = useState<OrgUserOption[]>([]);
+  const [orgRoles, setOrgRoles] = useState<OrgRoleOption[]>([]);
+  const [visibilityUsers, setVisibilityUsers] = useState<Record<string, string[]>>({});
+  const [visibilityRoles, setVisibilityRoles] = useState<Record<string, string[]>>({});
   const [loadingData, setLoadingData] = useState(true);
   
   // Filtros
@@ -110,7 +118,7 @@ export default function AndenesPage() {
         .from('docks')
         .select(`
           id, name, reference, header_color, category_id, status_id,
-          warehouse_id, is_active, created_at, updated_at,
+          warehouse_id, visible_user_id, visibility_mode, is_active, created_at, updated_at,
           category:dock_categories(id, name, code, color),
           status:dock_statuses(id, name, code, color, is_blocking),
           warehouse:warehouses(id, name, location)
@@ -133,6 +141,28 @@ export default function AndenesPage() {
       if (categoriesRes.error) throw categoriesRes.error;
       if (statusesRes.error) throw statusesRes.error;
 
+      // Usuarios y roles de la org (para mostrar los nombres de andenes privados)
+      let usersList: OrgUserOption[] = [];
+      let rolesList: OrgRoleOption[] = [];
+      try {
+        [usersList, rolesList] = await Promise.all([
+          getOrgUsersForPicker(orgId),
+          getOrgRolesForPicker(orgId),
+        ]);
+      } catch {
+        usersList = [];
+        rolesList = [];
+      }
+
+      // Asignaciones de visibilidad (usuarios / roles) de cada andén
+      let links = { users: {} as Record<string, string[]>, roles: {} as Record<string, string[]> };
+      try {
+        const dockIds = (docksData ?? []).map((d: any) => d.id);
+        links = await getDockVisibilityLinks(dockIds);
+      } catch {
+        links = { users: {}, roles: {} };
+      }
+
       const scopeWarehousesMapped: Warehouse[] = scopeWarehouses.map((w) => ({
         id: w.id,
         name: w.name,
@@ -144,6 +174,10 @@ export default function AndenesPage() {
       setCategories(categoriesRes.data || []);
       setStatuses(statusesRes.data || []);
       setWarehouses(scopeWarehousesMapped);
+      setOrgUsers(usersList);
+      setOrgRoles(rolesList);
+      setVisibilityUsers(links.users);
+      setVisibilityRoles(links.roles);
     } catch {
       setPermissionErrorModal({ isOpen: true, message: 'Error al cargar andenes' });
     } finally {
@@ -248,6 +282,57 @@ export default function AndenesPage() {
     }
     return true;
   });
+
+  // Nombre del dueño de un andén privado
+  const ownerName = (userId?: string | null) => {
+    if (!userId) return '';
+    return orgUsers.find(u => u.id === userId)?.name || 'Usuario';
+  };
+
+  // Chip de visibilidad restringida (usuarios o roles)
+  const privateChip = (dock: Dock) => {
+    const isRoles = dock.visibility_mode === 'roles';
+    let names: string[] = [];
+
+    if (isRoles) {
+      names = (visibilityRoles[dock.id] ?? [])
+        .map(id => orgRoles.find(r => r.id === id)?.name || 'Rol')
+        .filter(Boolean);
+    } else {
+      const ids = [...(visibilityUsers[dock.id] ?? [])];
+      if (dock.visible_user_id && !ids.includes(dock.visible_user_id)) ids.push(dock.visible_user_id);
+      names = ids.map(id => ownerName(id)).filter(Boolean);
+    }
+
+    if (names.length === 0) {
+      if (dock.visibility_mode && dock.visibility_mode !== 'all') {
+        return (
+          <span
+            className="inline-flex items-center gap-1 px-2 py-0.5 bg-amber-50 text-amber-700 border border-amber-200 rounded-full text-[11px] font-medium whitespace-nowrap"
+            title="Andén privado sin destinatarios: nadie lo ve"
+          >
+            <i className="ri-lock-line w-3 h-3 flex items-center justify-center"></i>
+            Privado
+          </span>
+        );
+      }
+      return null;
+    }
+
+    const label = names.length > 2
+      ? `${names.slice(0, 2).join(', ')} +${names.length - 2}`
+      : names.join(', ');
+
+    return (
+      <span
+        className="inline-flex items-center gap-1 px-2 py-0.5 bg-amber-50 text-amber-700 border border-amber-200 rounded-full text-[11px] font-medium whitespace-nowrap"
+        title={isRoles ? `Andén privado: solo los roles ${names.join(', ')}` : `Andén privado: solo ${names.join(', ')}`}
+      >
+        <i className={`${isRoles ? 'ri-shield-user-line' : 'ri-lock-line'} w-3 h-3 flex items-center justify-center`}></i>
+        {label}
+      </span>
+    );
+  };
 
   // ✅ GUARDS DESPUÉS DE TODOS LOS HOOKS
   if (permissionsLoading || loading || scopeLoading || activeWhLoading) {
@@ -496,7 +581,10 @@ export default function AndenesPage() {
                   {filteredDocks.map(dock => (
                     <tr key={dock.id} className="hover:bg-gray-50 transition-colors">
                       <td className="px-6 py-4 whitespace-nowrap">
-                        <div className="text-sm font-medium text-gray-900">{dock.name}</div>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-sm font-medium text-gray-900">{dock.name}</span>
+                          {privateChip(dock)}
+                        </div>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
                         {dock.reference ? (
