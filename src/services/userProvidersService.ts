@@ -127,6 +127,74 @@ export const userProvidersService = {
   },
 
   /**
+   * Verifica de forma PUNTUAL si el usuario tiene asignados los proveedores indicados.
+   *
+   * ¿Por qué no usar getUserProviders? Porque hay organizaciones con 5.000+
+   * proveedores asignados a un solo operador: cargar la lista completa hace
+   * varias peticiones de 1.000 filas y, ante cualquier timeout, el resultado
+   * queda vacío y la UI oculta información a usuarios que SÍ tienen el
+   * proveedor asignado.
+   *
+   * Este método consulta únicamente los IDs que la pantalla necesita (las citas
+   * visibles), en lotes de 100 — respuesta en milisegundos.
+   */
+  async getAssignedProviderIds(
+    orgId: string,
+    userId: string,
+    providerIds: string[]
+  ): Promise<Set<string>> {
+    const result = new Set<string>();
+    const ids = [...new Set(providerIds.filter(Boolean))];
+    if (ids.length === 0) return result;
+
+    const batchSize = 100;
+
+    // ── 1. Asignaciones directas (user_providers) ─────────────────────
+    for (let i = 0; i < ids.length; i += batchSize) {
+      const batch = ids.slice(i, i + batchSize);
+      const { data, error } = await supabase
+        .from('user_providers')
+        .select('provider_id')
+        .eq('org_id', orgId)
+        .eq('user_id', userId)
+        .in('provider_id', batch);
+
+      // Un lote fallido no debe invalidar los demás: seguimos.
+      if (error) continue;
+      (data ?? []).forEach((row: any) => result.add(row.provider_id as string));
+    }
+
+    // ── 2. Asignaciones por cluster (user_provider_clusters → provider_cluster_items) ──
+    try {
+      const { data: clusterRows } = await supabase
+        .from('user_provider_clusters')
+        .select('cluster_id')
+        .eq('org_id', orgId)
+        .eq('user_id', userId);
+
+      const clusterIds = [...new Set((clusterRows ?? []).map((r: any) => r.cluster_id as string))];
+
+      if (clusterIds.length > 0) {
+        for (let i = 0; i < ids.length; i += batchSize) {
+          const batch = ids.slice(i, i + batchSize);
+          const { data, error } = await supabase
+            .from('provider_cluster_items')
+            .select('provider_id')
+            .in('cluster_id', clusterIds)
+            .in('provider_id', batch);
+
+          if (error) continue;
+          (data ?? []).forEach((row: any) => result.add(row.provider_id as string));
+        }
+      }
+    } catch {
+      // Best-effort: si falla, quedan solo las asignaciones directas.
+    }
+
+    return result;
+  },
+
+  /**
    * Asigna proveedores a un usuario (diff inteligente: insert nuevos, delete removidos)
    * @param orgId - ID de la organización
    * @param userId - ID del usuario

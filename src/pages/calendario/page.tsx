@@ -22,6 +22,7 @@ import { ConfirmModal } from '../../components/base/ConfirmModal';
 import { dockAllocationService, type DockAllocationRule } from '../../services/dockAllocationService';
 import { providersService } from '../../services/providersService';
 import { userProvidersService } from '../../services/userProvidersService';
+import { userClientsService } from '../../services/userClientsService';
 import { useClientPickupRulesContext } from '../../contexts/ClientPickupRulesContext';
 import { sameDayCutoffService } from '../../services/sameDayCutoffService';
 import BlocksManagementTab from './components/BlocksManagementTab';
@@ -162,6 +163,7 @@ export default function CalendarioPage() {
   const [filterStatus, setFilterStatus] = useState<string>(() => readCalendarSession().filterStatus || 'all');
   const [providers, setProviders] = useState<{ id: string; name: string }[]>([]);
   const [userProviderIds, setUserProviderIds] = useState<Set<string>>(new Set());
+  const [userClientIds, setUserClientIds] = useState<Set<string>>(new Set());
   const [draggedEvent, setDraggedEvent] = useState<CalendarEvent | null>(null);
   const [preModalOpen, setPreModalOpen] = useState(false);
   const [selectionMode, setSelectionMode] = useState(false);
@@ -1066,7 +1068,32 @@ export default function CalendarioPage() {
   }, []);
 
   useEffect(() => { if (!orgId) return; providersService.getActive(orgId).then(setProviders).catch(() => {}); }, [orgId]);
-  useEffect(() => { if (!orgId || !user?.id) return; userProvidersService.getUserProviders(orgId, user.id).then((ups) => setUserProviderIds(new Set(ups.map((p) => p.id)))).catch(() => {}); }, [orgId, user?.id]);
+  // ── Acceso a información sensible de las citas ────────────────────────────
+  // Se consulta SOLO lo que la vista necesita (los proveedores de las citas
+  // mostradas). Cargar la lista completa del usuario es inviable cuando tiene
+  // miles de proveedores asignados: la petición se corta/falla y el set queda
+  // vacío, ocultando datos a quien sí tiene el proveedor asignado.
+  useEffect(() => {
+    if (!orgId || !user?.id) return;
+    const providerIds = [...new Set(reservations.map((r) => r.shipper_provider).filter(Boolean))] as string[];
+    if (providerIds.length === 0) { setUserProviderIds(new Set()); return; }
+    let cancelled = false;
+    userProvidersService.getAssignedProviderIds(orgId, user.id, providerIds)
+      .then((ids) => { if (!cancelled) setUserProviderIds(ids); })
+      .catch(() => { if (!cancelled) setUserProviderIds(new Set()); });
+    return () => { cancelled = true; };
+  }, [orgId, user?.id, reservations]);
+
+  // Clientes asignados explícitamente al usuario: un operador del cliente
+  // también debe ver la información completa de las citas de su cliente.
+  useEffect(() => {
+    if (!orgId || !user?.id) return;
+    let cancelled = false;
+    userClientsService.getUserClients(orgId, user.id)
+      .then((clients) => { if (!cancelled) setUserClientIds(new Set(clients.map((c) => c.id))); })
+      .catch(() => { if (!cancelled) setUserClientIds(new Set()); });
+    return () => { cancelled = true; };
+  }, [orgId, user?.id]);
 
   // ── Batch lookup for inactive providers that appear in reservations ──
   const lastMissingProviderFetchRef = useRef<string>('');
@@ -1574,7 +1601,8 @@ export default function CalendarioPage() {
                                             const { top, height, extendsBeyondBusinessHours } = clamped;
                                             const isOwnerR = reservation.created_by === user?.id;
                                             const hasSameProviderR = reservation.shipper_provider ? userProviderIds.has(reservation.shipper_provider) : false;
-                                            const canViewSensitiveR = isOwnerR || isPrivilegedUser || hasSameProviderR;
+                                            const hasSameClientR = reservation.client_id ? userClientIds.has(reservation.client_id) : false;
+                                            const canViewSensitiveR = isOwnerR || isPrivilegedUser || hasSameProviderR || hasSameClientR;
                                             return (
                                               <React.Fragment key={reservation.id}>
                                               {(isEarlyExit || isNoShowReduced) && (() => {
