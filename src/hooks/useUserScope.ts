@@ -319,9 +319,13 @@ export function useUserScope(): UserScope {
         const explicitClientIds = (ucRows ?? []).map((r: any) => r.client_id as string);
         const hasClientRestriction = explicitClientIds.length > 0;
 
-        const finalClientIds = hasClientRestriction
-          ? warehouseClientIds.filter((id) => explicitClientIds.includes(id))
-          : warehouseClientIds;
+        // ✅ Roles globales (ADMIN / SUPERVISOR / Full Access) NO se restringen por cliente:
+        // ven todos los clientes de sus almacenes y, por lo tanto, todos los andenes.
+        const finalClientIds = roleAllowsGlobal
+          ? warehouseClientIds
+          : hasClientRestriction
+            ? warehouseClientIds.filter((id) => explicitClientIds.includes(id))
+            : warehouseClientIds;
 
         // ── 7. Cargar nombres de clientes ─────────
         const clients: UserScopeClient[] = [];
@@ -347,7 +351,10 @@ export function useUserScope(): UserScope {
 
         // ── Asignar resultados temporales ─────────
         resultAllowedWarehouseIds = warehouseIds;
-        resultAllowedClientIds = clientIds.length > 0 ? clientIds : null;
+        // ✅ Global roles → sin restricción de clientes (null = ve todos los andenes)
+        resultAllowedClientIds = roleAllowsGlobal
+          ? null
+          : (clientIds.length > 0 ? clientIds : null);
         resultAvailableClients = clients;
         resultAvailableWarehouses = warehouses;
         resultIsGlobalAccess = globalAccess;
