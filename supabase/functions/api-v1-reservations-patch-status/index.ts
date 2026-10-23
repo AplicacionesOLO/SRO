@@ -1,12 +1,42 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { createRemoteJWKSet, jwtVerify } from 'https://esm.sh/jose@5.9.6';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-appolo-id-token',
   'Access-Control-Allow-Methods': 'PATCH, OPTIONS',
 };
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// ── Autoría desde AppOLO ─────────────────────────────────────────────────────
+// AppOLO llama con un usuario de integración compartido. Si además manda el
+// token de sesión (Firebase) del usuario en `x-appolo-id-token`, se verifica la
+// firma contra Google y el cambio se registra a nombre del usuario de SRO con
+// ese correo; el historial queda marcado con metadata { source: 'appolo', via_email }.
+// Sin token, o con token inválido, todo funciona igual que antes.
+const APPOLO_FIREBASE_PROJECT = 'oloos-bd';
+const APPOLO_JWKS = createRemoteJWKSet(
+  new URL('https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com')
+);
+// Correo en AppOLO → correo en SRO, cuando no coinciden.
+const APPOLO_EMAIL_ALIASES: Record<string, string> = {
+  'gcortes@ologistics.com': 'jcortes@ologistics.com',
+};
+
+async function appoloEmailFromToken(idToken: string | null): Promise<string | null> {
+  if (!idToken) return null;
+  try {
+    const { payload } = await jwtVerify(idToken, APPOLO_JWKS, {
+      issuer: `https://securetoken.google.com/${APPOLO_FIREBASE_PROJECT}`,
+      audience: APPOLO_FIREBASE_PROJECT,
+    });
+    const email = typeof payload.email === 'string' ? payload.email.trim().toLowerCase() : '';
+    return email || null;
+  } catch {
+    return null;
+  }
+}
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: corsHeaders, status: 204 });
@@ -167,11 +197,25 @@ Deno.serve(async (req) => {
 
     const now = new Date().toISOString();
 
+    // Autor: usuario de SRO homologado por correo si viene un token válido de AppOLO.
+    const appoloEmail = await appoloEmailFromToken(req.headers.get('x-appolo-id-token'));
+    let actorId = userId;
+    if (appoloEmail) {
+      const sroEmail = APPOLO_EMAIL_ALIASES[appoloEmail] ?? appoloEmail;
+      const { data: sroProfile } = await supabase
+        .from('profiles')
+        .select('id')
+        .ilike('email', sroEmail)
+        .limit(1)
+        .maybeSingle();
+      if (sroProfile?.id) actorId = sroProfile.id;
+    }
+
     // Update reservation status — ONLY status_id, never dates
     // The trigger trigger_log_reservation_updated will auto-log the status change into activity_log
     const { data: updated, error: updateError } = await supabase
       .from('reservations')
-      .update({ status_id: body.status_id, updated_by: userId, updated_at: now })
+      .update({ status_id: body.status_id, updated_by: actorId, updated_at: now })
       .eq('id', reservationId)
       .eq('org_id', orgId)
       .select('id, status_id, updated_by, updated_at')
@@ -182,6 +226,27 @@ Deno.serve(async (req) => {
         status: 500,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
+    }
+
+    // Marca en el historial que el cambio vino de AppOLO y de qué usuario.
+    if (appoloEmail && oldStatusId !== body.status_id) {
+      const { data: logRow } = await supabase
+        .from('activity_log')
+        .select('id, metadata')
+        .eq('org_id', orgId)
+        .eq('entity_type', 'reservation')
+        .eq('entity_id', reservationId)
+        .eq('field', 'status_id')
+        .eq('new_value', body.status_id)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (logRow?.id) {
+        await supabase
+          .from('activity_log')
+          .update({ metadata: { ...(logRow.metadata ?? {}), source: 'appolo', via_email: appoloEmail } })
+          .eq('id', logRow.id);
+      }
     }
 
     return new Response(
