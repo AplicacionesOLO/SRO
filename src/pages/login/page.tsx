@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useNavigate, useLocation } from 'react-router-dom';
+import { AuthFlowError, type AuthErrorKind } from '@/utils/authErrors';
 import LoginFormPanel from './components/LoginFormPanel';
 import LoginRightPanel from './components/LoginRightPanel';
 
@@ -9,6 +10,8 @@ export default function Login() {
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
+  const [errorDetail, setErrorDetail] = useState('');
+  const [errorKind, setErrorKind] = useState<AuthErrorKind | null>(null);
   const [loading, setLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
   const { user, login, loginWithGoogle } = useAuth();
@@ -26,6 +29,8 @@ export default function Login() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
+    setErrorDetail('');
+    setErrorKind(null);
     setLoading(true);
 
     try {
@@ -34,10 +39,18 @@ export default function Login() {
         const redirectPath = user.role === 'CASETILLA' ? '/casetilla' : ((location.state as any)?.returnUrl || '/calendario');
         navigate(redirectPath, { replace: true });
       } else {
-        setError('Credenciales incorrectas. Por favor, verifica tu correo y contraseña.');
+        setError('No pudimos iniciar sesión. Revisá los datos e intentá de nuevo.');
+        setErrorKind('unknown');
       }
     } catch (err) {
-      setError('Error al iniciar sesión. Por favor, intenta de nuevo.');
+      if (err instanceof AuthFlowError) {
+        setError(err.message);
+        setErrorDetail(err.detail);
+        setErrorKind(err.kind);
+      } else {
+        setError('No pudimos iniciar sesión. Revisá tu conexión e intentá de nuevo.');
+        setErrorKind('unknown');
+      }
     } finally {
       setLoading(false);
     }
@@ -45,6 +58,8 @@ export default function Login() {
 
   const handleGoogleLogin = async () => {
     setError('');
+    setErrorDetail('');
+    setErrorKind(null);
     setGoogleLoading(true);
     try {
       await loginWithGoogle();
@@ -66,6 +81,8 @@ export default function Login() {
           showPassword={showPassword}
           setShowPassword={setShowPassword}
           error={error}
+          errorDetail={errorDetail}
+          errorKind={errorKind}
           loading={loading}
           googleLoading={googleLoading}
           handleSubmit={handleSubmit}

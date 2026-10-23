@@ -1,5 +1,7 @@
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import type { AuthErrorKind } from '@/utils/authErrors';
+import ConnectionDiagnostic from './ConnectionDiagnostic';
 import LoginNetworkBackground from './LoginNetworkBackground';
 
 interface LoginFormPanelProps {
@@ -10,6 +12,8 @@ interface LoginFormPanelProps {
   showPassword: boolean;
   setShowPassword: (v: boolean) => void;
   error: string;
+  errorDetail?: string;
+  errorKind?: AuthErrorKind | null;
   loading: boolean;
   googleLoading: boolean;
   handleSubmit: (e: React.FormEvent) => void;
@@ -37,6 +41,8 @@ export default function LoginFormPanel({
   showPassword,
   setShowPassword,
   error,
+  errorDetail,
+  errorKind,
   loading,
   googleLoading,
   handleSubmit,
@@ -240,6 +246,18 @@ export default function LoginFormPanel({
                 </motion.div>
               )}
             </AnimatePresence>
+
+            {/* Technical detail + connection diagnosis (only when something actually failed) */}
+            {(errorKind === 'network' || errorKind === 'timeout' || errorKind === 'server') && (
+              <>
+                <ConnectionDiagnostic />
+                {errorDetail && (
+                  <p className="mt-2 font-mono text-[10px] leading-relaxed text-white/25 break-words">
+                    {errorDetail}
+                  </p>
+                )}
+              </>
+            )}
 
             {/* Submit button */}
             <motion.button

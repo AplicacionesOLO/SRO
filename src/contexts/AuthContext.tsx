@@ -1,5 +1,6 @@
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
-import { supabase } from '../lib/supabase';
+import { supabase, SUPABASE_URL } from '../lib/supabase';
+import { AuthFlowError, checkBackendReachability, describeAuthError } from '@/utils/authErrors';
 import type { User as SupabaseUser } from '@supabase/supabase-js';
 
 export type UserRole = 'ADMIN' | 'SUPERVISOR' | 'OPERADOR' | 'CASETILLA';
@@ -392,31 +393,69 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const login = async (email: string, password: string): Promise<User | null> => {
+    setLoading(true);
+    setPermissionsLoading(true);
+    setPendingAccess(false);
+
     try {
-      setLoading(true);
-      setPermissionsLoading(true);
-      setPendingAccess(false);
-      
+      const normalizedEmail = email.trim();
+
+      // 1) ¿La red del usuario llega al servidor? Evita mostrar "contraseña incorrecta"
+      //    cuando en realidad nunca hubo respuesta (bloqueo de ISP, DNS, sin internet).
+      const reachability = await checkBackendReachability(SUPABASE_URL);
+      if (!reachability.ok) {
+        throw new AuthFlowError({
+          kind: 'network',
+          message: 'No pudimos conectar con el servidor. Esto no es tu contraseña: la red no llegó al sistema.',
+          detail: reachability.detail,
+        });
+      }
+
       const { data, error } = await supabase.auth.signInWithPassword({
-        email,
+        email: normalizedEmail,
         password,
       });
 
       if (error) {
-        return null;
+        throw new AuthFlowError(describeAuthError(error));
       }
 
-      if (data.user) {
-        setSupabaseUser(data.user);
-        setWasAuthenticated(true);
-        setSessionExpired(false);
-        const loadedUser = await loadUserProfile(data.user.id, data.user.email || '');
-        return loadedUser;
+      if (!data.user) {
+        throw new AuthFlowError({
+          kind: 'unknown',
+          message: 'No pudimos completar el inicio de sesión.',
+          detail: 'signInWithPassword devolvió un usuario vacío.',
+        });
       }
 
-      return null;
+      setSupabaseUser(data.user);
+      setWasAuthenticated(true);
+      setSessionExpired(false);
+
+      const loadedUser = await loadUserProfile(data.user.id, data.user.email || '');
+
+      // 2) La autenticación pudo ser correcta pero el perfil/rol no cargó.
+      //    Antes eso se mostraba como "credenciales incorrectas", que confunde a todos.
+      if (!loadedUser) {
+        try {
+          await supabase.auth.signOut({ scope: 'local' });
+        } catch {
+          // ignore
+        }
+        setUser(null);
+        setSupabaseUser(null);
+        setPermissionsSet(null);
+        throw new AuthFlowError({
+          kind: 'profile',
+          message: 'Entraste correctamente, pero no pudimos cargar tu perfil y permisos. Avisá al administrador.',
+          detail: 'Falló la lectura de user_org_roles / role_permissions.',
+        });
+      }
+
+      return loadedUser;
     } catch (err) {
-      return null;
+      if (err instanceof AuthFlowError) throw err;
+      throw new AuthFlowError(describeAuthError(err));
     } finally {
       setLoading(false);
       setPermissionsLoading(false);
