@@ -1,0 +1,20 @@
+# Variables de entorno y secretos
+.env
+.env.local
+.env.*.local
+*.local
+
+# Dependencias y builds
+node_modules/
+out/
+dist/
+
+# Generados por Vite / unplugin-auto-import
+auto-imports.d.ts
+
+# Sistema operativo / editores
+.DS_Store
+Thumbs.db
+.vscode/*
+!.vscode/extensions.json
+.idea/

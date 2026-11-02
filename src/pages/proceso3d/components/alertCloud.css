@@ -1,0 +1,91 @@
+/* Nube de alerta sobre los camiones (Proceso 3D) */
+.p3d-cloud {
+  --c: #facc15;
+  --t: #422006;
+  position: relative;
+  display: inline-block;
+  padding-top: 10px;
+  filter: drop-shadow(0 4px 6px rgba(15, 23, 42, 0.35));
+  font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+  color: var(--t);
+  white-space: nowrap;
+}
+.p3d-cloud--red {
+  --c: #ef4444;
+  --t: #ffffff;
+  animation: p3d-cloud-pulse 1.1s ease-in-out infinite;
+}
+.p3d-cloud__body {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  min-width: 92px;
+  padding: 5px 14px 6px;
+  border-radius: 999px;
+  background: var(--c);
+}
+.p3d-cloud__label {
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.1;
+}
+.p3d-cloud__time {
+  font-size: 17px;
+  font-weight: 800;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+.p3d-cloud__puff {
+  position: absolute;
+  z-index: 0;
+  border-radius: 50%;
+  background: var(--c);
+}
+.p3d-cloud__puff--a {
+  width: 30px;
+  height: 30px;
+  top: 0;
+  left: 12px;
+}
+.p3d-cloud__puff--b {
+  width: 40px;
+  height: 40px;
+  top: -6px;
+  left: 34px;
+}
+.p3d-cloud__puff--c {
+  width: 26px;
+  height: 26px;
+  top: 2px;
+  right: 12px;
+}
+.p3d-cloud__dot {
+  position: absolute;
+  left: 50%;
+  border-radius: 50%;
+  background: var(--c);
+}
+.p3d-cloud__dot--1 {
+  width: 10px;
+  height: 10px;
+  bottom: -9px;
+  margin-left: -8px;
+}
+.p3d-cloud__dot--2 {
+  width: 6px;
+  height: 6px;
+  bottom: -17px;
+  margin-left: -2px;
+}
+@keyframes p3d-cloud-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.08);
+  }
+}
