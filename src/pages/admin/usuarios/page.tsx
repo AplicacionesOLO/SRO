@@ -56,7 +56,7 @@ interface Warehouse {
 }
 
 export default function UsuariosPage() {
-  const { can, loading: permissionsLoading, orgId, userId, permissionsSet } = usePermissions();
+  const { can, loading: permissionsLoading, orgId, userId, permissionsSet, hasRole } = usePermissions();
   const {
     activeWarehouseId,
     activeWarehouse,
@@ -161,6 +161,11 @@ export default function UsuariosPage() {
   const canDelete = can('admin.users.delete') || can('users.delete');
   const canAssign = can('admin.users.assign_roles') || can('users.assign_roles');
   const canAssignAccess = canAssign || can('admin.users.assign_access');
+
+  // ⛔ El email de acceso SOLO lo puede modificar un Full Access.
+  // Al crear un usuario el email sigue siendo obligatorio para quien tenga permiso de creación.
+  const isFullAccess = hasRole('Full Access');
+  const canEditEmail = !editingUser || isFullAccess;
 
   const ensureSession = useCallback(async () => {
     const snap1 = await supabase.auth.getSession();
@@ -583,7 +588,8 @@ export default function UsuariosPage() {
             action: 'update_role',
             roleId: formData.role_id,
             userId: editingUser.id,
-            email: formData.email,
+            // ⛔ Solo Full Access envía el email: si no, el backend no lo toca.
+            email: isFullAccess ? formData.email : undefined,
             full_name: formData.full_name,
             phone_e164: phoneE164,
             roleIds: formData.role_id ? [formData.role_id] : [],
@@ -592,7 +598,33 @@ export default function UsuariosPage() {
         });
 
         if (error) {
-          throw new Error((error as any).message || 'Error al actualizar usuario');
+          const ctx = (error as any)?.context;
+          let raw = '';
+          try {
+            if (ctx && typeof ctx.text === 'function') raw = await ctx.text();
+          } catch (parseError) {
+            // ignore
+          }
+
+          let server: any = null;
+          try {
+            if (raw) server = JSON.parse(raw);
+          } catch (jsonError) {
+            // ignore
+          }
+
+          const serverCode = server?.error;
+          if (serverCode === 'EMAIL_ALREADY_USED') {
+            throw new Error(server?.details || 'Ese email ya está en uso por otro usuario.');
+          }
+          if (serverCode === 'INVALID_EMAIL') {
+            throw new Error(server?.details || 'El email no tiene un formato válido.');
+          }
+          if (serverCode === 'AUTH_EMAIL_UPDATE_FAILED' || serverCode === 'PROFILE_UPDATE_FAILED') {
+            throw new Error(server?.details || 'No se pudo actualizar el email. Intentá de nuevo.');
+          }
+
+          throw new Error(server?.details || (error as any).message || 'Error al actualizar usuario');
         }
 
         // console.log('[UsersPage] ✅ User updated successfully', { ok: !!data });
@@ -1523,6 +1555,12 @@ export default function UsuariosPage() {
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
                     Email
+                    {editingUser && !isFullAccess && (
+                      <span className="ml-2 inline-flex items-center gap-1 px-2 py-0.5 bg-gray-100 border border-gray-200 rounded-full text-[11px] font-medium text-gray-500 align-middle">
+                        <i className="ri-lock-line text-[11px] w-3 h-3 flex items-center justify-center"></i>
+                        Solo Full Access
+                      </span>
+                    )}
                   </label>
                   <input
                     type="email"
@@ -1537,10 +1575,29 @@ export default function UsuariosPage() {
                         setFormData(prev => ({ ...prev, email: newEmail }));
                       }
                     }}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent"
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent disabled:bg-gray-100 disabled:text-gray-500 disabled:cursor-not-allowed"
                     required
-                    disabled={!!editingUser}
+                    disabled={!canEditEmail}
+                    title={!canEditEmail ? 'Solo un usuario con rol Full Access puede cambiar el email de acceso' : undefined}
                   />
+                  {editingUser && !isFullAccess && (
+                    <p className="text-xs text-gray-600 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 mt-2 flex items-start gap-2">
+                      <i className="ri-lock-line text-sm mt-0.5"></i>
+                      <span>
+                        El email de acceso está bloqueado. Solo un usuario con rol <strong>Full Access</strong> puede
+                        modificarlo.
+                      </span>
+                    </p>
+                  )}
+                  {editingUser && isFullAccess && (
+                    <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mt-2 flex items-start gap-2">
+                      <i className="ri-information-line text-sm mt-0.5"></i>
+                      <span>
+                        Cambiar el email modifica el <strong>usuario de acceso</strong> (el que se usa para iniciar sesión).
+                        La contraseña se mantiene igual y no se pierde ningún registro, reserva ni asignación.
+                      </span>
+                    </p>
+                  )}
                 </div>
 
                 <div>

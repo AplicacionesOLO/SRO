@@ -2,7 +2,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const VERSION = "admin-users@v2026-06-30.1-FAST-CREATE";
+const VERSION = "admin-users@v2026-11-02.1-EMAIL-SYNC";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -142,19 +142,73 @@ serve(async (req) => {
     if (action === "update_role") {
       if (!userId || !orgId) return json({ error: "Bad Request", details: "Missing userId or orgId", reqId: id, version: VERSION }, 400);
 
-      if (full_name || email || phone_e164 !== undefined) {
+      let normalizedEmail: string | null = null;
+
+      // ✅ SYNC DE EMAIL DE ACCESO:
+      // El email de login vive en auth.users, NO en profiles.
+      // Antes solo se actualizaba profiles.email, así que el usuario seguía
+      // entrando con el email viejo (o no podía entrar con el nuevo).
+      // Aquí actualizamos el usuario de Auth POR ID, por lo que se conserva
+      // el mismo UUID y NO se pierde ningún registro relacionado.
+      if (email) {
+        normalizedEmail = String(email).trim().toLowerCase();
+
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
+          return json({ error: "INVALID_EMAIL", details: "El email no tiene un formato válido.", reqId: id, version: VERSION }, 400);
+        }
+
+        // Conflicto en profiles (otro usuario con ese email)
+        const { data: conflict } = await supabaseAdmin
+          .from("profiles")
+          .select("id")
+          .ilike("email", normalizedEmail)
+          .neq("id", userId)
+          .maybeSingle();
+
+        if (conflict) {
+          return json({ error: "EMAIL_ALREADY_USED", details: "Ese email ya está en uso por otro usuario del sistema.", reqId: id, version: VERSION }, 409);
+        }
+
+        // ¿Cambió respecto al email real de Auth?
+        const { data: authUserData, error: getUserError } = await supabaseAdmin.auth.admin.getUserById(userId);
+        if (getUserError) {
+          return json({ error: "AUTH_USER_LOOKUP_FAILED", details: getUserError.message, reqId: id, version: VERSION }, 500);
+        }
+
+        const currentAuthEmail = (authUserData?.user?.email ?? "").trim().toLowerCase();
+
+        if (currentAuthEmail !== normalizedEmail) {
+          const { error: authUpdateError } = await supabaseAdmin.auth.admin.updateUserById(userId, {
+            email: normalizedEmail,
+            email_confirm: true,
+          });
+
+          if (authUpdateError) {
+            const m = (authUpdateError.message ?? "").toLowerCase();
+            if (m.includes("already") || m.includes("registered") || m.includes("duplicate") || m.includes("exists")) {
+              return json({ error: "EMAIL_ALREADY_USED", details: "Ese email ya está registrado en el sistema de acceso.", reqId: id, version: VERSION }, 409);
+            }
+            return json({ error: "AUTH_EMAIL_UPDATE_FAILED", details: authUpdateError.message, reqId: id, version: VERSION }, 500);
+          }
+        }
+      }
+
+      if (full_name || normalizedEmail || phone_e164 !== undefined) {
         const updateData: any = {};
         if (full_name) updateData.name = full_name;
-        if (email) updateData.email = email;
+        if (normalizedEmail) updateData.email = normalizedEmail;
         if (phone_e164 !== undefined) updateData.phone_e164 = phone_e164;
-        await supabaseAdmin.from("profiles").update(updateData).eq("id", userId);
+        const { error: profileError } = await supabaseAdmin.from("profiles").update(updateData).eq("id", userId);
+        if (profileError) {
+          return json({ error: "PROFILE_UPDATE_FAILED", details: profileError.message, reqId: id, version: VERSION }, 500);
+        }
       }
 
       if (roleId) {
         await supabaseAdmin.from("user_org_roles").upsert({ user_id: userId, org_id: orgId, role_id: roleId, assigned_by: userId, assigned_at: new Date().toISOString() }, { onConflict: "user_id,org_id" }).select();
       }
 
-      return json({ success: true, reqId: id, version: VERSION }, 200);
+      return json({ success: true, email: normalizedEmail, reqId: id, version: VERSION }, 200);
     }
 
     if (action === "remove_from_org") {

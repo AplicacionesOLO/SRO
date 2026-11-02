@@ -281,9 +281,7 @@ function ActivityRow({
   const description = getActivityDescription(log, dockNameById, statusById);
 
   const isSystemAction = log.metadata?.reason === 'AUTO_NO_SHOW' || log.metadata?.source === 'edge_function' || log.metadata?.source === 'pg_cron';
-  const appoloEmail = log.metadata?.source === 'appolo' ? (log.metadata?.via_email as string | undefined) : undefined;
-  const actorLabel = isSystemAction ? 'Sistema automático' : appoloEmail ? 'AppOLO' : (log.actor?.name || log.actor?.email || 'Usuario');
-  const actorEmail = appoloEmail || (log.actor?.name ? log.actor?.email : undefined);
+  const actorLabel = isSystemAction ? 'Sistema automático' : (log.actor?.name || log.actor?.email || 'Usuario');
 
   return (
     <div className="flex gap-3 p-3 rounded-xl border border-gray-200 bg-white hover:bg-gray-50/40 transition-colors">
@@ -304,8 +302,8 @@ function ActivityRow({
             )}
             <p className="text-xs text-gray-500 mt-1">
               por <span className="font-medium">{actorLabel}</span>
-              {actorEmail && (
-                <span className="text-gray-400"> ({actorEmail})</span>
+              {log.actor?.email && log.actor?.name && (
+                <span className="text-gray-400"> ({log.actor.email})</span>
               )}
             </p>
           </div>
