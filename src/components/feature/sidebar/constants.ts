@@ -1,4 +1,5 @@
 import type { MenuItem } from './types';
+import { PROCESO3D_ROLES } from '../../../pages/proceso3d/access';
 
 export const TECH_PATTERN = `url("data:image/svg+xml,%3Csvg width='80' height='80' viewBox='0 0 80 80' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' stroke='%232DD4BF' stroke-opacity='0.07' stroke-width='0.5'%3E%3Cpath d='M40 4 L68 20 L68 52 L40 68 L12 52 L12 20 Z'/%3E%3Ccircle cx='40' cy='36' r='1.2' fill='%232DD4BF' fill-opacity='0.10'/%3E%3Ccircle cx='12' cy='36' r='0.6' fill='%232DD4BF' fill-opacity='0.07'/%3E%3Ccircle cx='68' cy='36' r='0.6' fill='%232DD4BF' fill-opacity='0.07'/%3E%3C/g%3E%3Cg fill='none' stroke='%232DD4BF' stroke-opacity='0.04' stroke-width='0.3'%3E%3Cpath d='M40 0 L40 76'/%3E%3Cpath d='M4 18 L76 18'/%3E%3Cpath d='M4 54 L76 54'/%3E%3C/g%3E%3C/svg%3E")`;
 
@@ -40,6 +41,14 @@ export const menuItems: MenuItem[] = [
     path: '/manpower',
     icon: 'ri-team-line',
     permission: 'menu.manpower.view',
+    section: 'Operaciones',
+  },
+  {
+    label: 'Proceso 3D',
+    path: '/proceso3d',
+    icon: 'ri-box-3-line',
+    permission: 'menu.proceso3d.view',
+    roles: PROCESO3D_ROLES,
     section: 'Operaciones',
   },
   {

@@ -113,12 +113,16 @@ const getPermissionLabel = (technicalName: string): string => {
     'manpower.view':                         'Ver módulo Manpower (colaboradores, recursos, reglas, pronóstico)',
     'manpower.manage':                       'Gestionar módulo Manpower (colaboradores, recursos, reglas, pronóstico)',
 
+    // ─── Proceso 3D ───────────────────────────────────────────────────
+    'proceso3d.view':                        'Ver simulación 3D del almacén (Proceso 3D)',
+
     // ─── Menú › Navegación principal ─────────────────────────────────
     'menu.dashboard.view':                   'Acceder al menú Dashboard',
     'menu.calendario.view':                  'Acceder al menú Calendario',
     'menu.reservas.view':                    'Acceder al menú Reservas',
     'menu.andenes.view':                     'Acceder al menú Andenes',
     'menu.manpower.view':                    'Acceder al menú Manpower',
+    'menu.proceso3d.view':                   'Acceder al menú Proceso 3D',
     'menu.casetilla.view':                   'Acceder al menú Punto Control IN/OUT',
 
     // ─── Menú › Submenú Administración ───────────────────────────────
@@ -278,6 +282,7 @@ const getCategoryLabel = (category: string): string => {
     'menu': 'Menú de Navegación',
     'correspondence': 'Correspondencia',
     'manpower': 'Manpower',
+    'proceso3d': 'Proceso 3D',
   };
 
   return categoryLabels[category] || category;
