@@ -92,10 +92,27 @@ export default function Proceso3DPage() {
   const dayStart = useMemo(() => fromZonedTime(`${date}T00:00:00`, tz).getTime(), [date, tz]);
   const dayEnd = dayStart + 24 * 60 * MIN;
 
-  // Fecha distinta a hoy → recorrido del día
+  // El usuario eligió una fecha distinta a hoy → recorrido del día
   useEffect(() => {
-    if (!isToday) setMode('replay');
-  }, [isToday]);
+    if (date !== todayIn(tz)) setMode('replay');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [date]);
+
+  // Cambio de día (medianoche) o de zona horaria del almacén: si se estaba viendo "hoy"
+  // en vivo, seguir al nuevo día en lugar de quedarse congelado en el anterior.
+  const today = todayIn(tz);
+  const lastTodayRef = useRef(today);
+  useEffect(() => {
+    const prev = lastTodayRef.current;
+    if (prev === today) return;
+    lastTodayRef.current = today;
+    if (mode === 'live' && date === prev) setDate(today);
+  }, [today, date, mode]);
+
+  // Al cambiar de día se descartan los datos anteriores (el recorrido arranca con los del día nuevo)
+  useEffect(() => {
+    setData(null);
+  }, [dayStart]);
 
   /* ─────────────────────────────── Carga de datos ─────────────────────────────── */
 
@@ -139,14 +156,34 @@ export default function Proceso3DPage() {
   // Tiempo real: cambios en citas o en casetilla recargan (solo para hoy)
   const loadRef = useRef(load);
   loadRef.current = load;
+  // Andenes y citas en pantalla: solo los eventos que los afectan provocan una recarga
+  const inViewRef = useRef({ docks: new Set<string>(), reservations: new Set<string>() });
+  inViewRef.current = {
+    docks: new Set((data?.docks ?? []).map((d) => d.id)),
+    reservations: new Set((data?.reservations ?? []).map((r) => r.id)),
+  };
+  const realtimeOkRef = useRef(false);
+  realtimeOkRef.current = realtimeStatus === 'ok';
   useEffect(() => {
     if (!orgId || !isToday) return;
     let timer: ReturnType<typeof setTimeout> | null = null;
-    const trigger = (payload: any) => {
-      const rowOrg = payload?.new?.org_id || payload?.old?.org_id;
-      if (rowOrg && rowOrg !== orgId) return;
+    const schedule = () => {
       if (timer) clearTimeout(timer);
       timer = setTimeout(() => loadRef.current(true), 1500);
+    };
+    const trigger = (payload: any) => {
+      const row = payload?.new && Object.keys(payload.new).length ? payload.new : payload?.old;
+      if (row?.org_id && row.org_id !== orgId) return;
+      const view = inViewRef.current;
+      if (row?.dock_id !== undefined) {
+        // reservations: nueva/cambiada en un andén visible (o que salió de uno)
+        const oldDock = payload?.old?.dock_id;
+        if (!view.docks.has(row.dock_id) && !(oldDock && view.docks.has(oldDock))) return;
+      } else if (row?.reservation_id !== undefined) {
+        // casetilla: solo citas cargadas
+        if (!view.reservations.has(row.reservation_id)) return;
+      }
+      schedule();
     };
     const channel = supabase
       .channel(`proceso3d_rt_${orgId}_${Math.random().toString(36).slice(2, 8)}`)
@@ -154,11 +191,23 @@ export default function Proceso3DPage() {
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'casetilla_ingresos' }, trigger)
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'casetilla_salidas' }, trigger)
       .subscribe((status) => setRealtimeStatus(status === 'SUBSCRIBED' ? 'ok' : status === 'CLOSED' ? 'off' : 'retry'));
-    // Respaldo: si algún evento se pierde, refrescar en silencio cada minuto
-    const poll = setInterval(() => loadRef.current(true), 60_000);
+    // Respaldo por si se pierde algún evento: cada minuto si el tiempo real está caído,
+    // cada 5 minutos si está conectado; nada mientras la pestaña está oculta.
+    let ticks = 0;
+    const poll = setInterval(() => {
+      if (document.hidden) return;
+      ticks += 1;
+      if (!realtimeOkRef.current || ticks % 5 === 0) loadRef.current(true);
+    }, 60_000);
+    // Al volver a la pestaña, ponerse al día de inmediato
+    const onVisible = () => {
+      if (!document.hidden) schedule();
+    };
+    document.addEventListener('visibilitychange', onVisible);
     return () => {
       if (timer) clearTimeout(timer);
       clearInterval(poll);
+      document.removeEventListener('visibilitychange', onVisible);
       supabase.removeChannel(channel);
       setRealtimeStatus('off');
     };

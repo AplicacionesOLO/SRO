@@ -45,6 +45,11 @@ export default function RequirePermission({
     );
   }
 
+  // Si requiere un rol específico (se valida antes que cualquier otra regla)
+  if (roles && roles.length > 0 && !roles.some((r) => hasRole(r))) {
+    return <Navigate to={fallbackPath} replace />;
+  }
+
   // Si requiere cualquier permiso admin.*
   if (requireAnyAdmin) {
     const hasAnyAdminPerm = permissionsSet 
@@ -63,11 +68,6 @@ export default function RequirePermission({
     }
 
     return <>{children}</>;
-  }
-
-  // Si requiere un rol específico
-  if (roles && roles.length > 0 && !roles.some((r) => hasRole(r))) {
-    return <Navigate to={fallbackPath} replace />;
   }
 
   // Si requiere un permiso específico

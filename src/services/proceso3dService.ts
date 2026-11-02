@@ -58,15 +58,16 @@ export interface Proceso3DData {
   crewRules: ManpowerRule[];
 }
 
-const providerNamesCache = new Map<string, Map<string, string>>();
+const providerNamesCache = new Map<string, { at: number; value: Map<string, string> }>();
+const PROVIDERS_TTL_MS = 5 * 60_000;
 
 async function getProviderNames(orgId: string): Promise<Map<string, string>> {
   const cached = providerNamesCache.get(orgId);
-  if (cached) return cached;
+  if (cached && Date.now() - cached.at < PROVIDERS_TTL_MS) return cached.value;
   try {
     const providers = await providersService.getActive(orgId);
     const map = new Map<string, string>(providers.map((p: any) => [p.id, p.name]));
-    providerNamesCache.set(orgId, map);
+    providerNamesCache.set(orgId, { at: Date.now(), value: map });
     return map;
   } catch {
     return new Map();
