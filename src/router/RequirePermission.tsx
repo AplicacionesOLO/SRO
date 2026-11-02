@@ -6,8 +6,6 @@ import { usePermissions } from '../hooks/usePermissions';
 interface RequirePermissionProps {
   children: ReactNode;
   permission?: string;
-  /** Si se define, además del permiso el usuario debe tener uno de estos roles */
-  roles?: string[];
   requireAnyAdmin?: boolean;
   fallbackPath?: string;
 }
@@ -15,12 +13,11 @@ interface RequirePermissionProps {
 export default function RequirePermission({ 
   children, 
   permission,
-  roles,
   requireAnyAdmin = false,
   fallbackPath = '/'
 }: RequirePermissionProps) {
   const { pendingAccess } = useAuth();
-  const { can, hasRole, loading, permissionsSet } = usePermissions();
+  const { can, loading, permissionsSet } = usePermissions();
   const location = useLocation();
 
   // Si el usuario está pendiente de acceso, redirigir a /access-pending
@@ -43,11 +40,6 @@ export default function RequirePermission({
         </div>
       </div>
     );
-  }
-
-  // Si requiere un rol específico (se valida antes que cualquier otra regla)
-  if (roles && roles.length > 0 && !roles.some((r) => hasRole(r))) {
-    return <Navigate to={fallbackPath} replace />;
   }
 
   // Si requiere cualquier permiso admin.*

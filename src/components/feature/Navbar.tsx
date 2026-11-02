@@ -10,7 +10,6 @@ const PAGE_TITLES: Record<string, string> = {
   '/reservas': 'Reservas',
   '/andenes': 'Andenes',
   '/manpower': 'Manpower',
-  '/proceso3d': 'Proceso 3D',
   '/casetilla': 'Punto de Control',
   '/perfil': 'Mi Perfil',
   '/admin': 'Administración',

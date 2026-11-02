@@ -581,6 +581,27 @@ class CasetillaService {
         }
       }
 
+      // ✅ 3c) GUARDIA ANTI-DUPLICADO (ROBUSTEZ)
+      //       Si la reserva ya tiene un ingreso, no se inserta otro. Antes, un
+      //       reintento por "Registrando..." eterno creaba ingresos duplicados.
+      if (reservationId) {
+        const { data: existingIngreso, error: existingIngresoError } = await supabase
+          .from('casetilla_ingresos')
+          .select('id')
+          .eq('org_id', orgId)
+          .eq('reservation_id', reservationId)
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        if (!existingIngresoError && existingIngreso) {
+          throw new Error(
+            'Ya existe un ingreso registrado para esta reserva. ' +
+            'Si necesitás corregir datos, contactá a un administrador.'
+          );
+        }
+      }
+
       // ✅ 4) Crear registro casetilla PRIMERO (antes del trigger de email)
       //       Así cuando el email busque fotos en casetilla_ingresos, ya existen.
       const { data: ingreso, error: ingresoError } = await supabase
@@ -604,28 +625,35 @@ class CasetillaService {
 
       if (ingresoError) throw ingresoError;
 
-      // ✅ 5) TRIGGER: Disparar evento DESPUÉS de insertar el registro
-      //       Así la edge function de fotos encuentra el registro en casetilla_ingresos
+      // ✅ 5) NOTIFICACIÓN NO BLOQUEANTE (ROBUSTEZ)
+      //       El ingreso YA está guardado. La notificación por correo se dispara
+      //       en segundo plano: si el SMTP tarda o falla, el operador no espera
+      //       y la UI confirma al instante. Así no se generan reintentos.
       if (reservationUpdated && reservationId) {
+        const notifyReservationId = reservationId;
+        const notifyFromId = statusFromId;
+        const notifyToId = statusToId;
 
-        try {
-          const { data: fullReservation, error: resErr } = await supabase
-            .from('reservations')
-            .select('*')
-            .eq('id', reservationId)
-            .single();
+        void (async () => {
+          try {
+            const { data: fullReservation, error: resErr } = await supabase
+              .from('reservations')
+              .select('*')
+              .eq('id', notifyReservationId)
+              .maybeSingle();
 
-          if (!resErr && fullReservation) {
-            await emailTriggerService.onReservationStatusChanged(
-              orgId,
-              fullReservation as any,
-              statusFromId,
-              statusToId
-            );
+            if (!resErr && fullReservation) {
+              await emailTriggerService.onReservationStatusChanged(
+                orgId,
+                fullReservation as any,
+                notifyFromId,
+                notifyToId
+              );
+            }
+          } catch {
+            // La notificación nunca bloquea ni rompe el flujo principal
           }
-        } catch (triggerError: any) {
-          // El trigger de email nunca debe bloquear el flujo principal
-        }
+        })();
       }
 
       return {
@@ -1196,11 +1224,16 @@ async getExitEligibleReservations(
       }
 
       // 4) Verificar si ya tiene ingreso
+      //    ROBUSTEZ: se ordena y se limita a 1 fila. Con ingresos duplicados
+      //    (dato histórico existente) un maybeSingle fallaba y la reserva se
+      //    reportaba como 'not_found'. Ahora se toma el ingreso más reciente.
       const { data: ingreso } = await supabase
         .from('casetilla_ingresos')
         .select('id')
         .eq('reservation_id', reservationId)
         .eq('org_id', orgId)
+        .order('created_at', { ascending: false })
+        .limit(1)
         .maybeSingle();
 
       if (!ingreso) {
@@ -1266,6 +1299,8 @@ async getExitEligibleReservations(
         .select('id')
         .eq('reservation_id', reservationId)
         .eq('org_id', orgId)
+        .order('exit_at', { ascending: false })
+        .limit(1)
         .maybeSingle();
 
       if (salida) {
@@ -1453,27 +1488,34 @@ async getExitEligibleReservations(
         } catch { /* no bloquear la salida si falla el log */ }
       }
 
-      // ✅ 6) TRIGGER: Disparar evento de cambio de status a DISPATCHED
+      // ✅ 6) NOTIFICACIÓN NO BLOQUEANTE (ROBUSTEZ)
+      //       La salida ya está guardada. El correo se dispara en segundo plano
+      //       para que el operador no quede esperando al SMTP.
+      {
+        const notifyReservationId = reservationId;
+        const notifyFromId = statusFromId;
+        const notifyToId = statusToId;
 
+        void (async () => {
+          try {
+            const { data: fullReservation, error: resErr } = await supabase
+              .from('reservations')
+              .select('*')
+              .eq('id', notifyReservationId)
+              .maybeSingle();
 
-      try {
-        // Obtener la reserva completa actualizada para el trigger
-        const { data: fullReservation, error: resErr } = await supabase
-          .from('reservations')
-          .select('*')
-          .eq('id', reservationId)
-          .single();
-
-        if (!resErr && fullReservation) {
-          await emailTriggerService.onReservationStatusChanged(
-            orgId,
-            fullReservation as any,
-            statusFromId,
-            statusToId
-          );
-        }
-      } catch (triggerError: any) {
-        // non-blocking
+            if (!resErr && fullReservation) {
+              await emailTriggerService.onReservationStatusChanged(
+                orgId,
+                fullReservation as any,
+                notifyFromId,
+                notifyToId
+              );
+            }
+          } catch {
+            // non-blocking
+          }
+        })();
       }
 
       return {

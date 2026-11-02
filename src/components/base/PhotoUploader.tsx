@@ -1,8 +1,56 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { supabase } from '../../lib/supabase';
+import { supabase } from '@/lib/supabase';
+import { withTimeout, TimeoutError } from '@/utils/withTimeout';
 
 const BUCKET = 'casetilla-fotos';
 const PHOTO_UPLOADED_EVENT = 'casetilla:photo-uploaded';
+
+// ── ROBUSTEZ: límites de espera ───────────────────────────────────────────
+// Ninguna operación de fotos puede quedar esperando indefinidamente.
+// Con red mala o formatos no decodificables, antes se colgaba para siempre.
+const BUCKET_PREP_TIMEOUT_MS = 6000;
+const COMPRESS_TIMEOUT_MS = 20000;
+const UPLOAD_TIMEOUT_MS = 45000;
+
+// La preparación del bucket se hace UNA sola vez por carga de página y NUNCA
+// bloquea la UI: si tarda o falla, los botones ya están habilitados.
+let bucketPrepPromise: Promise<void> | null = null;
+
+const ensureBucketReady = (): Promise<void> => {
+  if (!bucketPrepPromise) {
+    bucketPrepPromise = withTimeout(
+      supabase.functions.invoke('fix-casetilla-storage-rls'),
+      BUCKET_PREP_TIMEOUT_MS,
+      'La preparación del almacenamiento tardó demasiado.',
+    )
+      .then(() => undefined)
+      .catch(() => {
+        bucketPrepPromise = null; // permitir reintento en el próximo montaje
+      });
+  }
+  return bucketPrepPromise;
+};
+
+const isHeicLike = (file?: File): boolean => {
+  if (!file) return false;
+  const type = (file.type || '').toLowerCase();
+  if (type === 'image/heic' || type === 'image/heif') return true;
+  return /\.hei[cf]$/i.test(file.name || '');
+};
+
+const buildPhotoErrorMessage = (err: unknown, file?: File): string => {
+  const raw = err instanceof Error ? err.message : String(err ?? '');
+  const heic = isHeicLike(file);
+  if (err instanceof TimeoutError) {
+    return heic
+      ? 'La foto HEIC no se pudo procesar en este dispositivo. Usá la cámara o convertí la imagen a JPG.'
+      : `${raw} Tocá Reintentar.`;
+  }
+  if (heic) {
+    return 'La foto HEIC no se pudo procesar en este dispositivo. Usá la cámara o convertí la imagen a JPG.';
+  }
+  return raw || 'No se pudo subir la foto';
+};
 
 interface PhotoUploadedEventDetail {
   sessionKey: string;
@@ -64,11 +112,19 @@ async function compressImage(file: File, maxWidth = 1200, quality = 0.82): Promi
 }
 
 async function uploadPhotoToStorage(file: File, orgId: string, folder: string): Promise<string> {
-  const compressed = await compressImage(file);
+  const compressed = await withTimeout(
+    compressImage(file),
+    COMPRESS_TIMEOUT_MS,
+    'No se pudo procesar la imagen.',
+  );
   const path = `${orgId}/${folder}/${Date.now()}-${Math.random().toString(36).slice(2, 9)}.jpg`;
-  const { error: uploadError } = await supabase.storage
-    .from(BUCKET)
-    .upload(path, compressed, { contentType: 'image/jpeg', upsert: false });
+  const { error: uploadError } = await withTimeout(
+    supabase.storage
+      .from(BUCKET)
+      .upload(path, compressed, { contentType: 'image/jpeg', upsert: false }),
+    UPLOAD_TIMEOUT_MS,
+    'La foto no se pudo subir.',
+  );
   if (uploadError) throw uploadError;
   const { data: urlData } = supabase.storage.from(BUCKET).getPublicUrl(path);
   return urlData.publicUrl;
@@ -138,7 +194,6 @@ export default function PhotoUploader({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // Deps vacías: intencional — solo usamos refs estables, sin reactivos
 
-  const [bucketReady, setBucketReady] = useState(false);
   const mountedRef = useRef(true);
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const galleryInputRef = useRef<HTMLInputElement>(null);
@@ -148,12 +203,9 @@ export default function PhotoUploader({
     return () => { mountedRef.current = false; };
   }, []);
 
-  // ── Preparar bucket ──────────────────────────────────────────────────────
+  // ── Preparar bucket (best-effort, en segundo plano, sin bloquear la UI) ──
   useEffect(() => {
-    supabase.functions.invoke('fix-casetilla-storage-rls')
-      .then(() => setBucketReady(true))
-      .catch(() => setBucketReady(true));
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    void ensureBucketReady();
   }, []);
 
   // ── Rehidratación vía custom event (Android remount tras cámara) ─────────
@@ -270,7 +322,7 @@ export default function PhotoUploader({
         setPhotos((prev) => {
           const updated = prev.map((p) =>
             p.id === item.id
-              ? { ...p, status: 'error' as const, errorMsg: String((err as Error)?.message ?? err) }
+              ? { ...p, status: 'error' as const, errorMsg: buildPhotoErrorMessage(err, item._file) }
               : p,
           );
           notifyParent(updated);
@@ -351,7 +403,7 @@ export default function PhotoUploader({
   const openGallery = () => galleryInputRef.current?.click();
 
   const isUploading = photos.some((p) => p.status === 'uploading');
-  const canAdd = photos.length < maxPhotos && !disabled && bucketReady;
+  const canAdd = photos.length < maxPhotos && !disabled;
 
   return (
     <div className="space-y-3">
@@ -363,7 +415,7 @@ export default function PhotoUploader({
         capture="environment"
         className="hidden"
         onChange={handleFileSelect}
-        disabled={disabled || !bucketReady}
+        disabled={disabled}
       />
       {/* Input galería */}
       <input
@@ -372,7 +424,7 @@ export default function PhotoUploader({
         accept="image/*,image/heic,image/heif"
         className="hidden"
         onChange={handleFileSelect}
-        disabled={disabled || !bucketReady}
+        disabled={disabled}
       />
 
       {/* Encabezado */}

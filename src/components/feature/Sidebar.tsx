@@ -15,13 +15,13 @@ import {
   SidebarToggle,
   SidebarMobileDrawer,
   SidebarMobileBottomNav,
-} from './sidebar/index';
+} from './sidebar';
 
 export default function Sidebar() {
   const navigate = useNavigate();
   const location = useLocation();
   const { user, loading: authLoading } = useAuth();
-  const { orgId, can, hasRole, loading: permsLoading } = usePermissions();
+  const { orgId, can, loading: permsLoading } = usePermissions();
 
   const [orgName, setOrgName] = useState<string | null>(null);
 
@@ -120,19 +120,11 @@ export default function Sidebar() {
     return can(permission);
   }, [permsLoading, orgId, can]);
 
-  // Ítems restringidos por rol: ocultos mientras cargan los permisos
-  const hasAnyRole = useCallback((roles?: string[]): boolean => {
-    if (!roles || roles.length === 0) return true;
-    if (permsLoading) return false;
-    return roles.some((r) => hasRole(r));
-  }, [permsLoading, hasRole]);
-
   const filterMenuItems = useCallback((items: MenuItem[]): MenuItem[] => {
     return items
       .map((item) => {
-        if (!hasAnyRole(item.roles)) return null;
         if (item.children) {
-          const visibleChildren = item.children.filter((child) => hasPermission(child.permission) && hasAnyRole(child.roles));
+          const visibleChildren = item.children.filter((child) => hasPermission(child.permission));
           if (visibleChildren.length === 0) return null;
           if (!hasPermission(item.permission)) return null;
           return { ...item, children: visibleChildren };
@@ -141,7 +133,7 @@ export default function Sidebar() {
         return item;
       })
       .filter((item): item is MenuItem => item !== null);
-  }, [hasPermission, hasAnyRole]);
+  }, [hasPermission]);
 
   // ─── DERIVED MENU ITEMS ───
   const visibleMenuItems = useMemo(() => filterMenuItems(rawMenuItems), [filterMenuItems]);
