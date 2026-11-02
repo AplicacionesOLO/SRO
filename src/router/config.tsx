@@ -13,6 +13,7 @@ import HomeRedirect from "../pages/home/page";
 import { lazyWithRetry } from "../utils/lazyWithRetry";
 import RequirePermission from "./RequirePermission";
 import ProtectedRoute from "./ProtectedRoute";
+import { PROCESO3D_ROLES } from "../pages/proceso3d/access";
 
 const AdminPage = lazyWithRetry(() => import('../pages/admin/page'));
 const MatrizPermisosPage = lazyWithRetry(() => import('../pages/admin/matriz-permisos/page'));
@@ -23,6 +24,7 @@ const AlmacenesPage = lazyWithRetry(() => import('../pages/admin/almacenes/page'
 const ClientesPage = lazyWithRetry(() => import('../pages/admin/clientes/page'));
 const CorrespondenciaPage = lazyWithRetry(() => import('../pages/admin/correspondencia/page'));
 const ManpowerPage = lazyWithRetry(() => import('../pages/manpower/page'));
+const Proceso3DPage = lazyWithRetry(() => import('../pages/proceso3d/page'));
 const CasetillaPage = lazyWithRetry(() => import('../pages/casetilla/page'));
 const ComplianceCenterPage = lazyWithRetry(() => import('../pages/casetilla/compliance/page'));
 const MigracionPage = lazyWithRetry(() => import('../pages/admin/migracion/page'));
@@ -82,6 +84,16 @@ const routes: RouteObject[] = [
       <ProtectedRoute>
         <RequirePermission permission="manpower.view">
           <ManpowerPage />
+        </RequirePermission>
+      </ProtectedRoute>
+    )
+  },
+  {
+    path: '/proceso3d',
+    element: (
+      <ProtectedRoute>
+        <RequirePermission permission="proceso3d.view" roles={PROCESO3D_ROLES}>
+          <Proceso3DPage />
         </RequirePermission>
       </ProtectedRoute>
     )
