@@ -1,5 +1,6 @@
-import { DISPATCH_STAGE_META, dispatchPallets, type DispatchItem, type DispatchStage, type PutawayItem } from '../lib/appolo';
+import { CONTAINER_SLOTS, DISPATCH_STAGE_META, SLOT_COLORS, SLOT_LABELS, dispatchPallets, occupiedCells, type DispatchItem, type DispatchStage, type PutawayItem } from '../lib/appolo';
 import type { AppoloMode, AppoloStatus } from '../useAppolo';
+import type { AppoloSlotType } from '../../../services/appoloOpsService';
 
 const STATUS_META: Record<AppoloStatus, { label: string; dot: string }> = {
   off: { label: 'Apagado', dot: 'bg-gray-400' },
@@ -254,15 +255,21 @@ export function DispatchCard({
         </span>
         {d.estado_nombre && <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[11px] text-gray-700">{d.estado_nombre}</span>}
       </div>
-      {item.stage === 'CARGANDO' && (
+      {(item.stage === 'CARGANDO' || occupiedCells(item.cells) > 0) && (
         <>
           <div className="mt-2 flex justify-between text-xs">
-            <span className="font-medium text-gray-700">Carga del contenedor</span>
-            <span className="font-bold tabular-nums">{Math.round(item.progress * 100)}%</span>
+            <span className="font-medium text-gray-700">
+              Carga del contenedor
+              {!item.cellsReal && <span className="ml-1 font-normal text-gray-400">(estimado)</span>}
+            </span>
+            <span className="font-bold tabular-nums">
+              {occupiedCells(item.cells)}/{CONTAINER_SLOTS} · {Math.round(item.progress * 100)}%
+            </span>
           </div>
           <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-gray-200">
             <div className="h-full rounded-full bg-blue-600" style={{ width: `${Math.round(item.progress * 100)}%` }}></div>
           </div>
+          {!compact && <ContainerMap cells={item.cells} />}
         </>
       )}
       {!compact && (
@@ -282,6 +289,44 @@ export function DispatchCard({
         <button onClick={onView} className="mt-2 w-full rounded-md bg-teal-600 px-2 py-1 text-xs font-medium text-white hover:bg-teal-700 cursor-pointer">
           <i className="ri-eye-line mr-1"></i>Ver carga en 3D
         </button>
+      )}
+    </div>
+  );
+}
+
+/** Mapa del contenedor como en AppOLO: 12 filas × 2, posición 1–2 al fondo. */
+function ContainerMap({ cells }: { cells: AppoloSlotType[] }) {
+  const counts = (['S', 'D', 'T', 'C'] as const).map((t) => [t, cells.filter((c) => c === t).length] as const).filter(([, n]) => n > 0);
+  return (
+    <div className="mt-2">
+      <div className="mx-auto w-fit rounded-md border border-gray-300 bg-gray-50 p-1.5">
+        <p className="mb-1 text-center text-[9px] uppercase tracking-wide text-gray-400">Fondo</p>
+        <div className="grid grid-cols-2 gap-1">
+          {cells.map((t, i) => (
+            <div
+              key={i}
+              title={`Posición ${i + 1} · ${SLOT_LABELS[t]}`}
+              className="flex h-[18px] w-[30px] items-center justify-center rounded text-[9px] font-bold tabular-nums"
+              style={{ backgroundColor: SLOT_COLORS[t], color: t === 'E' ? '#64748b' : '#fff' }}
+            >
+              {i + 1}
+            </div>
+          ))}
+        </div>
+        <p className="mt-1 text-center text-[9px] uppercase tracking-wide text-gray-400">Puerta</p>
+      </div>
+      <div className="mt-1.5 flex flex-wrap justify-center gap-2 text-[10px] text-gray-600">
+        {(['E', 'S', 'D', 'T', 'C'] as const).map((t) => (
+          <span key={t} className="inline-flex items-center gap-1">
+            <span className="inline-block h-2.5 w-2.5 rounded-sm border border-gray-300" style={{ backgroundColor: SLOT_COLORS[t] }}></span>
+            {SLOT_LABELS[t]}
+          </span>
+        ))}
+      </div>
+      {counts.length > 0 && (
+        <p className="mt-1 text-center text-[10px] text-gray-500">
+          {counts.map(([t, n]) => `${n} ${SLOT_LABELS[t].toLowerCase()}`).join(' · ')} (posiciones)
+        </p>
       )}
     </div>
   );

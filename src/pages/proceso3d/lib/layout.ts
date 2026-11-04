@@ -160,9 +160,10 @@ export function buildLayout(docks: DockInput[]): SiteLayout {
     if (g !== 0) return g;
     const na = numOf(a);
     const nb = numOf(b);
-    // números descendentes en x lógico = ascendentes de izquierda a derecha vistos desde atrás
-    if (!Number.isNaN(na) && !Number.isNaN(nb) && na !== nb) return nb - na;
-    return b.name.localeCompare(a.name, undefined, { numeric: true });
+    // números ascendentes en x lógico: dentro de cada grupo se numera desde el lado de
+    // Recepción (0101) hacia Zona Franca, sin mover los grupos
+    if (!Number.isNaN(na) && !Number.isNaN(nb) && na !== nb) return na - nb;
+    return a.name.localeCompare(b.name, undefined, { numeric: true });
   });
 
   // Un espacio de una puerta entre grupos de categoría

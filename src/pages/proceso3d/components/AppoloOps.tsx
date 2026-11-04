@@ -4,7 +4,7 @@ import { Html } from '@react-three/drei';
 import * as THREE from 'three';
 import { CROSS_AISLE_Z, DOCKED_Z, FLOOR_Y, RACK_Z0, ROAD_WIDTH, ROAD_Z, type Pose, type SiteLayout } from '../lib/layout';
 import type { AppoloSlotType } from '../../../services/appoloOpsService';
-import { LOT_CAPACITY, LOT_ROWS, lotGeometry, lotPose, type DispatchStage, type EquipmentUse, type LotStats } from '../lib/appolo';
+import { LOT_CAPACITY, LOT_ROWS, SLOT_COLORS, lotGeometry, lotPose, occupiedCells, type DispatchStage, type EquipmentUse, type LotStats } from '../lib/appolo';
 import { ElectricJack, Forklift, Mover, Pallet, Person, type Waypoint } from './Workforce';
 
 /**
@@ -22,8 +22,8 @@ export interface DispatchLoadVisual {
   progress: number;
   /** Tarimas totales del despacho */
   total: number;
-  /** Distribución real del contenedor (si AppOLO la envía) */
-  layout?: AppoloSlotType[] | null;
+  /** Mapa del contenedor: 24 posiciones (real de AppOLO o estimado) */
+  cells: AppoloSlotType[];
   equip: EquipmentUse;
 }
 
@@ -38,9 +38,8 @@ export interface PutawayVisual {
 const VESTS = ['#38bdf8', '#a3e635', '#facc15', '#f97316'];
 const SKIN = ['#c68a5e', '#8d5a3b', '#e0b48a', '#a86b45'];
 const LOAD = ['#c89b62', '#d6b07a', '#b98a55', '#e2e8f0'];
-const SLOT_COLOR: Record<string, string> = { S: '#d6b07a', D: '#b98a55', T: '#93c5fd', C: '#a7f3d0' };
 
-/** 24 posiciones del contenedor: 12 filas × 2, la fila 0 al fondo. */
+/** 24 posiciones del contenedor como en AppOLO: 12 filas × 2, posición 1–2 al fondo, impares a la izquierda. */
 const CONTAINER: [number, number][] = [];
 for (let row = 0; row < 12; row++) for (const x of [-0.55, 0.55]) CONTAINER.push([x, 12.6 - row * 0.95]);
 /** Zona de preparación / recepción detrás de la puerta */
@@ -98,15 +97,8 @@ export function DispatchLoadCell({ v, positions }: { v: DispatchLoadVisual; posi
 
   const loading = v.stage === 'CARGANDO';
   const preparing = v.stage === 'PREPARANDO';
-  const total = Math.max(1, Math.min(CONTAINER.length, v.total));
-  const loaded = Math.round(Math.max(0, Math.min(1, v.progress)) * total);
-
-  // Posiciones ocupadas del contenedor: la distribución real de AppOLO o, si no viene, en orden
-  const slots = useMemo(() => {
-    const real = (v.layout ?? []).map((t, i) => ({ t, i })).filter((s) => s.t && s.t !== 'E');
-    const order = real.length ? real : Array.from({ length: total }, (_, i) => ({ t: (i % 5 === 4 ? 'D' : 'S') as AppoloSlotType, i }));
-    return order.slice(0, loaded).filter((s) => s.i < CONTAINER.length);
-  }, [v.layout, total, loaded]);
+  const total = Math.max(1, v.total);
+  const loaded = occupiedCells(v.cells);
 
   const agents = useMemo(() => {
     const out: ReactNode[] = [];
@@ -144,22 +136,21 @@ export function DispatchLoadCell({ v, positions }: { v: DispatchLoadVisual; posi
     return out;
   }, [loading, preparing, v.equip.carretilla, v.equip.montacargas, v.equip.apilador]);
 
-  const remaining = preparing ? total : loading ? total - loaded : 0;
+  const remaining = preparing ? total : loading ? Math.max(0, total - loaded) : 0;
 
   return (
     <group ref={root} position={[v.x, FLOOR_Y, 0]} visible={false}>
-      {/* contenedor: tarimas ya cargadas (las dobles van apiladas) */}
-      {slots.map((s, k) => {
-        const [x, z] = CONTAINER[s.i];
-        const color = SLOT_COLOR[s.t] ?? LOAD[k % LOAD.length];
+      {/* contenedor: las 24 posiciones de AppOLO; libres marcadas en el piso, ocupadas con su tarima
+          del color del tipo (S azul, D ámbar, T violeta, C rojo) */}
+      {v.cells.map((t, i) => {
+        const [x, z] = CONTAINER[i];
         return (
-          <group key={s.i} position={[x, 0, z]}>
-            <Pallet color={color} />
-            {s.t === 'D' && (
-              <group position={[0, 1.12, 0]}>
-                <Pallet color={color} />
-              </group>
-            )}
+          <group key={i} position={[x, 0, z]}>
+            <mesh position={[0, 0.03, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+              <planeGeometry args={[1, 0.85]} />
+              <meshBasicMaterial color={SLOT_COLORS[t]} transparent opacity={t === 'E' ? 0.35 : 0.9} />
+            </mesh>
+            {t !== 'E' && <Pallet color={SLOT_COLORS[t]} />}
           </group>
         );
       })}
