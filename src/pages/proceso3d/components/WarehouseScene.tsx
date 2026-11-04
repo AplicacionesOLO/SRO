@@ -6,10 +6,12 @@ import * as THREE from 'three';
 import WarehouseSite, { type DockVisual } from './WarehouseSite';
 import Truck3D, { type TruckVisual } from './Truck3D';
 import { UnloadingCell, type UnloadVisual } from './Workforce';
+import { DispatchLoadCell, DispatchLotArea, PutawayCell, type DispatchLoadVisual, type PutawayVisual } from './AppoloOps';
+import { lotGeometry, type LotStats } from '../lib/appolo';
 import { BLVD_Z, FRONT_Z, MIRROR_X, type Pose, type SiteLayout } from '../lib/layout';
 import type { TruckAlert } from '../lib/alerts';
 
-export type CameraPreset = 'general' | 'andenes' | 'despacho' | 'entrada' | 'frente' | 'interior' | 'descarga';
+export type CameraPreset = 'general' | 'andenes' | 'despacho' | 'entrada' | 'frente' | 'interior' | 'descarga' | 'esperaDespacho';
 
 export interface CameraRequest {
   name: CameraPreset;
@@ -37,9 +39,16 @@ interface WarehouseSceneProps {
   alerts: Map<string, TruckAlert>;
   /** Reloj de las alertas: null = tiempo real; número = hora simulada del recorrido */
   alertClock: number | null;
+  /** AppOLO: cargas de despacho en andén y acomodo a racks (opcional) */
+  loadings?: DispatchLoadVisual[];
+  putaways?: PutawayVisual[];
+  /** Patio de espera de salida de despachos (AppOLO); undefined = no se dibuja */
+  dispatchLot?: LotStats;
 }
 
 const { ACTION } = CameraControlsImpl;
+const NO_LOADINGS: DispatchLoadVisual[] = [];
+const NO_PUTAWAYS: PutawayVisual[] = [];
 const MOVE_KEYS = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'KeyQ', 'KeyE']);
 
 function isTyping(el: EventTarget | null) {
@@ -93,6 +102,14 @@ function CameraRig({
         target = [layout.officeX - 19, 0, FRONT_Z - 10];
         pos = [layout.officeX - 19, 50, FRONT_Z - 95];
         break;
+      case 'esperaDespacho': {
+        const g = lotGeometry(layout);
+        const cx = (g.x0 + g.x1) / 2;
+        const cz = (g.zTop + g.zBottom) / 2;
+        target = [cx, 0, cz];
+        pos = [cx - 70, 70, cz + 60];
+        break;
+      }
       case 'interior':
         target = [midX, 0, -25];
         pos = [midX, 95, 45];
@@ -210,10 +227,14 @@ export default function WarehouseScene({
   positions,
   alerts,
   alertClock,
+  loadings = NO_LOADINGS,
+  putaways = NO_PUTAWAYS,
+  dispatchLot,
 }: WarehouseSceneProps) {
   const flyRef = useRef<((p: THREE.Vector3) => void) | null>(null);
   const span = layout.eastRoadX - layout.streetX;
   const unloadByTruck = useMemo(() => new Map(unloads.map((u) => [u.truckId, u])), [unloads]);
+  const loadingByTruck = useMemo(() => new Map(loadings.map((l) => [l.truckId, l])), [loadings]);
 
   return (
     <Canvas
@@ -267,6 +288,8 @@ export default function WarehouseScene({
           />
           {trucks.map((t) => {
             const u = unloadByTruck.get(t.id);
+            const l = loadingByTruck.get(t.id);
+            const loadingOpen = !!l && (l.stage === 'CARGANDO' || l.stage === 'PREPARANDO');
             return (
               <Truck3D
                 key={t.id}
@@ -277,14 +300,17 @@ export default function WarehouseScene({
                 onSelect={onSelect}
                 onGone={onGone}
                 positions={positions}
-                doorsOpen={!!u && u.stage !== 'ESPERA'}
+                doorsOpen={(!!u && u.stage !== 'ESPERA') || loadingOpen}
                 alert={alerts.get(t.id)}
                 alertClock={alertClock}
-                seeThrough={cutaway && !!u}
+                seeThrough={cutaway && (!!u || loadingOpen)}
               />
             );
           })}
           {cutaway && unloads.map((u) => <UnloadingCell key={u.truckId} u={u} positions={positions} />)}
+          {cutaway && loadings.map((l) => <DispatchLoadCell key={l.truckId} v={l} positions={positions} />)}
+          {cutaway && putaways.map((p) => <PutawayCell key={p.id} v={p} />)}
+          {dispatchLot !== undefined && <DispatchLotArea layout={layout} stats={dispatchLot} showLabel={showLabels} />}
         </group>
       </Suspense>
       <CameraRig layout={layout} preset={cameraPreset} flyRef={flyRef} />

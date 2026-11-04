@@ -14,8 +14,26 @@ import { buildLayout, buildRoute, type Pose } from './lib/layout';
 import { isStaleWithoutExit, livePhase, PHASE_META, PHASE_ORDER, replayPhase, type TruckPhase } from './lib/phases';
 import { buildPlan, samePose, type PlanItem } from './lib/plan';
 import { crewFor, dockActivity, isLooseCargo, resolveCargo, STAGE_META, unitLabel, type Crew, type DockActivity } from './lib/unloading';
-import { PROCESO3D_ROLES } from './access';
 import { ALERT_RED_MIN, ALERT_YELLOW_MIN, truckAlert, type TruckAlert } from './lib/alerts';
+import { appoloConfigured } from '../../services/appoloOpsService';
+import {
+  allocateEquipment,
+  buildDispatchPlan,
+  buildPutaways,
+  demoSnapshot,
+  dispatchAlert,
+  dispatchPallets,
+  equipmentTotals,
+  isAppoloId,
+  lotStats,
+  mapDispatchDoors,
+  type DispatchItem,
+  type EquipmentUse,
+} from './lib/appolo';
+import { useAppoloSnapshot, useDispatchTrucks, type AppoloMode } from './useAppolo';
+import { AppoloStatusBadge, AppoloSummary, DispatchCard } from './components/AppoloPanel';
+import type { DispatchLoadVisual, PutawayVisual } from './components/AppoloOps';
+import { UNLOADED } from './lib/phases';
 
 type Mode = 'live' | 'replay';
 
@@ -38,7 +56,7 @@ function todayIn(tz: string) {
 }
 
 export default function Proceso3DPage() {
-  const { can, hasRole, orgId, loading: permLoading } = usePermissions();
+  const { can, orgId, loading: permLoading } = usePermissions();
   const { allowedWarehouseIds, allowedClientIds, loading: scopeLoading } = useUserScope();
   const {
     allowedWarehouses,
@@ -70,6 +88,9 @@ export default function Proceso3DPage() {
   const sceneBoxRef = useRef<HTMLDivElement>(null);
   const [realtimeStatus, setRealtimeStatus] = useState<'ok' | 'retry' | 'off'>('off');
   const [isFullscreen, setIsFullscreen] = useState(false);
+  // AppOLO (despachos y acomodo): solo lectura, se puede apagar sin afectar el resto
+  const [appoloMode, setAppoloMode] = useState<AppoloMode>(() => (appoloConfigured() ? 'live' : 'off'));
+  const [demoAnchor, setDemoAnchor] = useState(() => Date.now());
 
   useEffect(() => {
     const onChange = () => setIsFullscreen(document.fullscreenElement === sceneBoxRef.current);
@@ -258,16 +279,49 @@ export default function Proceso3DPage() {
 
   /* ─────────────────────────────── Plan y visuales ─────────────────────────────── */
 
-  const layout = useMemo(() => {
+  const sroDockInputs = useMemo(() => {
     const catById = new Map((data?.categories ?? []).map((c) => [c.id, c.name]));
-    return buildLayout(
-      (data?.docks ?? []).map((d) => ({
-        id: d.id,
-        name: d.name,
-        categoryName: d.category?.name ?? (d.category_id ? catById.get(d.category_id) : null),
-      }))
-    );
+    return (data?.docks ?? []).map((d) => ({
+      id: d.id,
+      name: d.name,
+      categoryName: d.category?.name ?? (d.category_id ? catById.get(d.category_id) : null),
+    }));
   }, [data?.docks, data?.categories]);
+
+  /* ─────────────────────────────── AppOLO ─────────────────────────────── */
+
+  const demoSnap = useMemo(() => {
+    if (appoloMode !== 'demo' || !data) return null;
+    const discharged = data.reservations
+      .filter((r) => UNLOADED.has((r.status?.code ?? '').toUpperCase()))
+      .map((r) => ({ reservaId: r.id, bultos: r.quantity_value ?? null }));
+    return demoSnapshot(sroDockInputs, discharged, demoAnchor);
+  }, [appoloMode, data, sroDockInputs, demoAnchor]);
+
+  const appolo = useAppoloSnapshot({
+    mode: appoloMode,
+    warehouseId: activeWarehouseId,
+    date,
+    tz,
+    isToday,
+    demo: demoSnap,
+  });
+
+  const doorMap = useMemo(() => mapDispatchDoors(sroDockInputs, appolo.snapshot), [sroDockInputs, appolo.snapshot]);
+  // El edificio solo se rearma si cambian las puertas, no en cada actualización de AppOLO
+  const extraDocksKey = doorMap.extraDocks.map((d) => `${d.id}=${d.name}`).join('|');
+  const extraDocks = useMemo(
+    () => doorMap.extraDocks,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [extraDocksKey]
+  );
+
+  const layout = useMemo(() => buildLayout([...sroDockInputs, ...extraDocks]), [sroDockInputs, extraDocks]);
+
+  // Si aparecen o desaparecen puertas de despacho, los camiones se reubican sin animar
+  useEffect(() => {
+    snapRef.current = true;
+  }, [extraDocksKey]);
 
   const currentTime = mode === 'live' ? now : simTime;
 
@@ -358,24 +412,6 @@ export default function Proceso3DPage() {
 
   const truckList = useMemo(() => [...visuals.values()], [visuals]);
 
-  const dockVisuals: DockVisual[] = useMemo(() => {
-    if (!data) return [];
-    const occupied = new Set(
-      plan.filter((p) => p.phase === 'EN_ANDEN' && !p.conflict).map((p) => reservationById.get(p.id)?.dock_id)
-    );
-    const catById = new Map(data.categories.map((c) => [c.id, c]));
-    return data.docks.map((d) => {
-      const cat = d.category ?? (d.category_id ? catById.get(d.category_id) : undefined);
-      return {
-        id: d.id,
-        name: d.name,
-        categoryColor: cat?.color || '#0d9488',
-        categoryName: cat?.name || 'Sin categoría',
-        blocked: !!d.status?.is_blocking,
-        occupied: occupied.has(d.id),
-      };
-    });
-  }, [data, plan, reservationById]);
 
   /* ─────────────────────────────── Descargas en andén ─────────────────────────────── */
 
@@ -415,7 +451,122 @@ export default function Proceso3DPage() {
     [dockActivities, reservationById, simulateId]
   );
 
-  // Nubes de alerta: tiempo esperando salida, andén o cuadrilla
+  /* ─────────────────────────────── AppOLO en la escena ─────────────────────────────── */
+
+  const lotSlotsRef = useRef(new Map<string, number>());
+  const sroOccupied = useMemo(
+    () => new Set(plan.filter((p) => p.phase === 'EN_ANDEN' && !p.conflict).map((p) => reservationById.get(p.id)?.dock_id ?? '')),
+    [plan, reservationById]
+  );
+
+  const dispatchItems: DispatchItem[] = useMemo(
+    () => buildDispatchPlan(appolo.snapshot, doorMap, layout, sroOccupied, currentTime, mode === 'live', lotSlotsRef.current),
+    [appolo.snapshot, doorMap, layout, sroOccupied, currentTime, mode]
+  );
+
+  const putawayItems = useMemo(
+    () => buildPutaways(appolo.snapshot, layout, (id) => reservationById.get(id)?.dock_id ?? null, sroDockInputs, currentTime),
+    [appolo.snapshot, layout, reservationById, sroDockInputs, currentTime]
+  );
+
+  const dispatchTrucks = useDispatchTrucks({
+    items: dispatchItems,
+    layout,
+    positions: positionsRef.current,
+    snap: mode === 'replay' && !playing,
+  });
+
+  // Equipos activos de AppOLO repartidos entre cargas y acomodos visibles
+  const equipmentUse = useMemo(() => {
+    const needs: { id: string; want: EquipmentUse }[] = [];
+    for (const it of dispatchItems)
+      if (it.pose && it.stage === 'CARGANDO') needs.push({ id: it.id, want: { montacargas: 1, apilador: 0, carretilla: 2 } });
+    for (const p of putawayItems) needs.push({ id: `put:${p.id}`, want: { montacargas: 1, apilador: 1, carretilla: 0 } });
+    for (const it of dispatchItems)
+      if (it.pose && it.stage === 'PREPARANDO') needs.push({ id: it.id, want: { montacargas: 0, apilador: 1, carretilla: 0 } });
+    return allocateEquipment(appolo.snapshot?.equipment, needs);
+  }, [dispatchItems, putawayItems, appolo.snapshot]);
+
+  const loadings: DispatchLoadVisual[] = useMemo(
+    () =>
+      dispatchItems
+        .filter((it) => it.pose && !it.inLot && it.dockId && layout.docks.has(it.dockId))
+        .map((it) => ({
+          truckId: it.id,
+          x: layout.docks.get(it.dockId!)!.x,
+          stage: it.stage,
+          // redondeado para no redibujar la carga en cada tic del reloj
+          progress: Math.round(it.progress * 48) / 48,
+          total: dispatchPallets(it.dispatch),
+          layout: it.dispatch.layout,
+          equip: equipmentUse.get(it.id) ?? { montacargas: 0, apilador: 0, carretilla: 1 },
+        })),
+    [dispatchItems, layout, equipmentUse]
+  );
+
+  const putaways: PutawayVisual[] = useMemo(
+    () =>
+      putawayItems.map((p) => ({
+        id: p.id,
+        x: p.x,
+        progress: Math.round(p.progress * 40) / 40,
+        pallets: p.pallets,
+        equip: equipmentUse.get(`put:${p.id}`) ?? { montacargas: 0, apilador: 0, carretilla: 0 },
+      })),
+    [putawayItems, equipmentUse]
+  );
+
+  const lotInfo = useMemo(() => lotStats(dispatchItems, currentTime), [dispatchItems, currentTime]);
+  const putawayDocks = useMemo(() => new Set(putawayItems.map((p) => p.dockId)), [putawayItems]);
+  const sceneUnloads = useMemo(
+    () => (putawayDocks.size ? unloads.map((u) => (putawayDocks.has(u.dockId) ? { ...u, putawayExternal: true } : u)) : unloads),
+    [unloads, putawayDocks]
+  );
+
+  const sceneTrucks = useMemo(
+    () => (dispatchTrucks.visuals.size ? [...truckList, ...dispatchTrucks.visuals.values()] : truckList),
+    [truckList, dispatchTrucks.visuals]
+  );
+  const dispatchGone = dispatchTrucks.onGone;
+  const handleSceneGone = useCallback(
+    (id: string) => (isAppoloId(id) ? dispatchGone(id) : handleGone(id)),
+    [dispatchGone, handleGone]
+  );
+
+  const dockVisuals: DockVisual[] = useMemo(() => {
+    if (!data) return [];
+    const occupied = new Set(
+      plan.filter((p) => p.phase === 'EN_ANDEN' && !p.conflict).map((p) => reservationById.get(p.id)?.dock_id)
+    );
+    for (const it of dispatchItems) if (it.pose && !it.inLot && it.dockId) occupied.add(it.dockId);
+    const catById = new Map(data.categories.map((c) => [c.id, c]));
+    const sro = data.docks.map((d) => {
+      const cat = d.category ?? (d.category_id ? catById.get(d.category_id) : undefined);
+      return {
+        id: d.id,
+        name: d.name,
+        categoryColor: cat?.color || '#0d9488',
+        categoryName: cat?.name || 'Sin categoría',
+        blocked: !!d.status?.is_blocking,
+        occupied: occupied.has(d.id),
+      };
+    });
+    if (!extraDocks.length) return sro;
+    const despachoCat = data.categories.find((c) => /despacho|dispatch/i.test(c.name));
+    return [
+      ...sro,
+      ...extraDocks.map((d) => ({
+        id: d.id,
+        name: d.name,
+        categoryColor: despachoCat?.color || '#2563eb',
+        categoryName: d.categoryName || 'Despacho',
+        blocked: false,
+        occupied: occupied.has(d.id),
+      })),
+    ];
+  }, [data, plan, reservationById, dispatchItems, extraDocks]);
+
+  // Nubes de alerta: tiempo esperando salida, andén o cuadrilla (y despachos esperando chofer / validación)
   const alerts = useMemo(() => {
     const out = new Map<string, TruckAlert>();
     if (!data) return out;
@@ -427,8 +578,12 @@ export default function Proceso3DPage() {
       const a = truckAlert(r, p.phase, stage, data.gateTimes.get(r.id), data.statusHistory.get(r.id), currentTime);
       if (a) out.set(p.id, a);
     }
+    for (const it of dispatchItems) {
+      const a = dispatchAlert(it);
+      if (a && a.since <= currentTime) out.set(it.id, a);
+    }
     return out;
-  }, [data, plan, reservationById, dockActivities, currentTime]);
+  }, [data, plan, reservationById, dockActivities, currentTime, dispatchItems]);
 
   const alertCounts = useMemo(() => {
     let yellow = 0;
@@ -484,6 +639,15 @@ export default function Proceso3DPage() {
   }, [plan, phaseFilter, search, reservationById, data, dockName]);
 
   const selected = selectedId ? reservationById.get(selectedId) : undefined;
+  const selectedDispatch = isAppoloId(selectedId) ? dispatchItems.find((i) => i.id === selectedId) : undefined;
+  const dispatchDockName = (it: DispatchItem) =>
+    it.dockId ? dockVisuals.find((d) => d.id === it.dockId)?.name ?? '' : '';
+  const viewDispatch = (it: DispatchItem) => {
+    setSelectedId(it.id);
+    const x = it.dockId ? layout.docks.get(it.dockId)?.x : undefined;
+    if (it.inLot) goToCamera('esperaDespacho');
+    else if (x !== undefined && it.pose) goToCamera('descarga', x);
+  };
   const selectedPlan = selectedId ? plan.find((p) => p.id === selectedId) : undefined;
   const selectedGate = selectedId ? data?.gateTimes.get(selectedId) : undefined;
   const selectedActivity = selectedId ? dockActivities.get(selectedId) : undefined;
@@ -499,7 +663,7 @@ export default function Proceso3DPage() {
     );
   }
 
-  if (!can('proceso3d.view') || !PROCESO3D_ROLES.some((r) => hasRole(r))) {
+  if (!can('proceso3d.view')) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
         <div className="bg-white rounded-lg border border-gray-200 p-8 max-w-md w-full text-center">
@@ -625,17 +789,20 @@ export default function Proceso3DPage() {
                 <WarehouseScene
                   layout={layout}
                   docks={dockVisuals}
-                  trucks={truckList}
-                  unloads={unloads}
+                  trucks={sceneTrucks}
+                  unloads={sceneUnloads}
+                  loadings={loadings}
+                  putaways={putaways}
+                  dispatchLot={appoloMode !== 'off' ? lotInfo : undefined}
                   cutaway={cutaway}
                   selectedId={selectedId}
-                  highlightDockId={selected?.dock_id ?? null}
+                  highlightDockId={selected?.dock_id ?? selectedDispatch?.dockId ?? null}
                   showLabels={showLabels}
                   truckSpeed={mode === 'replay' ? 18 + speed * 2 : 18}
                   warehouseName={activeWarehouse?.name}
                   cameraPreset={cameraPreset}
                   onSelect={setSelectedId}
-                  onGone={handleGone}
+                  onGone={handleSceneGone}
                   positions={positionsRef.current}
                   alerts={alerts}
                   alertClock={mode === 'live' ? null : simTime}
@@ -715,6 +882,11 @@ export default function Proceso3DPage() {
               <div className="text-lg font-bold tabular-nums text-gray-900">
                 {formatInTimeZone(new Date(currentTime), tz, 'HH:mm')}
               </div>
+              {appoloMode !== 'off' && (
+                <div className="flex justify-end">
+                  <AppoloStatusBadge status={appolo.status} realtimeOk={appolo.realtimeOk} />
+                </div>
+              )}
               {(alertCounts.red > 0 || alertCounts.yellow > 0) && (
                 <div className="mt-1 flex justify-end gap-1 border-t border-gray-200 pt-1">
                   {alertCounts.red > 0 && (
@@ -756,6 +928,16 @@ export default function Proceso3DPage() {
                     </span>
                   ))}
                 </div>
+                {selectedDispatch && (
+                  <DispatchCard
+                    compact
+                    item={selectedDispatch}
+                    dockName={dispatchDockName(selectedDispatch)}
+                    fmt={fmt}
+                    onClose={() => setSelectedId(null)}
+                    onView={() => viewDispatch(selectedDispatch)}
+                  />
+                )}
                 {selected && (
                   <div className="rounded-lg bg-white/95 p-3 text-sm shadow-lg">
                     <div className="flex items-start justify-between gap-2">
@@ -895,6 +1077,32 @@ export default function Proceso3DPage() {
 
           {/* Panel lateral */}
           <div className="flex flex-col gap-4 min-h-0">
+            {selectedDispatch && (
+              <DispatchCard
+                item={selectedDispatch}
+                dockName={dispatchDockName(selectedDispatch)}
+                fmt={fmt}
+                onClose={() => setSelectedId(null)}
+                onView={() => viewDispatch(selectedDispatch)}
+              />
+            )}
+            <AppoloSummary
+              mode={appoloMode}
+              onModeChange={(m) => {
+                if (m === 'demo') setDemoAnchor(mode === 'live' ? Date.now() : simTime);
+                setAppoloMode(m);
+              }}
+              status={appolo.status}
+              error={appolo.error}
+              realtimeOk={appolo.realtimeOk}
+              configured={appoloConfigured()}
+              items={dispatchItems}
+              putaways={putawayItems}
+              equipment={equipmentTotals(appolo.snapshot?.equipment)}
+              onSelect={viewDispatch}
+              onViewLot={() => goToCamera('esperaDespacho')}
+              selectedId={selectedId}
+            />
             {selected && (
               <div className="rounded-lg border border-gray-200 bg-white p-4">
                 <div className="flex items-start justify-between gap-2">

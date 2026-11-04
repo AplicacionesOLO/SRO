@@ -169,7 +169,8 @@ export function buildLayout(docks: DockInput[]): SiteLayout {
   const positions: number[] = [];
   let door = 0;
   ordered.forEach((d, i) => {
-    if (i > 0 && groupRank(d) !== groupRank(ordered[i - 1])) door += 1;
+    const prev = ordered[i - 1];
+    if (i > 0 && (groupRank(d) !== groupRank(prev) || (d.categoryName ?? '') !== (prev.categoryName ?? ''))) door += 1;
     positions.push(door);
     door += 1;
   });
