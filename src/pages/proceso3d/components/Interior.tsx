@@ -1,27 +1,29 @@
 import { memo, useLayoutEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
 import {
-  BUILDING_DEPTH,
   CROSS_AISLE_Z,
   DOOR_WIDTH,
   FLOOR_Y,
+  RACK_DEPTH,
+  RACK_FLUE,
+  RACK_PITCH,
   RACK_Z0,
+  RACK_Z_END,
   STAGING_DEPTH,
   type SiteLayout,
 } from '../lib/layout';
 
 /**
  * Interior del almacén (visible en modo "Interior", sin techo):
- * zona de recepción detrás de cada andén, pasillo transversal y racks selectivos.
+ * zona de recepción detrás de cada andén, pasillo transversal y racks selectivos
+ * perpendiculares a la pared de andenes (pasillos de los racks en z).
  */
 
 const BAY = 2.7;
-const RACK_DEPTH = 1.1;
-const FLUE = 0.2;
-const AISLE = 3.6;
 const LEVELS = [0, 2.0, 4.0, 6.0, 8.0];
 const UPRIGHT_H = 9.2;
-const BAYS_PER_BLOCK = 14;
+/** Bahías por tramo antes del pasillo de cruce a media profundidad */
+const BAYS_PER_BLOCK = 8;
 const BLOCK_GAP = 4;
 const LOAD_COLORS = ['#c89b62', '#d6b07a', '#b98a55', '#e2e8f0', '#cbd5e1', '#93c5fd', '#a7f3d0'];
 
@@ -48,45 +50,48 @@ function buildRacks(layout: SiteLayout): RackData {
   const mat = (x: number, y: number, z: number, sx = 1, sy = 1, sz = 1) =>
     new THREE.Matrix4().compose(new THREE.Vector3(x, y, z), q, new THREE.Vector3(sx, sy, sz));
 
-  // Bloques de racks a lo largo de x, con pasillos de cruce entre bloques
-  const x0 = layout.xWest + 5;
-  const x1 = layout.xEast - 5;
+  // Bahías a lo largo de z (desde el pasillo transversal hacia el frente), con un pasillo de cruce
   const bayStarts: number[] = [];
-  let x = x0;
+  let z = RACK_Z0;
   let inBlock = 0;
-  while (x + BAY <= x1) {
-    bayStarts.push(x);
-    x += BAY;
+  while (z - BAY >= RACK_Z_END) {
+    bayStarts.push(z);
+    z -= BAY;
     inBlock += 1;
     if (inBlock === BAYS_PER_BLOCK) {
-      x += BLOCK_GAP;
+      z -= BLOCK_GAP;
       inBlock = 0;
     }
   }
 
-  for (let front = RACK_Z0; front - 2 * RACK_DEPTH - FLUE > -BUILDING_DEPTH + 6; front -= 2 * RACK_DEPTH + FLUE + AISLE) {
+  // Filas dobles sobre la grilla fija en x (centro en k · RACK_PITCH), dentro del edificio
+  const half = RACK_DEPTH + RACK_FLUE / 2;
+  const kFrom = Math.ceil((layout.xWest + 5 + half) / RACK_PITCH);
+  const kTo = Math.floor((layout.xEast - 5 - half) / RACK_PITCH);
+  for (let k = kFrom; k <= kTo; k++) {
+    const cx = k * RACK_PITCH;
     // dos racks espalda con espalda
-    for (const zFace of [front, front - RACK_DEPTH - FLUE]) {
-      const zA = zFace;
-      const zB = zFace - RACK_DEPTH;
-      const zc = (zA + zB) / 2;
-      bayStarts.forEach((bx, i) => {
-        const prevEnd = i > 0 ? bayStarts[i - 1] + BAY : -Infinity;
+    for (const xFace of [cx - half, cx + RACK_FLUE / 2]) {
+      const xA = xFace;
+      const xB = xFace + RACK_DEPTH;
+      const xc = (xA + xB) / 2;
+      bayStarts.forEach((bz, i) => {
+        const prevEnd = i > 0 ? bayStarts[i - 1] - BAY : Infinity;
         // postes al inicio de cada bahía (y al final si la siguiente no es contigua)
-        if (Math.abs(prevEnd - bx) > 0.01) {
-          uprights.push(mat(bx, UPRIGHT_H / 2, zA), mat(bx, UPRIGHT_H / 2, zB));
+        if (Math.abs(prevEnd - bz) > 0.01) {
+          uprights.push(mat(xA, UPRIGHT_H / 2, bz), mat(xB, UPRIGHT_H / 2, bz));
         }
-        const end = bx + BAY;
-        uprights.push(mat(end, UPRIGHT_H / 2, zA), mat(end, UPRIGHT_H / 2, zB));
+        const end = bz - BAY;
+        uprights.push(mat(xA, UPRIGHT_H / 2, end), mat(xB, UPRIGHT_H / 2, end));
         for (const ly of LEVELS) {
           if (ly > 0) {
-            beams.push(mat(bx + BAY / 2, ly - 0.08, zA), mat(bx + BAY / 2, ly - 0.08, zB));
+            beams.push(mat(xA, ly - 0.08, bz - BAY / 2), mat(xB, ly - 0.08, bz - BAY / 2));
           }
           // dos tarimas por bahía y nivel
-          for (const px of [bx + BAY * 0.27, bx + BAY * 0.73]) {
+          for (const pz of [bz - BAY * 0.27, bz - BAY * 0.73]) {
             if (rnd() < 0.22) continue;
             const h = 1.0 + rnd() * 0.6;
-            const m = mat(px, ly + h / 2 + 0.02, zc, 1, h, 1);
+            const m = mat(xc, ly + h / 2 + 0.02, pz, 1, h, 1);
             loads.push({ m, c: new THREE.Color(LOAD_COLORS[Math.floor(rnd() * LOAD_COLORS.length)]) });
           }
         }
@@ -139,8 +144,8 @@ function Interior({ layout }: { layout: SiteLayout }) {
       {/* racks */}
       <group>
         <Instanced matrices={racks.uprights} geometry={[0.09, UPRIGHT_H, 0.09]} color="#1d4ed8" />
-        <Instanced matrices={racks.beams} geometry={[BAY, 0.12, 0.06]} color="#f97316" />
-        <Instanced matrices={loadMatrices} colors={loadColors} geometry={[1.0, 1, 1.05]} color="#ffffff" />
+        <Instanced matrices={racks.beams} geometry={[0.06, 0.12, BAY]} color="#f97316" />
+        <Instanced matrices={loadMatrices} colors={loadColors} geometry={[1.05, 1, 1.0]} color="#ffffff" />
       </group>
 
       {/* recepción: carril marcado detrás de cada puerta */}

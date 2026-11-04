@@ -2,7 +2,7 @@ import { useMemo, useRef, type ReactNode } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { Html } from '@react-three/drei';
 import * as THREE from 'three';
-import { CROSS_AISLE_Z, DOCKED_Z, FLOOR_Y, RACK_Z0, ROAD_WIDTH, ROAD_Z, type Pose, type SiteLayout } from '../lib/layout';
+import { DOCKED_Z, FLOOR_Y, rackRun, ROAD_WIDTH, ROAD_Z, type Pose, type SiteLayout } from '../lib/layout';
 import type { AppoloSlotType } from '../../../services/appoloOpsService';
 import { LOT_CAPACITY, LOT_ROWS, SLOT_COLORS, lotGeometry, lotPose, occupiedCells, type DispatchStage, type EquipmentUse, type LotStats } from '../lib/appolo';
 import { ElectricJack, Forklift, Mover, Pallet, Person, type Waypoint } from './Workforce';
@@ -48,30 +48,11 @@ for (let row = 0; row < 5; row++) for (const x of [-1.4, 0, 1.4]) STAGE.push([x,
 
 const laneX = (i: number, n: number, width: number) => (n <= 1 ? 0 : -width / 2 + (width * i) / (n - 1));
 
-function rackLoop(i: number, fromZ: number, side: number): Waypoint[] {
-  const rackX = side * (6 + i * 3.2);
-  return [
-    { x: side * 1.2, z: fromZ, wait: 2, carry: true, reverse: true },
-    { x: side * 2.5, z: CROSS_AISLE_Z, carry: true },
-    { x: rackX, z: CROSS_AISLE_Z, carry: true },
-    { x: rackX, z: RACK_Z0 + 2.2, wait: 3, lift: true, reverse: true },
-    { x: rackX, z: CROSS_AISLE_Z },
-    { x: side * 2.5, z: CROSS_AISLE_Z },
-  ];
-}
+/** Acomodo: de la zona de recepción al rack, entrando por el pasillo del rack. */
+const rackLoop = (dockX: number, i: number, fromZ: number, side: number): Waypoint[] => rackRun(dockX, i, fromZ, side, true);
 
-/** Al revés: del rack a la zona de preparación (surtido para el despacho). */
-function pickLoop(i: number, toZ: number, side: number): Waypoint[] {
-  const rackX = side * (6 + i * 3.2);
-  return [
-    { x: rackX, z: RACK_Z0 + 2.2, wait: 3, lift: true, carry: true, reverse: true },
-    { x: rackX, z: CROSS_AISLE_Z, carry: true },
-    { x: side * 2.5, z: CROSS_AISLE_Z, carry: true },
-    { x: side * 1.2, z: toZ, wait: 2 },
-    { x: side * 2.5, z: CROSS_AISLE_Z, reverse: true },
-    { x: rackX, z: CROSS_AISLE_Z },
-  ];
-}
+/** Surtido para el despacho: del rack a la zona de preparación. */
+const pickLoop = (dockX: number, i: number, toZ: number, side: number): Waypoint[] => rackRun(dockX, i, toZ, side, false);
 
 function StagedPallets({ count, colorOffset = 0 }: { count: number; colorOffset?: number }) {
   return (
@@ -127,14 +108,14 @@ export function DispatchLoadCell({ v, positions }: { v: DispatchLoadVisual; posi
       for (let i = 0; i < lifts; i++) {
         const side = i % 2 === 0 ? 1 : -1;
         out.push(
-          <Mover key={`f${i}`} path={pickLoop(i, -9.5, side)} speed={2.4} offset={i * 5} active rest={{ x: side * 4, z: -13, heading: Math.PI }}>
+          <Mover key={`f${i}`} path={pickLoop(v.x, i, -9.5, side)} speed={2.4} offset={i * 5} active rest={{ x: side * 4, z: -13, heading: Math.PI }}>
             {(m) => <Forklift motion={m} stacker={i >= Math.min(1, v.equip.montacargas)} />}
           </Mover>
         );
       }
     }
     return out;
-  }, [loading, preparing, v.equip.carretilla, v.equip.montacargas, v.equip.apilador]);
+  }, [v.x, loading, preparing, v.equip.carretilla, v.equip.montacargas, v.equip.apilador]);
 
   const remaining = preparing ? total : loading ? Math.max(0, total - loaded) : 0;
 
@@ -175,13 +156,13 @@ export function PutawayCell({ v }: { v: PutawayVisual }) {
     for (let i = 0; i < n; i++) {
       const side = i % 2 === 0 ? 1 : -1;
       out.push(
-        <Mover key={i} path={rackLoop(i, -9.5, side)} speed={2.3} offset={i * 5.5} active rest={{ x: side * 4, z: -13, heading: Math.PI }}>
+        <Mover key={i} path={rackLoop(v.x, i, -9.5, side)} speed={2.3} offset={i * 5.5} active rest={{ x: side * 4, z: -13, heading: Math.PI }}>
           {(m) => <Forklift motion={m} stacker={i >= forklifts} />}
         </Mover>
       );
     }
     return out;
-  }, [v.equip.montacargas, v.equip.apilador]);
+  }, [v.x, v.equip.montacargas, v.equip.apilador]);
 
   return (
     <group position={[v.x, FLOOR_Y, 0]}>

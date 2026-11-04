@@ -8,6 +8,7 @@ import Truck3D, { type TruckVisual } from './Truck3D';
 import { UnloadingCell, type UnloadVisual } from './Workforce';
 import { DispatchLoadCell, DispatchLotArea, PutawayCell, type DispatchLoadVisual, type PutawayVisual } from './AppoloOps';
 import { lotGeometry, type LotStats } from '../lib/appolo';
+import { DockHeatPads, GhostTrucks, type DockHeatVisual, type GhostVisual } from './Insights3D';
 import { BLVD_Z, FRONT_Z, MIRROR_X, type Pose, type SiteLayout } from '../lib/layout';
 import type { TruckAlert } from '../lib/alerts';
 
@@ -44,11 +45,17 @@ interface WarehouseSceneProps {
   putaways?: PutawayVisual[];
   /** Patio de espera de salida de despachos (AppOLO); undefined = no se dibuja */
   dispatchLot?: LotStats;
+  /** Mapa de calor de andenes (uso o permanencia); vacío = apagado */
+  heatPads?: DockHeatVisual[];
+  /** Próximas citas en andenes libres */
+  ghosts?: GhostVisual[];
 }
 
 const { ACTION } = CameraControlsImpl;
 const NO_LOADINGS: DispatchLoadVisual[] = [];
 const NO_PUTAWAYS: PutawayVisual[] = [];
+const NO_HEAT: DockHeatVisual[] = [];
+const NO_GHOSTS: GhostVisual[] = [];
 const MOVE_KEYS = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'KeyQ', 'KeyE']);
 
 function isTyping(el: EventTarget | null) {
@@ -230,6 +237,8 @@ export default function WarehouseScene({
   loadings = NO_LOADINGS,
   putaways = NO_PUTAWAYS,
   dispatchLot,
+  heatPads = NO_HEAT,
+  ghosts = NO_GHOSTS,
 }: WarehouseSceneProps) {
   const flyRef = useRef<((p: THREE.Vector3) => void) | null>(null);
   const span = layout.eastRoadX - layout.streetX;
@@ -310,6 +319,8 @@ export default function WarehouseScene({
           {cutaway && unloads.map((u) => <UnloadingCell key={u.truckId} u={u} positions={positions} />)}
           {cutaway && loadings.map((l) => <DispatchLoadCell key={l.truckId} v={l} positions={positions} />)}
           {cutaway && putaways.map((p) => <PutawayCell key={p.id} v={p} />)}
+          {heatPads.length > 0 && <DockHeatPads pads={heatPads} showLabels={showLabels} />}
+          {ghosts.length > 0 && <GhostTrucks ghosts={ghosts} showLabels={showLabels} />}
           {dispatchLot !== undefined && <DispatchLotArea layout={layout} stats={dispatchLot} showLabel={showLabels} />}
         </group>
       </Suspense>
