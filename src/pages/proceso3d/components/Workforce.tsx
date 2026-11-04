@@ -1,7 +1,7 @@
 import { useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
-import { CROSS_AISLE_Z, DOCKED_Z, FLOOR_Y, RACK_Z0, type Pose } from '../lib/layout';
+import { DOCKED_Z, FLOOR_Y, rackRun, type Pose } from '../lib/layout';
 import type { CrewMix, DockStage } from '../lib/unloading';
 
 /**
@@ -594,15 +594,7 @@ export function UnloadingCell({ u, positions }: { u: UnloadVisual; positions: Ma
     for (let i = 0; i < lifts; i++) {
       const stacker = i >= stackerFrom;
       const side = i % 2 === 0 ? 1 : -1;
-      const rackX = side * (7 + i * 3);
-      const path: Waypoint[] = [
-        { x: side * 1.2, z: HANDOFF_Z + 1.5, wait: 2, carry: true, reverse: true },
-        { x: side * 2.5, z: CROSS_AISLE_Z, carry: true },
-        { x: rackX, z: CROSS_AISLE_Z, carry: true },
-        { x: rackX, z: RACK_Z0 + 2.2, wait: 3, lift: true, reverse: true },
-        { x: rackX, z: CROSS_AISLE_Z },
-        { x: side * 2.5, z: CROSS_AISLE_Z },
-      ];
+      const path: Waypoint[] = rackRun(u.x, i, HANDOFF_Z + 1.5, side, true);
       out.push(
         <Mover
           key={`f${i}`}
@@ -617,7 +609,7 @@ export function UnloadingCell({ u, positions }: { u: UnloadVisual; positions: Ma
       );
     }
     return out;
-  }, [electrica, manual, personas, lifts, stackerFrom, u.loose, active, u.stage]);
+  }, [u.x, electrica, manual, personas, lifts, stackerFrom, u.loose, active, u.stage]);
 
   return (
     <group ref={root} position={[u.x, FLOOR_Y, 0]} visible={false}>

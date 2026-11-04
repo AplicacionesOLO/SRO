@@ -201,6 +201,30 @@ async function getGateTimes(orgId: string, reservationIds: string[]): Promise<Ma
 
 export const proceso3dService = {
   /**
+   * Personal disponible en el almacén según Recursos de Manpower: suma de las cantidades
+   * activas de las categorías de tipo PERSONAL. null = sin almacén o sin datos (no se compara).
+   * Solo lectura; si falla no afecta al resto de la simulación.
+   */
+  async getStaffAvailable(orgId: string, warehouseId: string | null): Promise<number | null> {
+    if (!warehouseId) return null;
+    try {
+      const [cats, res] = await Promise.all([
+        supabase.from('manpower_resource_categories').select('id, type, is_active').eq('org_id', orgId),
+        supabase.from('manpower_resources').select('category_id, quantity, status').eq('org_id', orgId).eq('warehouse_id', warehouseId),
+      ]);
+      if (cats.error || res.error) return null;
+      const personal = new Set(
+        (cats.data ?? []).filter((c: any) => c.type === 'PERSONAL' && c.is_active !== false).map((c: any) => c.id as string)
+      );
+      const rows = (res.data ?? []).filter((r: any) => personal.has(r.category_id) && (r.status ?? 'ACTIVO') === 'ACTIVO');
+      if (!rows.length) return null;
+      return rows.reduce((sum: number, r: any) => sum + (Number(r.quantity) || 0), 0);
+    } catch {
+      return null;
+    }
+  },
+
+  /**
    * Carga todo lo necesario para la simulación 3D de un almacén en un rango (normalmente un día).
    * Respeta el alcance del usuario (almacenes / clientes permitidos) igual que el Calendario.
    */

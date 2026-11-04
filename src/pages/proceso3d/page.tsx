@@ -34,6 +34,19 @@ import { useAppoloSnapshot, useDispatchTrucks, type AppoloMode } from './useAppo
 import { AppoloStatusBadge, AppoloSummary, DispatchCard } from './components/AppoloPanel';
 import type { DispatchLoadVisual, PutawayVisual } from './components/AppoloOps';
 import { UNLOADED } from './lib/phases';
+import {
+  buildTimeline,
+  dayKpis,
+  dockStats,
+  fmtMinutes,
+  heatColor,
+  staffByGroup,
+  staffNeeds,
+  upcomingByDock,
+  type HeatMetric,
+} from './lib/insights';
+import { HeatLegend, KpiStrip, StaffChart } from './components/InsightsPanel';
+import type { DockHeatVisual, GhostVisual } from './components/Insights3D';
 
 type Mode = 'live' | 'replay';
 
@@ -45,6 +58,12 @@ const SPEEDS = [
   { label: '15 min/s', value: 15 },
   { label: '30 min/s', value: 30 },
 ];
+/** Vistas que recorre el modo sala de control */
+const TV_TOUR: CameraPreset[] = ['general', 'andenes', 'despacho', 'entrada'];
+const TV_STEP_MS = 20_000;
+/** Horizonte de "próximos camiones" en minutos */
+const UPCOMING_MIN = 120;
+
 const OPERATION_LABELS: Record<string, string> = {
   distribucion: 'Distribución',
   almacen: 'Almacén',
@@ -91,9 +110,18 @@ export default function Proceso3DPage() {
   // AppOLO (despachos y acomodo): solo lectura, se puede apagar sin afectar el resto
   const [appoloMode, setAppoloMode] = useState<AppoloMode>(() => (appoloConfigured() ? 'live' : 'off'));
   const [demoAnchor, setDemoAnchor] = useState(() => Date.now());
+  // Indicadores con datos de SRO (solo lectura)
+  const [heatMetric, setHeatMetric] = useState<HeatMetric | 'off'>('off');
+  const [showUpcoming, setShowUpcoming] = useState(true);
+  const [tvMode, setTvMode] = useState(false);
+  const [staffAvailable, setStaffAvailable] = useState<number | null>(null);
 
   useEffect(() => {
-    const onChange = () => setIsFullscreen(document.fullscreenElement === sceneBoxRef.current);
+    const onChange = () => {
+      const on = document.fullscreenElement === sceneBoxRef.current;
+      setIsFullscreen(on);
+      if (!on) setTvMode(false);
+    };
     document.addEventListener('fullscreenchange', onChange);
     return () => document.removeEventListener('fullscreenchange', onChange);
   }, []);
@@ -173,6 +201,16 @@ export default function Proceso3DPage() {
     yardSlotsRef.current.clear();
     load();
   }, [load]);
+
+  // Personal disponible (Recursos de Manpower) para comparar con la demanda por hora
+  useEffect(() => {
+    if (!orgId) return;
+    let alive = true;
+    proceso3dService.getStaffAvailable(orgId, activeWarehouseId).then((n) => alive && setStaffAvailable(n));
+    return () => {
+      alive = false;
+    };
+  }, [orgId, activeWarehouseId]);
 
   // Tiempo real: cambios en citas o en casetilla recargan (solo para hoy)
   const loadRef = useRef(load);
@@ -596,6 +634,43 @@ export default function Proceso3DPage() {
     return { yellow, red };
   }, [alerts, currentTime]);
 
+  // Próximas citas (hasta 2 h) en andenes libres: silueta del camión con hora y placa
+  const ghosts: GhostVisual[] = useMemo(() => {
+    if (!showUpcoming || !data) return [];
+    const phaseNow = new Map(plan.map((p) => [p.id, p.phase]));
+    const busy = new Set(dockVisuals.filter((d) => d.occupied || d.blocked).map((d) => d.id));
+    return upcomingByDock(data.reservations, (r) => phaseNow.get(r.id) ?? 'FINALIZADO', currentTime, UPCOMING_MIN)
+      .filter((u) => !busy.has(u.dockId) && layout.docks.has(u.dockId))
+      .map((u) => ({
+        id: u.reservationId,
+        x: layout.docks.get(u.dockId)!.x,
+        late: u.start < currentTime,
+        label: `${u.start < currentTime ? 'Atrasado · ' : ''}${formatInTimeZone(new Date(u.start), tz, 'HH:mm')} · ${u.plate}`,
+      }));
+  }, [showUpcoming, data, plan, dockVisuals, currentTime, layout, tz]);
+
+  // Modo sala de control: recorre las vistas automáticamente
+  useEffect(() => {
+    if (!tvMode) return;
+    const tour: CameraPreset[] = appoloMode !== 'off' ? [...TV_TOUR, 'esperaDespacho'] : TV_TOUR;
+    let k = 0;
+    setCameraPreset((p) => ({ name: tour[0], nonce: p.nonce + 1 }));
+    const id = setInterval(() => {
+      k = (k + 1) % tour.length;
+      setCameraPreset((p) => ({ name: tour[k], nonce: p.nonce + 1 }));
+    }, TV_STEP_MS);
+    return () => clearInterval(id);
+  }, [tvMode, appoloMode]);
+
+  const toggleTv = () => {
+    if (tvMode) {
+      setTvMode(false);
+      return;
+    }
+    setTvMode(true);
+    if (!document.fullscreenElement) sceneBoxRef.current?.requestFullscreen?.().catch(() => {});
+  };
+
   const stageCounts = useMemo(() => {
     const c: Record<string, number> = {};
     for (const a of dockActivities.values()) c[a.activity.stage] = (c[a.activity.stage] ?? 0) + 1;
@@ -606,6 +681,73 @@ export default function Proceso3DPage() {
     if (name === 'interior' || name === 'descarga') setCutaway(true);
     setCameraPreset((p) => ({ name, nonce: p.nonce + 1, focusX }));
   }, []);
+
+  /* ─────────────────────────────── Indicadores (datos de SRO) ─────────────────────────────── */
+
+  // Línea de tiempo del día cada 5 min; se rehace al llegar datos o cada 5 min de reloj
+  const nowBucket = Math.floor(now / (5 * MIN));
+  const timeline = useMemo(
+    () => (data ? buildTimeline(data.reservations, data.gateTimes, data.statusHistory, dayStart, now) : null),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [data, dayStart, nowBucket]
+  );
+
+  const dockOfRes = useMemo(() => new Map((data?.reservations ?? []).map((r) => [r.id, r.dock_id])), [data]);
+
+  // Personas de la cuadrilla de cada cita (misma regla que la animación de descarga)
+  const crewPeople = useMemo(() => {
+    const out = new Map<string, number>();
+    if (!data) return out;
+    const whOf = new Map(data.docks.map((d) => [d.id, d.warehouse_id]));
+    for (const r of data.reservations) {
+      const crew = crewFor(r, whOf.get(r.dock_id) ?? activeWarehouseId, data.crewRules, resolveCargo(r, data.cargoTypes));
+      out.set(r.id, crew.mix.personas);
+    }
+    return out;
+  }, [data, activeWarehouseId]);
+
+  const staff = useMemo(
+    () => (timeline ? staffNeeds(timeline, (id) => crewPeople.get(id) ?? 0, now) : null),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [timeline, crewPeople, nowBucket]
+  );
+  const staffGroups = useMemo(() => {
+    if (!timeline || !data) return [] as [string, number][];
+    const catById = new Map(data.categories.map((c) => [c.id, c.name]));
+    const groupOfDock = new Map(
+      data.docks.map((d) => [d.id, d.category?.name ?? (d.category_id ? catById.get(d.category_id) : undefined) ?? 'Sin categoría'])
+    );
+    const m = staffByGroup(timeline, currentTime, (id) => crewPeople.get(id) ?? 0, (id) => groupOfDock.get(dockOfRes.get(id) ?? ''));
+    return [...m.entries()].sort((a, b) => b[1] - a[1]);
+  }, [timeline, data, currentTime, crewPeople, dockOfRes]);
+
+  const kpis = useMemo(
+    () => (timeline && data ? dayKpis(timeline, data.reservations, data.gateTimes, currentTime) : null),
+    [timeline, data, currentTime]
+  );
+
+  const heat = useMemo(() => {
+    if (heatMetric === 'off' || !timeline) return null;
+    const { stats, jornadaMin } = dockStats(timeline, dockOfRes, currentTime);
+    const maxDwell = Math.max(1, ...[...stats.values()].map((st) => st.avgDwellMin ?? 0));
+    const pads: DockHeatVisual[] = [];
+    for (const d of data?.docks ?? []) {
+      const slot = layout.docks.get(d.id);
+      if (!slot) continue;
+      const st = stats.get(d.id);
+      const f = !st ? 0 : heatMetric === 'uso' ? st.usePct / 100 : (st.avgDwellMin ?? 0) / maxDwell;
+      pads.push({
+        dockId: d.id,
+        x: slot.x,
+        color: heatColor(f),
+        label: !st ? 'sin uso' : heatMetric === 'uso' ? `${st.usePct}%` : fmtMinutes(st.avgDwellMin),
+        title: st
+          ? `${d.name}: ${st.usePct}% de uso · ${st.trucks} camión(es) · ${fmtMinutes(st.avgDwellMin)} promedio`
+          : `${d.name}: sin camiones en la jornada`,
+      });
+    }
+    return { pads, jornada: fmtMinutes(jornadaMin), maxLabel: heatMetric === 'uso' ? '100%' : fmtMinutes(maxDwell) };
+  }, [heatMetric, timeline, dockOfRes, currentTime, data, layout]);
 
   /* ─────────────────────────────── Panel lateral ─────────────────────────────── */
 
@@ -767,6 +909,8 @@ export default function Proceso3DPage() {
           })}
         </div>
 
+        {kpis && <KpiStrip kpis={kpis} lateDispatches={appoloMode !== 'off' ? lotInfo.total : undefined} />}
+
         <div className="grid grid-cols-1 xl:grid-cols-[1fr_360px] gap-4">
           {/* Escena 3D */}
           <div
@@ -794,6 +938,8 @@ export default function Proceso3DPage() {
                   loadings={loadings}
                   putaways={putaways}
                   dispatchLot={appoloMode !== 'off' ? lotInfo : undefined}
+                  heatPads={heat?.pads}
+                  ghosts={ghosts}
                   cutaway={cutaway}
                   selectedId={selectedId}
                   highlightDockId={selected?.dock_id ?? selectedDispatch?.dockId ?? null}
@@ -843,6 +989,29 @@ export default function Proceso3DPage() {
                 title="Quitar el techo para ver la recepción, los racks y las descargas"
               >
                 <i className="ri-home-gear-line mr-1"></i>Sin techo
+              </button>
+              <button
+                onClick={() => setHeatMetric((m) => (m === 'off' ? 'uso' : m === 'uso' ? 'permanencia' : 'off'))}
+                className={`rounded-md px-2 py-1 text-xs font-medium shadow cursor-pointer ${heatMetric !== 'off' ? 'bg-teal-600 text-white' : 'bg-white/90 text-gray-700'}`}
+                title="Mapa de calor de andenes: uso de la jornada, luego tiempo promedio por camión, luego apagado"
+              >
+                <i className="ri-fire-line mr-1"></i>
+                {heatMetric === 'off' ? 'Mapa de calor' : heatMetric === 'uso' ? 'Calor: uso' : 'Calor: tiempo'}
+              </button>
+              <button
+                onClick={() => setShowUpcoming((v) => !v)}
+                className={`rounded-md px-2 py-1 text-xs font-medium shadow cursor-pointer ${showUpcoming ? 'bg-teal-600 text-white' : 'bg-white/90 text-gray-700'}`}
+                title={`Citas de las próximas ${UPCOMING_MIN / 60} h en andenes libres`}
+              >
+                <i className="ri-ghost-line mr-1"></i>Próximos
+              </button>
+              <button
+                onClick={toggleTv}
+                className={`rounded-md px-2 py-1 text-xs font-medium shadow cursor-pointer ${tvMode ? 'bg-teal-600 text-white' : 'bg-white/90 text-gray-700'}`}
+                title="Pantalla completa con recorrido automático de vistas, para la sala de control"
+              >
+                <i className="ri-tv-2-line mr-1"></i>
+                {tvMode ? 'Detener TV' : 'Modo TV'}
               </button>
               <button
                 onClick={toggleFullscreen}
@@ -1001,6 +1170,15 @@ export default function Proceso3DPage() {
                       </>
                     )}
                   </div>
+                )}
+              </div>
+            )}
+
+            {(heat || (isFullscreen && kpis)) && (
+              <div className="pointer-events-none absolute bottom-3 left-3 flex max-w-[calc(100%-1.5rem)] flex-col items-start gap-2">
+                {heat && heatMetric !== 'off' && <HeatLegend metric={heatMetric} maxLabel={heat.maxLabel} jornada={heat.jornada} />}
+                {isFullscreen && kpis && (
+                  <KpiStrip compact kpis={kpis} lateDispatches={appoloMode !== 'off' ? lotInfo.total : undefined} />
                 )}
               </div>
             )}
@@ -1270,6 +1448,15 @@ export default function Proceso3DPage() {
                   </div>
                 )}
               </div>
+            )}
+
+            {staff && (
+              <StaffChart
+                hours={staff.hours}
+                available={staffAvailable}
+                currentHour={Math.max(0, Math.min(23, Math.floor((currentTime - dayStart) / (60 * MIN))))}
+                byGroup={staffGroups}
+              />
             )}
 
             <div className="flex min-h-0 flex-1 flex-col rounded-lg border border-gray-200 bg-white">

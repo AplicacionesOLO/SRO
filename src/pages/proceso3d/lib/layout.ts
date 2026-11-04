@@ -76,6 +76,48 @@ export const CROSS_AISLE_Z = -STAGING_DEPTH - 3;
 export const RACK_Z0 = -STAGING_DEPTH - 6.5;
 
 /**
+ * Racks perpendiculares a la pared de andenes: cada fila doble (espalda con espalda) corre
+ * en z, desde el pasillo transversal hacia el frente del edificio. Las filas se repiten en x
+ * sobre una grilla fija, así cualquier andén sabe dónde queda el pasillo más cercano.
+ */
+export const RACK_DEPTH = 1.1;
+export const RACK_FLUE = 0.2;
+export const RACK_AISLE = 3.6;
+/** Distancia en x entre filas dobles (fila doble + pasillo) */
+export const RACK_PITCH = 2 * RACK_DEPTH + RACK_FLUE + RACK_AISLE;
+/** Fondo útil de los racks (z) */
+export const RACK_Z_END = -BUILDING_DEPTH + 6;
+
+/** x lógico del centro del pasillo de racks más cercano a `x`. */
+export function rackAisleX(x: number) {
+  return Math.round((x - RACK_PITCH / 2) / RACK_PITCH) * RACK_PITCH + RACK_PITCH / 2;
+}
+
+/**
+ * Recorrido de un montacargas / apilador entre la zona de recepción de un andén y un rack:
+ * pasillo transversal → pasillo del rack → giro hacia la cara del rack para subir la tarima.
+ * Coordenadas relativas al andén (`dockX`). `toRack` = deja la tarima en el rack (acomodo);
+ * si es false la toma del rack y la lleva a la zona de preparación (surtido).
+ */
+export function rackRun(dockX: number, i: number, fromZ: number, side: number, toRack: boolean) {
+  const ax = rackAisleX(dockX + side * (5 + i * RACK_PITCH)) - dockX;
+  const zDeep = RACK_Z0 - 3 - (i % 3) * 7;
+  const face = i % 2 === 0 ? 1 : -1;
+  const atRack = { x: ax + face * 0.8, z: zDeep, wait: 3, lift: true, reverse: true, carry: !toRack };
+  const loaded = toRack;
+  return [
+    { x: side * 1.2, z: fromZ, wait: 2, reverse: true, carry: loaded },
+    { x: side * 2.5, z: CROSS_AISLE_Z, carry: loaded },
+    { x: ax, z: CROSS_AISLE_Z, carry: loaded },
+    { x: ax, z: zDeep, carry: loaded },
+    atRack,
+    { x: ax, z: zDeep, carry: !loaded },
+    { x: ax, z: CROSS_AISLE_Z, carry: !loaded },
+    { x: side * 2.5, z: CROSS_AISLE_Z, carry: !loaded },
+  ];
+}
+
+/**
  * Orden de los grupos de andenes en coordenadas lógicas (desde el lado de la entrada).
  * Visto desde ATRÁS, de izquierda a derecha, queda: Zona Franca · Despacho · Recepción
  * (la casetilla de despacho a la derecha). Las categorías no listadas van al final.
