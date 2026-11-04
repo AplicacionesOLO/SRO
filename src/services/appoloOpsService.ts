@@ -102,7 +102,9 @@ export class AppoloError extends Error {
   }
 }
 
-const OPS_URL = (import.meta.env.VITE_APPOLO_OPS_URL as string | undefined)?.trim() || '';
+/** URL pública de la función (no es secreta: exige la sesión SRO del usuario). La variable de entorno la sobrescribe. */
+const DEFAULT_OPS_URL = 'https://azwuzsukvqjogcfqljhg.supabase.co/functions/v1/ops-3d-snapshot';
+const OPS_URL = (import.meta.env.VITE_APPOLO_OPS_URL as string | undefined)?.trim() || DEFAULT_OPS_URL;
 
 export function appoloConfigured() {
   return OPS_URL.length > 0;
