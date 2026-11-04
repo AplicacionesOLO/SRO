@@ -10,6 +10,9 @@ import { DispatchLoadCell, DispatchLotArea, PutawayCell, type DispatchLoadVisual
 import { lotGeometry, type LotStats } from '../lib/appolo';
 import { DockHeatPads, GhostTrucks, type DockHeatVisual, type GhostVisual } from './Insights3D';
 import { BLVD_Z, FRONT_Z, MIRROR_X, type Pose, type SiteLayout } from '../lib/layout';
+import Workshop, { type WorkshopInfo } from './Workshop';
+import Mezzanine from './Mezzanine';
+import DispatchArea from './DispatchArea';
 import type { TruckAlert } from '../lib/alerts';
 
 export type CameraPreset = 'general' | 'andenes' | 'despacho' | 'entrada' | 'frente' | 'interior' | 'descarga' | 'esperaDespacho';
@@ -49,6 +52,10 @@ interface WarehouseSceneProps {
   heatPads?: DockHeatVisual[];
   /** Próximas citas en andenes libres */
   ghosts?: GhostVisual[];
+  /** Taller de equipos en mantenimiento (se ve en modo Interior) */
+  workshop?: WorkshopInfo;
+  /** Dibujar el mezzanine (con el techo quitado) */
+  showMezzanine?: boolean;
 }
 
 const { ACTION } = CameraControlsImpl;
@@ -239,6 +246,8 @@ export default function WarehouseScene({
   dispatchLot,
   heatPads = NO_HEAT,
   ghosts = NO_GHOSTS,
+  workshop,
+  showMezzanine = true,
 }: WarehouseSceneProps) {
   const flyRef = useRef<((p: THREE.Vector3) => void) | null>(null);
   const span = layout.eastRoadX - layout.streetX;
@@ -321,6 +330,9 @@ export default function WarehouseScene({
           {cutaway && putaways.map((p) => <PutawayCell key={p.id} v={p} />)}
           {heatPads.length > 0 && <DockHeatPads pads={heatPads} showLabels={showLabels} />}
           {ghosts.length > 0 && <GhostTrucks ghosts={ghosts} showLabels={showLabels} />}
+          {cutaway && workshop && <Workshop layout={layout} info={workshop} showLabel={showLabels} />}
+          {cutaway && showMezzanine && <Mezzanine layout={layout} showLabel={showLabels} />}
+          <DispatchArea layout={layout} cutaway={cutaway} showLabel={showLabels} />
           {dispatchLot !== undefined && <DispatchLotArea layout={layout} stats={dispatchLot} showLabel={showLabels} />}
         </group>
       </Suspense>

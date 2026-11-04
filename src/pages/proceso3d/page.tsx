@@ -11,7 +11,7 @@ import type { UnloadVisual } from './components/Workforce';
 import type { TruckVisual } from './components/Truck3D';
 import type { DockVisual } from './components/WarehouseSite';
 import { buildLayout, buildRoute, type Pose } from './lib/layout';
-import { isStaleWithoutExit, livePhase, PHASE_META, PHASE_ORDER, replayPhase, type TruckPhase } from './lib/phases';
+import { isStaleWithoutExit, livePhase, PHASE_META, PHASE_ORDER, replayPhase } from './lib/phases';
 import { buildPlan, samePose, type PlanItem } from './lib/plan';
 import { crewFor, dockActivity, isLooseCargo, resolveCargo, STAGE_META, unitLabel, type Crew, type DockActivity } from './lib/unloading';
 import { ALERT_RED_MIN, ALERT_YELLOW_MIN, truckAlert, type TruckAlert } from './lib/alerts';
@@ -26,6 +26,7 @@ import {
   dispatchAlert,
   dispatchPallets,
   equipmentTotals,
+  workshopUnits,
   isAppoloId,
   lotStats,
   mapDispatchDoors,
@@ -48,6 +49,7 @@ import {
   type HeatMetric,
 } from './lib/insights';
 import { HeatLegend, KpiStrip, StaffChart } from './components/InsightsPanel';
+import type { WorkshopInfo } from './components/Workshop';
 import type { DockHeatVisual, GhostVisual } from './components/Insights3D';
 
 type Mode = 'live' | 'replay';
@@ -100,10 +102,9 @@ export default function Proceso3DPage() {
   const [speed, setSpeed] = useState(5);
   const [showLabels, setShowLabels] = useState(true);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [phaseFilter, setPhaseFilter] = useState<TruckPhase | 'ALL'>('ALL');
-  const [search, setSearch] = useState('');
   const [cameraPreset, setCameraPreset] = useState<CameraRequest>({ name: 'general', nonce: 0 });
   const [cutaway, setCutaway] = useState(false);
+  const [showMezzanine, setShowMezzanine] = useState(true);
   /** Camión cuya descarga se simula en 3D aunque no esté descargando en este momento */
   const [simulateId, setSimulateId] = useState<string | null>(null);
   const sceneBoxRef = useRef<HTMLDivElement>(null);
@@ -670,6 +671,15 @@ export default function Proceso3DPage() {
       }));
   }, [showUpcoming, data, plan, dockVisuals, currentTime, layout, tz]);
 
+  // Taller: equipos que AppOLO reporta en mantenimiento / reparación
+  const workshop: WorkshopInfo = useMemo(() => {
+    if (appoloMode === 'off') return { units: [], note: 'Activa AppOLO para ver los equipos en mantenimiento' };
+    const units = workshopUnits(appolo.snapshot?.equipment);
+    if (units === null)
+      return { units: [], note: appolo.snapshot ? 'AppOLO todavía no envía el estado de los equipos' : 'Esperando datos de AppOLO…' };
+    return { units, note: null };
+  }, [appoloMode, appolo.snapshot]);
+
   // Modo sala de control: recorre las vistas automáticamente
   useEffect(() => {
     if (!tvMode) return;
@@ -781,26 +791,6 @@ export default function Proceso3DPage() {
   const dockName = useCallback((id: string) => data?.docks.find((d) => d.id === id)?.name ?? '—', [data]);
   const fmt = useCallback((iso?: string | null) => (iso ? formatInTimeZone(new Date(iso), tz, 'HH:mm') : '—'), [tz]);
 
-  const listItems = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    return plan
-      .filter((p) => phaseFilter === 'ALL' || p.phase === phaseFilter)
-      .map((p) => ({ plan: p, r: reservationById.get(p.id)! }))
-      .filter(({ r }) => {
-        if (!r) return false;
-        if (!q) return true;
-        const provider = r.shipper_provider ? data?.providerNames.get(r.shipper_provider) ?? '' : '';
-        return [r.truck_plate, r.driver, r.dua, r.purchase_order, provider, dockName(r.dock_id)]
-          .filter(Boolean)
-          .some((v) => String(v).toLowerCase().includes(q));
-      })
-      .sort(
-        (a, b) =>
-          PHASE_ORDER.indexOf(a.plan.phase) - PHASE_ORDER.indexOf(b.plan.phase) ||
-          a.r.start_datetime.localeCompare(b.r.start_datetime)
-      );
-  }, [plan, phaseFilter, search, reservationById, data, dockName]);
-
   const selected = selectedId ? reservationById.get(selectedId) : undefined;
   const selectedDispatch = isAppoloId(selectedId) ? dispatchItems.find((i) => i.id === selectedId) : undefined;
   const dispatchDockName = (it: DispatchItem) =>
@@ -911,15 +901,8 @@ export default function Proceso3DPage() {
         <div className="grid grid-cols-3 sm:grid-cols-5 lg:grid-cols-9 gap-2 mb-4">
           {PHASE_ORDER.map((ph) => {
             const meta = PHASE_META[ph];
-            const active = phaseFilter === ph;
             return (
-              <button
-                key={ph}
-                onClick={() => setPhaseFilter(active ? 'ALL' : ph)}
-                className={`flex items-center gap-2 rounded-lg border bg-white px-3 py-2 text-left cursor-pointer transition ${
-                  active ? 'border-teal-500 ring-2 ring-teal-100' : 'border-gray-200 hover:border-gray-300'
-                }`}
-              >
+              <div key={ph} className="flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2">
                 <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-white" style={{ backgroundColor: meta.color }}>
                   <i className={meta.icon}></i>
                 </span>
@@ -927,7 +910,7 @@ export default function Proceso3DPage() {
                   <span className="block text-lg font-bold leading-none text-gray-900">{counts[ph] ?? 0}</span>
                   <span className="block truncate text-[11px] text-gray-500">{meta.label}</span>
                 </span>
-              </button>
+              </div>
             );
           })}
         </div>
@@ -963,6 +946,8 @@ export default function Proceso3DPage() {
                   dispatchLot={appoloMode !== 'off' ? lotInfo : undefined}
                   heatPads={heat?.pads}
                   ghosts={ghosts}
+                  workshop={workshop}
+                  showMezzanine={showMezzanine}
                   cutaway={cutaway}
                   selectedId={selectedId}
                   highlightDockId={selected?.dock_id ?? selectedDispatch?.dockId ?? null}
@@ -1013,6 +998,15 @@ export default function Proceso3DPage() {
               >
                 <i className="ri-home-gear-line mr-1"></i>Sin techo
               </button>
+              {cutaway && (
+                <button
+                  onClick={() => setShowMezzanine((v) => !v)}
+                  className={`rounded-md px-2 py-1 text-xs font-medium shadow cursor-pointer ${showMezzanine ? 'bg-teal-600 text-white' : 'bg-white/90 text-gray-700'}`}
+                  title="Mostrar u ocultar el mezzanine para ver los andenes que tiene debajo"
+                >
+                  <i className={`${showMezzanine ? 'ri-eye-line' : 'ri-eye-off-line'} mr-1`}></i>Mezzanine
+                </button>
+              )}
               <button
                 onClick={() => setHeatMetric((m) => (m === 'off' ? 'uso' : m === 'uso' ? 'permanencia' : 'off'))}
                 className={`rounded-md px-2 py-1 text-xs font-medium shadow cursor-pointer ${heatMetric !== 'off' ? 'bg-teal-600 text-white' : 'bg-white/90 text-gray-700'}`}
@@ -1497,60 +1491,6 @@ export default function Proceso3DPage() {
                 byGroup={staffGroups}
               />
             )}
-
-            <div className="flex min-h-0 flex-1 flex-col rounded-lg border border-gray-200 bg-white">
-              <div className="border-b border-gray-200 p-3">
-                <div className="flex items-center justify-between mb-2">
-                  <h2 className="text-sm font-semibold text-gray-900">
-                    Camiones {phaseFilter !== 'ALL' && <span className="text-gray-500">· {PHASE_META[phaseFilter].label}</span>}
-                  </h2>
-                  <span className="text-xs text-gray-500">{listItems.length}</span>
-                </div>
-                <div className="relative">
-                  <i className="ri-search-line absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400"></i>
-                  <input
-                    value={search}
-                    onChange={(e) => setSearch(e.target.value)}
-                    placeholder="Placa, proveedor, DUA, andén…"
-                    className="h-9 w-full rounded-lg border border-gray-300 pl-8 pr-3 text-sm"
-                  />
-                </div>
-              </div>
-              <ul className="max-h-[52vh] overflow-y-auto divide-y divide-gray-100">
-                {listItems.length === 0 && (
-                  <li className="p-6 text-center text-sm text-gray-500">{loading ? 'Cargando…' : 'No hay camiones para mostrar.'}</li>
-                )}
-                {listItems.map(({ plan: p, r }) => {
-                  const meta = PHASE_META[p.phase];
-                  const provider = r.shipper_provider ? data?.providerNames.get(r.shipper_provider) : undefined;
-                  return (
-                    <li key={r.id}>
-                      <button
-                        onClick={() => setSelectedId(r.id)}
-                        className={`flex w-full items-center gap-3 px-3 py-2 text-left hover:bg-gray-50 cursor-pointer ${
-                          selectedId === r.id ? 'bg-yellow-50' : ''
-                        }`}
-                      >
-                        <span className="h-9 w-1.5 shrink-0 rounded-full" style={{ backgroundColor: r.status?.color || meta.color }}></span>
-                        <span className="min-w-0 flex-1">
-                          <span className="flex items-center gap-2">
-                            <span className="font-semibold text-sm text-gray-900">{r.truck_plate || 'Sin placa'}</span>
-                            <span className="text-xs text-gray-500">{dockName(r.dock_id)}</span>
-                          </span>
-                          <span className="block truncate text-xs text-gray-500">{provider || r.driver || '—'}</span>
-                        </span>
-                        <span className="shrink-0 text-right">
-                          <span className="block text-xs font-medium text-gray-700">{fmt(r.start_datetime)}</span>
-                          <span className="block text-[10px]" style={{ color: meta.color }}>
-                            {r.status?.name || meta.label}
-                          </span>
-                        </span>
-                      </button>
-                    </li>
-                  );
-                })}
-              </ul>
-            </div>
 
             {/* Leyenda */}
             <div className="rounded-lg border border-gray-200 bg-white p-3 text-xs">

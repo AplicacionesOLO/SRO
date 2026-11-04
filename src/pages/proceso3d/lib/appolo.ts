@@ -442,6 +442,27 @@ export function allocateEquipment(
   return out;
 }
 
+/**
+ * Equipos que AppOLO reporta en mantenimiento / reparación, uno por unidad, para el taller.
+ * null = AppOLO no envía equipos (etapa A del contrato).
+ */
+export function workshopUnits(equipment: AppoloEquipmentFamily[] | null | undefined): ('montacargas' | 'apilador' | 'carretilla')[] | null {
+  if (!equipment) return null;
+  const out: ('montacargas' | 'apilador' | 'carretilla')[] = [];
+  for (const f of equipment) {
+    const n = Math.max(0, Math.round(Number(f.mantenimiento) || 0));
+    const kind = /montacarg|forklift/i.test(f.familia)
+      ? 'montacargas'
+      : /apilad|stacker/i.test(f.familia)
+        ? 'apilador'
+        : /carretilla|pallet/i.test(f.familia)
+          ? 'carretilla'
+          : null;
+    if (kind) for (let i = 0; i < n; i++) out.push(kind);
+  }
+  return out;
+}
+
 export function equipmentTotals(equipment: AppoloEquipmentFamily[] | null | undefined) {
   if (!equipment) return null;
   const sum = (re: RegExp, k: 'activos' | 'mantenimiento') =>
