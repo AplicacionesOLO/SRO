@@ -139,7 +139,7 @@ Se implementa como **Edge Function de Supabase**, en línea con la migración de
 | Estado AppOLO | En el 3D |
 |---|---|
 | `creado` | Camión acoplado; montacargas surte tarimas de racks a la zona de preparación |
-| `en proceso` | Carretillas eléctricas cargan el contenedor; el avance usa `layout` real (o el tiempo transcurrido) |
+| `en proceso` | Carretillas eléctricas cargan el contenedor; el avance es el de AppOLO: posiciones ocupadas de `layout` / 24 (sin `layout`, se estima por el tiempo transcurrido) |
 | `chofer_pendiente` | Pasa al **patio de espera de salida de despachos** (propio, separado de la fila de SRO, junto al retorno). Se muestran **todos**, con nube y contador, para ver lo atrasado tal cual |
 | `completo`, `pendiente_validacion` | Puertas cerradas; nube "Validando boleta" con contador |
 | `rechazado` | Camión marcado en rojo |
@@ -172,3 +172,11 @@ Si una cita de SRO ocupa el mismo andén, la cita tiene prioridad y el despacho 
 
 - Acomodo por tarima con ubicación (`rack`, `nivel`, `posición`) y `equipo_id` → el 3D lo dibuja real en lugar de ilustrativo (`receptions[].pallets[]`, contrato v1 compatible si es opcional).
 - Equipo y operador asignados a cada carga de despacho.
+
+## Mapa del contenedor (`layout`)
+
+- 24 posiciones (`despacho_dev_layout.slots[].type`), 12 filas × 2 columnas: posición *p* ↔ índice *p − 1*, impares a la izquierda.
+- `E` libre · `S` simple · `D` doble · `T` triple · `C` cuádruple (mismos colores que AppOLO).
+- Avance de carga = posiciones ocupadas / 24, igual que la tarjeta de AppOLO.
+- En el 3D se dibujan las 24 posiciones dentro del contenedor (libres marcadas en el piso, ocupadas con su tarima) y la tarjeta del despacho muestra el mismo mapa 12 × 2.
+- Se asume que la posición 1–2 es el fondo del contenedor y la 23–24 la puerta.

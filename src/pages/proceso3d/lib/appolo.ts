@@ -202,16 +202,52 @@ export function dispatchPallets(d: AppoloDispatch) {
 /** Tiempo de referencia para estimar el avance de una carga sin distribución registrada. */
 const LOAD_REF_MS = 45 * MIN;
 
+/* ─────────────────────────────── Mapa del contenedor (igual que AppOLO) ─────────────────────────────── */
+
+/** Posiciones del contenedor: 12 filas × 2 columnas (posición p ↔ índice p-1; impares a la izquierda). */
+export const CONTAINER_SLOTS = 24;
+/** Colores de AppOLO (CARGA_SLOT_COLORS) para que el mapa se lea igual en los dos sistemas. */
+export const SLOT_COLORS: Record<AppoloSlotType, string> = { E: '#E5E7EB', S: '#60A5FA', D: '#F59E0B', T: '#8B5CF6', C: '#EF4444' };
+export const SLOT_LABELS: Record<AppoloSlotType, string> = { E: 'Libre', S: 'Simple', D: 'Doble', T: 'Triple', C: 'Cuádruple' };
+
+/** Normaliza la distribución a exactamente 24 posiciones (lo inválido o ausente = libre). */
+export function normalizeCells(layout: readonly (AppoloSlotType | null | undefined)[] | null | undefined): AppoloSlotType[] {
+  return Array.from({ length: CONTAINER_SLOTS }, (_, i) => {
+    const c = layout?.[i];
+    return c === 'S' || c === 'D' || c === 'T' || c === 'C' ? c : 'E';
+  });
+}
+
+export const occupiedCells = (cells: readonly AppoloSlotType[]) => cells.filter((c) => c !== 'E').length;
+
+/** ¿El despacho trae el mapa real del contenedor? */
+export const hasRealLayout = (d: AppoloDispatch) => Array.isArray(d.layout) && d.layout.length > 0;
+
+/**
+ * Avance de carga. Con el mapa real de AppOLO es el mismo cálculo que AppOLO:
+ * posiciones ocupadas / 24. Sin mapa (o en Demo) se estima por el tiempo en carga.
+ */
 export function loadProgress(d: AppoloDispatch, stage: DispatchStage, since: number, t: number, live: boolean) {
-  if (stage === 'PREPARANDO' || stage === 'OCULTO') return 0;
+  if (stage === 'PREPARANDO' || stage === 'OCULTO') return live && hasRealLayout(d) ? occupiedCells(normalizeCells(d.layout)) / CONTAINER_SLOTS : 0;
+  if (live && hasRealLayout(d)) return occupiedCells(normalizeCells(d.layout)) / CONTAINER_SLOTS;
   if (stage !== 'CARGANDO') return 1;
-  // En vivo, la distribución real del contenedor dice cuánto va cargado
-  if (live && d.layout && d.layout.length) {
-    const used = d.layout.filter((s) => s && s !== 'E').length;
-    const total = dispatchPallets(d);
-    if (used > 0) return Math.min(1, used / total);
-  }
   return Math.max(0.05, Math.min(0.95, (t - since) / LOAD_REF_MS));
+}
+
+/**
+ * Posiciones del contenedor que se ven en el 3D y en la tarjeta.
+ * En vivo con mapa: exactamente lo que registró AppOLO. Si no: un plan que se va llenando
+ * en orden (posición 1 primero) según el avance estimado.
+ */
+export function containerCells(d: AppoloDispatch, stage: DispatchStage, progress: number, live: boolean): AppoloSlotType[] {
+  if (live && hasRealLayout(d)) return normalizeCells(d.layout);
+  const plan = occupiedCells(normalizeCells(d.layout))
+    ? normalizeCells(d.layout)
+    : normalizeCells(Array.from({ length: Math.min(CONTAINER_SLOTS, dispatchPallets(d)) }, (_, i) => (i % 5 === 4 ? 'D' : 'S')));
+  if (stage === 'PREPARANDO') return normalizeCells(null);
+  if (stage !== 'CARGANDO') return plan;
+  let keep = Math.round(Math.max(0, Math.min(1, progress)) * occupiedCells(plan));
+  return plan.map((c) => (c !== 'E' && keep-- > 0 ? c : 'E'));
 }
 
 /* ─────────────────────────────── Plan de despachos ─────────────────────────────── */
@@ -228,6 +264,10 @@ export interface DispatchItem {
   /** Va saliendo del sitio (recién despachado) */
   leaving: boolean;
   progress: number;
+  /** Mapa del contenedor (24 posiciones) */
+  cells: AppoloSlotType[];
+  /** true = el mapa viene de AppOLO; false = estimado */
+  cellsReal: boolean;
   /** Motivo por el que no se dibuja en un andén */
   note?: string;
   /** Está en el patio de espera de salida de despachos */
@@ -266,6 +306,7 @@ export function buildDispatchPlan(
     if (stage === 'DESPACHADO' && t - st.since > LEAVING_MIN * MIN) continue;
     const n = doorNumber(d.puerta);
     const dockId = Number.isNaN(n) ? null : doors.byNumber.get(n) ?? null;
+    const progress = loadProgress(d, stage, st.since, t, live);
     items.push({
       id: APPOLO_ID_PREFIX + d.id,
       dispatch: d,
@@ -274,7 +315,9 @@ export function buildDispatchPlan(
       dockId,
       pose: null,
       leaving: stage === 'DESPACHADO',
-      progress: loadProgress(d, stage, st.since, t, live),
+      progress,
+      cells: containerCells(d, stage, progress, live),
+      cellsReal: live && hasRealLayout(d),
       note: dockId ? undefined : 'Puerta no reconocida',
     });
   }

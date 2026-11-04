@@ -498,7 +498,7 @@ export default function Proceso3DPage() {
           // redondeado para no redibujar la carga en cada tic del reloj
           progress: Math.round(it.progress * 48) / 48,
           total: dispatchPallets(it.dispatch),
-          layout: it.dispatch.layout,
+          cells: it.cells,
           equip: equipmentUse.get(it.id) ?? { montacargas: 0, apilador: 0, carretilla: 1 },
         })),
     [dispatchItems, layout, equipmentUse]
