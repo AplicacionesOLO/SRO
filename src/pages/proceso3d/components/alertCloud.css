@@ -89,3 +89,44 @@
     transform: scale(1.08);
   }
 }
+
+/* Contador neutro: tiempo en el estado actual (sin alerta) */
+.p3d-timer {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  padding: 3px 10px 4px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.94);
+  border: 1px solid #c3c2b7;
+  color: #0b0b0b;
+  font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+  white-space: nowrap;
+  box-shadow: 0 2px 4px rgba(15, 23, 42, 0.2);
+}
+.p3d-timer__label {
+  font-size: 10px;
+  font-weight: 600;
+  color: #52514e;
+  line-height: 1.1;
+}
+.p3d-timer__time {
+  font-size: 14px;
+  font-weight: 800;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Contador general (desde el ingreso por casetilla) */
+.p3d-timer__total,
+.p3d-cloud__total {
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.85;
+}
+.p3d-timer__total {
+  color: #52514e;
+}

@@ -7,6 +7,7 @@ import type {
 } from '../../../services/appoloOpsService';
 import { dockPose, ROAD_Z, type Pose, type RoutePoint, type SiteLayout } from './layout';
 import type { TruckAlert } from './alerts';
+import type { StateEvent } from '../../../utils/stateTimes';
 
 /**
  * Lógica pura de la capa AppOLO del 3D (despachos y acomodo).
@@ -363,10 +364,35 @@ export function buildDispatchPlan(
 }
 
 export function dispatchAlert(it: DispatchItem): TruckAlert | null {
-  if (!it.pose) return null;
-  if (it.stage === 'ESPERA_CHOFER') return { label: 'Esperando chofer', since: it.since };
-  if (it.stage === 'VALIDACION') return { label: 'Validando boleta', since: it.since };
-  return null;
+  if (!it.pose || it.leaving || it.stage === 'DESPACHADO' || it.stage === 'OCULTO') return null;
+  const alerting = it.stage === 'ESPERA_CHOFER' || it.stage === 'VALIDACION';
+  const created = ms(it.dispatch.created_at);
+  return { label: DISPATCH_STAGE_META[it.stage].label, since: it.since, alerting, totalSince: created ?? undefined };
+}
+
+/**
+ * Eventos del despacho para los tiempos por estado: creación + historial de AppOLO
+ * (despacho_dev_actividad). Despachado / eliminado cierran el recorrido.
+ */
+export function dispatchEvents(d: AppoloDispatch): StateEvent[] {
+  const created = ms(d.created_at);
+  if (created === null) return [];
+  const ev = (estado: string, at: number): StateEvent => {
+    const stage = stageOfEstado(estado);
+    const meta = DISPATCH_STAGE_META[stage];
+    return { at, key: stage, label: meta.label, color: meta.color, terminal: stage === 'DESPACHADO' || stage === 'OCULTO' };
+  };
+  const events: StateEvent[] = [ev('creado', created)];
+  const history = (d.history ?? []).map((h) => ({ estado: String(h.estado), at: ms(h.at) }));
+  if (history.length) {
+    for (const h of history) if (h.at !== null) events.push(ev(h.estado, h.at));
+  } else {
+    const updated = ms(d.updated_at);
+    if (updated !== null && updated > created) events.push(ev(d.estado, updated));
+  }
+  const fin = ms(d.finalized_at);
+  if (fin !== null && !events.some((e) => e.terminal)) events.push(ev('finalizado', fin));
+  return events;
 }
 
 /* ─────────────────────────────── Equipos ─────────────────────────────── */

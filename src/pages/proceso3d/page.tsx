@@ -15,6 +15,8 @@ import { isStaleWithoutExit, livePhase, PHASE_META, PHASE_ORDER, replayPhase, ty
 import { buildPlan, samePose, type PlanItem } from './lib/plan';
 import { crewFor, dockActivity, isLooseCargo, resolveCargo, STAGE_META, unitLabel, type Crew, type DockActivity } from './lib/unloading';
 import { ALERT_RED_MIN, ALERT_YELLOW_MIN, truckAlert, type TruckAlert } from './lib/alerts';
+import { buildSegments, currentSegment, reservationEvents, type StateSegment } from '../../utils/stateTimes';
+import StateTimeline from '../../components/feature/state-times/StateTimeline';
 import { appoloConfigured } from '../../services/appoloOpsService';
 import {
   allocateEquipment,
@@ -604,7 +606,24 @@ export default function Proceso3DPage() {
     ];
   }, [data, plan, reservationById, dispatchItems, extraDocks]);
 
-  // Nubes de alerta: tiempo esperando salida, andén o cuadrilla (y despachos esperando chofer / validación)
+  // Tiempos por estado: ingreso casetilla → cada cambio de estado → salida
+  const statusInfo = useMemo(() => {
+    const m = new Map((data?.statuses ?? []).map((st) => [st.code.toUpperCase(), { name: st.name, color: st.color }]));
+    return (code: string) => m.get(code);
+  }, [data]);
+  const segmentsOf = useCallback(
+    (r: Reservation, t: number): StateSegment[] =>
+      data
+        ? buildSegments(
+            reservationEvents(data.statusHistory.get(r.id) ?? [], data.gateTimes.get(r.id), statusInfo, { startIso: r.start_datetime }),
+            t
+          )
+        : [],
+    [data, statusInfo]
+  );
+
+  // Contador de cada camión: tiempo en el estado actual (se reinicia en cada cambio).
+  // Las esperas (salida, andén, cuadrilla, chofer, validación) se vuelven nube amarilla / roja.
   const alerts = useMemo(() => {
     const out = new Map<string, TruckAlert>();
     if (!data) return out;
@@ -613,20 +632,22 @@ export default function Proceso3DPage() {
       const r = reservationById.get(p.id);
       if (!r) continue;
       const stage = dockActivities.get(p.id)?.activity.stage;
-      const a = truckAlert(r, p.phase, stage, data.gateTimes.get(r.id), data.statusHistory.get(r.id), currentTime);
-      if (a) out.set(p.id, a);
+      const segs = segmentsOf(r, currentTime);
+      const a = truckAlert(r, p.phase, stage, data.gateTimes.get(r.id), data.statusHistory.get(r.id), currentTime, currentSegment(segs));
+      if (a) out.set(p.id, { ...a, totalSince: Math.min(segs[0]?.from ?? a.since, a.since) });
     }
     for (const it of dispatchItems) {
       const a = dispatchAlert(it);
       if (a && a.since <= currentTime) out.set(it.id, a);
     }
     return out;
-  }, [data, plan, reservationById, dockActivities, currentTime, dispatchItems]);
+  }, [data, plan, reservationById, dockActivities, currentTime, dispatchItems, segmentsOf]);
 
   const alertCounts = useMemo(() => {
     let yellow = 0;
     let red = 0;
     for (const a of alerts.values()) {
+      if (!a.alerting) continue;
       const min = (currentTime - a.since) / MIN;
       if (min >= ALERT_RED_MIN) red++;
       else if (min >= ALERT_YELLOW_MIN) yellow++;
@@ -794,6 +815,8 @@ export default function Proceso3DPage() {
   const selectedGate = selectedId ? data?.gateTimes.get(selectedId) : undefined;
   const selectedActivity = selectedId ? dockActivities.get(selectedId) : undefined;
   const selectedCargo = selected && data ? resolveCargo(selected, data.cargoTypes) : undefined;
+  const selectedSegments = selected ? segmentsOf(selected, currentTime) : [];
+  const fmtMs = (t: number) => formatInTimeZone(new Date(t), tz, 'HH:mm');
 
   /* ─────────────────────────────── Render ─────────────────────────────── */
 
@@ -1262,6 +1285,9 @@ export default function Proceso3DPage() {
                 fmt={fmt}
                 onClose={() => setSelectedId(null)}
                 onView={() => viewDispatch(selectedDispatch)}
+                clock={currentTime}
+                live={mode === 'live'}
+                fmtTime={fmtMs}
               />
             )}
             <AppoloSummary
@@ -1363,6 +1389,19 @@ export default function Proceso3DPage() {
                     </>
                   )}
                 </dl>
+                <div className="mt-3">
+                  <StateTimeline
+                    segments={selectedSegments}
+                    now={currentTime}
+                    live={mode === 'live'}
+                    fmtTime={fmtMs}
+                    openNote={
+                      isStaleWithoutExit(selected, selectedGate, now)
+                        ? 'Sin salida registrada en casetilla: el último estado nunca se cerró.'
+                        : undefined
+                    }
+                  />
+                </div>
                 {selectedActivity && (
                   <div className="mt-3 rounded-lg border border-gray-200 bg-gray-50 p-3">
                     <div className="flex items-center justify-between gap-2">

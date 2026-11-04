@@ -335,7 +335,7 @@ export default function Truck3D({
         </group>
       ))}
 
-      {alert && <AlertCloud alert={alert} clock={alertClock} />}
+      {alert && <AlertCloud alert={alert} clock={alertClock} showTimer={showLabel || selected || hovered} />}
 
       {(showLabel || selected || hovered) && (
         <Html position={[0, 5.2, 0]} center distanceFactor={60} zIndexRange={[20, 0]} style={{ pointerEvents: 'none' }}>
