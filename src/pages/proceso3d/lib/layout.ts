@@ -89,6 +89,49 @@ export const RACK_PITCH = 2 * RACK_DEPTH + RACK_FLUE + RACK_AISLE;
 export const RACK_Z_END = -BUILDING_DEPTH + 6;
 
 /** x lógico del centro del pasillo de racks más cercano a `x`. */
+/**
+ * Taller de equipos (mantenimiento / reparación): contra la fachada frontal, en el extremo de
+ * Recepción (lado oeste lógico), separado unos metros de la pared lateral. Visto desde el lado
+ * de andenes queda arriba a la derecha. Los racks no se dibujan sobre esta área.
+ * Se dibuja en coordenadas locales: pared en z = 0 y el lado abierto hacia el interior (z+).
+ */
+export const WORKSHOP_W = 18;
+export const WORKSHOP_D = 14;
+const WORKSHOP_OFFSET = 9;
+export function workshopPlacement(layout: { xWest: number }) {
+  return { x: layout.xWest + WORKSHOP_OFFSET + WORKSHOP_W / 2, z: FRONT_Z + 0.6, rotationY: 0 };
+}
+/** Área del taller en coordenadas del mundo (para no dibujar racks encima) */
+export function workshopRect(layout: { xWest: number }) {
+  const x0 = layout.xWest + WORKSHOP_OFFSET;
+  const z0 = FRONT_Z + 0.6;
+  return { x0, x1: x0 + WORKSHOP_W, z0, z1: z0 + WORKSHOP_D };
+}
+
+/**
+ * Despacho y escritorios: pegado a la pared de andenes, entre la pared lateral y el andén 0101,
+ * con un portón grande a nivel de piso por donde entra y sale la mercadería pesada.
+ */
+export const DISPATCH_AREA_W = 16;
+export const DISPATCH_AREA_D = 14;
+export const HEAVY_GATE_W = 6;
+export const HEAVY_GATE_H = 4.2;
+export function dispatchAreaRect(layout: { xWest: number }) {
+  const x0 = layout.xWest + 1;
+  return { x0, x1: x0 + DISPATCH_AREA_W, z0: -DISPATCH_AREA_D, z1: -0.4, gateX: x0 + DISPATCH_AREA_W / 2 };
+}
+
+/**
+ * Mezzanine de 3 niveles (piso + 2 entrepisos): franja angosta a lo largo de los andenes,
+ * del andén 0110 al 0117. Arriba corre el sistema de bandas transportadoras, con bajadas
+ * hacia cada portón.
+ */
+const MEZZ_FROM_DOCK = 110;
+const MEZZ_TO_DOCK = 117;
+export const MEZZ_LEVELS = [4.4, 8.0];
+export const MEZZ_WALL_Z = -0.4;
+export const MEZZ_FRONT_Z = -10.4;
+
 export function rackAisleX(x: number) {
   return Math.round((x - RACK_PITCH / 2) / RACK_PITCH) * RACK_PITCH + RACK_PITCH / 2;
 }
@@ -181,6 +224,8 @@ export interface SiteLayout {
   exit: Pt[];
   /** Distancia sobre `exit` donde está la aguja de la casetilla de despacho */
   exitGateS: number;
+  /** Tramo en x del mezzanine (del andén 0110 al 0117); null = no aplica */
+  mezzanine: { x0: number; x1: number } | null;
 }
 
 interface DockInput {
@@ -263,6 +308,14 @@ export function buildLayout(docks: DockInput[]): SiteLayout {
   ];
   const exitGateS = project(exit, { x: yardRoadX, z: despachoGateZ }).s;
 
+  // Mezzanine: del andén 0110 al 0117 (según donde se dibuja cada uno)
+  const mezzEnds = [MEZZ_FROM_DOCK, MEZZ_TO_DOCK].map((n) => ordered.find((d) => numOf(d) === n));
+  const mezzXs = mezzEnds.filter((d): d is DockInput => !!d).map((d) => slots.get(d.id)!.x);
+  const mezzanine =
+    mezzXs.length === 2 && mezzXs[0] !== mezzXs[1]
+      ? { x0: Math.min(...mezzXs) - DOCK_SPACING / 2, x1: Math.max(...mezzXs) + DOCK_SPACING / 2 }
+      : null;
+
   return {
     length,
     xWest,
@@ -280,6 +333,7 @@ export function buildLayout(docks: DockInput[]): SiteLayout {
     trunk,
     exit,
     exitGateS,
+    mezzanine,
   };
 }
 
