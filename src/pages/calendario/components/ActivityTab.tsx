@@ -4,6 +4,12 @@ import { es } from 'date-fns/locale';
 import type { ActivityLog, ActivityLogGrouped } from '../../../types/activityLog';
 import { activityLogService } from '../../../services/activityLogService';
 import { operationalStatusService } from '../../../services/operationalStatusService';
+import { getGateTimes, type GateTimes } from '../../../services/proceso3dService';
+import { buildSegments, reservationEvents } from '../../../utils/stateTimes';
+import StateTimeline from '../../../components/feature/state-times/StateTimeline';
+
+/** Un último estado abierto por más de esto sin salida registrada se considera sin cerrar. */
+const UNCLOSED_AFTER_MS = 12 * 3_600_000;
 
 interface ActivityTabProps {
   orgId: string;
@@ -18,7 +24,9 @@ export function ActivityTab({ orgId, reservationId, docks, statuses }: ActivityT
   const [orderAsc, setOrderAsc] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Todos los estados (incluyendo inactivos) para resolver UUIDs históricos
-  const [allStatuses, setAllStatuses] = useState<Array<{ id: string; name: string; color: string }>>([]);
+  const [allStatuses, setAllStatuses] = useState<Array<{ id: string; name: string; color: string; code?: string | null }>>([]);
+  // Ingreso / salida por casetilla: inicio y fin de los tiempos por estado
+  const [gate, setGate] = useState<GateTimes | undefined>(undefined);
   // Estados resueltos vía función segura (funciona para TODOS los roles)
   const [labelStatuses, setLabelStatuses] = useState<Array<{ id: string; name: string; color: string }>>([]);
 
@@ -31,6 +39,17 @@ export function ActivityTab({ orgId, reservationId, docks, statuses }: ActivityT
       // Silently fail — fallback al prop
     });
   }, [orgId]);
+
+  useEffect(() => {
+    if (!orgId || !reservationId) return;
+    let alive = true;
+    getGateTimes(orgId, [reservationId])
+      .then((m) => alive && setGate(m.get(reservationId)))
+      .catch(() => alive && setGate(undefined));
+    return () => {
+      alive = false;
+    };
+  }, [orgId, reservationId, logs]);
 
   // Resolver los estados referidos en el historial con la función segura
   // (no depende de la RLS de reservation_statuses → funciona en roles restringidos)
@@ -69,6 +88,21 @@ export function ActivityTab({ orgId, reservationId, docks, statuses }: ActivityT
     statuses.forEach(s => map.set(s.id, { name: s.name, color: s.color }));
     return map;
   }, [labelStatuses, allStatuses, statuses]);
+
+  // Tiempos por estado: cada cambio de estado abre un tramo nuevo con su contador en 0
+  const stateSegments = useMemo(() => {
+    const codeById = new Map(allStatuses.map((st) => [st.id, (st.code || st.id).toUpperCase()]));
+    const info = new Map<string, { name: string; color: string }>();
+    statusById.forEach((v, id) => {
+      info.set((codeById.get(id) ?? id).toUpperCase(), v);
+    });
+    const changes = logs
+      .filter((l) => l.field === 'status_id' && l.new_value)
+      .map((l) => ({ to: codeById.get(l.new_value!) ?? l.new_value!.toUpperCase(), at: new Date(l.created_at).getTime() }));
+    return buildSegments(reservationEvents(changes, gate, (code) => info.get(code)), Date.now());
+  }, [logs, allStatuses, statusById, gate]);
+  const lastSegment = stateSegments[stateSegments.length - 1];
+  const unclosed = !!lastSegment && lastSegment.to === null && Date.now() - lastSegment.from > UNCLOSED_AFTER_MS;
 
   useEffect(() => {
     if (!orgId || !reservationId) {
@@ -230,6 +264,22 @@ export function ActivityTab({ orgId, reservationId, docks, statuses }: ActivityT
           </button>
         </div>
       </div>
+
+      {stateSegments.length > 0 && (
+        <div className="mb-6">
+          <StateTimeline
+            segments={stateSegments}
+            now={Date.now()}
+            live
+            fmtTime={(t) => format(new Date(t), 'HH:mm')}
+            openNote={
+              unclosed
+                ? 'El último estado sigue abierto y no hay salida registrada en casetilla: el tiempo se cuenta hasta ahora.'
+                : undefined
+            }
+          />
+        </div>
+      )}
 
       {/* Timeline */}
       <div className="space-y-7">

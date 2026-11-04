@@ -1,6 +1,8 @@
-import { CONTAINER_SLOTS, DISPATCH_STAGE_META, SLOT_COLORS, SLOT_LABELS, dispatchPallets, occupiedCells, type DispatchItem, type DispatchStage, type PutawayItem } from '../lib/appolo';
+import { CONTAINER_SLOTS, DISPATCH_STAGE_META, SLOT_COLORS, SLOT_LABELS, dispatchEvents, dispatchPallets, occupiedCells, type DispatchItem, type DispatchStage, type PutawayItem } from '../lib/appolo';
 import type { AppoloMode, AppoloStatus } from '../useAppolo';
 import type { AppoloSlotType } from '../../../services/appoloOpsService';
+import StateTimeline from '../../../components/feature/state-times/StateTimeline';
+import { buildSegments } from '../../../utils/stateTimes';
 
 const STATUS_META: Record<AppoloStatus, { label: string; dot: string }> = {
   off: { label: 'Apagado', dot: 'bg-gray-400' },
@@ -218,6 +220,9 @@ export function DispatchCard({
   onClose,
   onView,
   compact = false,
+  clock,
+  live = false,
+  fmtTime,
 }: {
   item: DispatchItem;
   dockName: string;
@@ -225,6 +230,10 @@ export function DispatchCard({
   onClose: () => void;
   onView?: () => void;
   compact?: boolean;
+  /** Hora de referencia de los tiempos por estado */
+  clock?: number;
+  live?: boolean;
+  fmtTime?: (ms: number) => string;
 }) {
   const d = item.dispatch;
   const meta = DISPATCH_STAGE_META[item.stage];
@@ -283,6 +292,11 @@ export function DispatchCard({
               </div>
             ))}
         </dl>
+      )}
+      {!compact && clock !== undefined && fmtTime && (
+        <div className="mt-3">
+          <StateTimeline segments={buildSegments(dispatchEvents(d), clock)} now={clock} live={live} fmtTime={fmtTime} />
+        </div>
       )}
       {item.note && !item.pose && !item.leaving && <p className="mt-2 text-[11px] text-amber-700">{item.note}</p>}
       {onView && item.pose && (

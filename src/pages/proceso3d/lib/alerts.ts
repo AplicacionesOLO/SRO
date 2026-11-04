@@ -2,6 +2,7 @@ import type { Reservation } from '../../../services/calendarService';
 import type { GateTimes, StatusChange } from '../../../services/proceso3dService';
 import { ARRIVED, UNLOADED, type TruckPhase } from './phases';
 import type { DockStage } from './unloading';
+import type { StateSegment } from '../../../utils/stateTimes';
 
 /** Minutos de espera a partir de los cuales aparece la nube amarilla / roja. */
 export const ALERT_YELLOW_MIN = 10;
@@ -10,8 +11,12 @@ export const ALERT_RED_MIN = 15;
 export interface TruckAlert {
   /** Qué está esperando el camión */
   label: string;
-  /** Desde cuándo espera (epoch ms) */
+  /** Desde cuándo está en el estado actual (epoch ms): el contador arranca en 0 en cada cambio */
   since: number;
+  /** true = es una espera (patio, cuadrilla, salida…): se pinta amarilla / roja según el tiempo */
+  alerting: boolean;
+  /** Inicio del recorrido completo (ingreso por casetilla / creación del despacho): contador general */
+  totalSince?: number;
 }
 
 export type AlertLevel = 'yellow' | 'red' | null;
@@ -52,10 +57,10 @@ function lastChange(history: StatusChange[] | undefined, t: number, test: (code:
 }
 
 /**
- * Espera que se mide para la nube de alerta, según dónde está el camión:
- *  - Por salir: desde que quedó descargado.
- *  - En patio: desde que ingresó por la casetilla.
- *  - En andén esperando cuadrilla: desde que pasó al estado actual.
+ * Contador del camión: tiempo en el ESTADO ACTUAL (tramo en curso). Cada cambio de estado
+ * lo reinicia en 0; el primer tramo arranca con el ingreso por casetilla.
+ * Las esperas (patio, cuadrilla, salida) se marcan como alerta a los 10 / 15 min.
+ * Sin historial de estados se usan las marcas conocidas (casetilla, fin de descarga).
  */
 export function truckAlert(
   r: Reservation,
@@ -63,22 +68,27 @@ export function truckAlert(
   stage: DockStage | undefined,
   gate: GateTimes | undefined,
   history: StatusChange[] | undefined,
-  t: number
+  t: number,
+  segment: StateSegment | null = null
 ): TruckAlert | null {
+  if (phase !== 'PATIO' && phase !== 'EN_ANDEN' && phase !== 'POR_SALIR') return null;
+  const hasHistory = !!history?.length;
+  // Sin historial, el tramo solo es confiable mientras está en patio (empieza en la casetilla)
+  const seg = segment && segment.from <= t && (hasHistory || phase === 'PATIO') ? segment : null;
+
   if (phase === 'POR_SALIR') {
-    const since = lastChange(history, t, (c) => UNLOADED.has(c)) ?? ms(r.actual_end_datetime);
-    return since !== null && since <= t ? { label: 'Descargado · por salir', since } : null;
+    const since = seg?.from ?? lastChange(history, t, (c) => UNLOADED.has(c)) ?? ms(r.actual_end_datetime);
+    return since !== null && since <= t ? { label: seg?.label ?? 'Descargado · por salir', since, alerting: true } : null;
   }
   if (phase === 'PATIO') {
     const start = ms(r.start_datetime)!;
     const ingreso = ms(gate?.ingresoAt);
     const valid = ingreso !== null && ingreso >= start - 12 * HOUR && ingreso <= t ? ingreso : null;
-    const since = valid ?? lastChange(history, t, (c) => ARRIVED.has(c));
-    return since !== null ? { label: 'Esperando andén', since } : null;
+    const since = seg?.from ?? valid ?? lastChange(history, t, (c) => ARRIVED.has(c));
+    return since !== null ? { label: seg && seg.key !== 'INGRESO' ? seg.label : 'Esperando andén', since, alerting: true } : null;
   }
-  if (phase === 'EN_ANDEN' && stage === 'ESPERA') {
-    const since = lastChange(history, t, () => true) ?? ms(gate?.ingresoAt);
-    return since !== null && since <= t ? { label: 'Esperando cuadrilla', since } : null;
-  }
-  return null;
+  const waiting = stage === 'ESPERA';
+  const since = seg?.from ?? lastChange(history, t, () => true) ?? ms(gate?.ingresoAt);
+  if (since === null || since > t) return null;
+  return { label: seg?.label ?? (waiting ? 'Esperando cuadrilla' : 'En andén'), since, alerting: waiting };
 }

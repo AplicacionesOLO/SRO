@@ -156,7 +156,7 @@ async function getStatusHistory(
   return result;
 }
 
-async function getGateTimes(orgId: string, reservationIds: string[]): Promise<Map<string, GateTimes>> {
+export async function getGateTimes(orgId: string, reservationIds: string[]): Promise<Map<string, GateTimes>> {
   const result = new Map<string, GateTimes>();
   if (reservationIds.length === 0) return result;
 
