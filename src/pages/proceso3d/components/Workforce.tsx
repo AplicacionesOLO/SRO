@@ -21,6 +21,8 @@ export interface UnloadVisual {
   loose: boolean;
   /** Simulación pedida por el usuario: el avance se anima en ciclo */
   demo?: boolean;
+  /** El acomodo a racks lo dibuja la capa de AppOLO (con sus tiempos reales) */
+  putawayExternal?: boolean;
 }
 
 const VESTS = ['#f97316', '#a3e635', '#facc15', '#fb923c', '#bef264', '#fde047'];
@@ -34,7 +36,7 @@ for (let row = 0; row < 5; row++) for (const x of [-1.4, 0, 1.4]) STAGING_SLOTS.
 
 /* ─────────────────────────────── Movimiento en circuito ─────────────────────────────── */
 
-interface Waypoint {
+export interface Waypoint {
   x: number;
   z: number;
   /** Lleva carga en el tramo que SALE de este punto */
@@ -47,7 +49,7 @@ interface Waypoint {
   reverse?: boolean;
 }
 
-interface MotionState {
+export interface MotionState {
   carry: boolean;
   moving: boolean;
   lift: boolean;
@@ -101,7 +103,7 @@ function useLoopMotion(group: RefObject<THREE.Group | null>, path: Waypoint[], s
 
 /* ─────────────────────────────── Modelos ─────────────────────────────── */
 
-function Pallet({ color = LOAD_COLORS[0], loose = false }: { color?: string; loose?: boolean }) {
+export function Pallet({ color = LOAD_COLORS[0], loose = false }: { color?: string; loose?: boolean }) {
   return (
     <group>
       <mesh position={[0, 0.07, 0]} castShadow>
@@ -117,7 +119,7 @@ function Pallet({ color = LOAD_COLORS[0], loose = false }: { color?: string; loo
 }
 
 /** Persona con chaleco reflectivo y casco. `motion` controla la caminata y lo que carga. */
-function Person({
+export function Person({
   vest,
   skin,
   motion,
@@ -211,7 +213,7 @@ function Forks({ length = 1.15 }: { length?: number }) {
 }
 
 /** Carretilla eléctrica (transpaleta con plataforma para el operador). */
-function ElectricJack({ motion, vest, skin }: { motion: RefObject<MotionState>; vest: string; skin: string }) {
+export function ElectricJack({ motion, vest, skin }: { motion: RefObject<MotionState>; vest: string; skin: string }) {
   const load = useRef<THREE.Group>(null);
   useFrame(() => {
     if (load.current) load.current.visible = motion.current.carry;
@@ -247,7 +249,7 @@ function ElectricJack({ motion, vest, skin }: { motion: RefObject<MotionState>; 
 }
 
 /** Carretilla manual (transpaleta) halada por una persona. */
-function ManualJack({ motion, vest, skin }: { motion: RefObject<MotionState>; vest: string; skin: string }) {
+export function ManualJack({ motion, vest, skin }: { motion: RefObject<MotionState>; vest: string; skin: string }) {
   const load = useRef<THREE.Group>(null);
   useFrame(() => {
     if (load.current) load.current.visible = motion.current.carry;
@@ -277,7 +279,7 @@ function ManualJack({ motion, vest, skin }: { motion: RefObject<MotionState>; ve
 }
 
 /** Montacargas de contrapeso (o apilador si `stacker`). Levanta las horquillas en el rack. */
-function Forklift({ motion, stacker = false }: { motion: RefObject<MotionState>; stacker?: boolean }) {
+export function Forklift({ motion, stacker = false }: { motion: RefObject<MotionState>; stacker?: boolean }) {
   const carriage = useRef<THREE.Group>(null);
   const load = useRef<THREE.Group>(null);
   useFrame((_, dt) => {
@@ -376,7 +378,7 @@ function Forklift({ motion, stacker = false }: { motion: RefObject<MotionState>;
 
 /* ─────────────────────────────── Agentes ─────────────────────────────── */
 
-function Mover({
+export function Mover({
   path,
   speed,
   offset,
@@ -503,7 +505,7 @@ export function UnloadingCell({ u, positions }: { u: UnloadVisual; positions: Ma
   let electrica = Math.min(3, u.mix.electrica);
   const manual = Math.min(3, u.mix.manual);
   if (electrica + manual === 0) electrica = 1;
-  const lifts = Math.min(2, u.mix.montacargas) + Math.min(2, u.mix.apilador);
+  const lifts = u.putawayExternal ? 0 : Math.min(2, u.mix.montacargas) + Math.min(2, u.mix.apilador);
   const stackerFrom = Math.min(2, u.mix.montacargas);
 
   const progress = u.demo ? demoProgress : u.stage === 'DESCARGADO' ? 1 : active ? u.progress : 0;
