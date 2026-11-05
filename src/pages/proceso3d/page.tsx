@@ -19,9 +19,10 @@ import { buildSegments, currentSegment, reservationEvents, type StateSegment } f
 import StateTimeline from '../../components/feature/state-times/StateTimeline';
 import PanelSettings from './components/PanelSettings';
 import GateEvidence from './components/GateEvidence';
+import PersonnelPanel from './components/PersonnelPanel';
 import FloatingBox from './components/FloatingBox';
 import { usePanelPrefs, type PanelKey } from './lib/panelPrefs';
-import { appoloConfigured, appoloOpsService, appoloPhotoUrls } from '../../services/appoloOpsService';
+import { appoloConfigured, appoloOpsService, appoloPhotoUrls, type AppoloPersonal } from '../../services/appoloOpsService';
 import {
   allocateEquipment,
   buildDispatchPlan,
@@ -825,6 +826,41 @@ export default function Proceso3DPage() {
     if (appoloMode !== 'live' || !activeWarehouseId || !selectedDispatchId) return null;
     return () => appoloOpsService.dispatchDriver({ sroWarehouseId: activeWarehouseId, despachoId: selectedDispatchId });
   }, [appoloMode, activeWarehouseId, selectedDispatchId]);
+  // Personal del reloj marcador BIT2 (vía AppOLO; solo OLO y con permiso propio). Se refresca cada minuto.
+  const canPersonal = can('proceso3d.personal.view');
+  const personalOn = canPersonal && appoloMode === 'live' && !!activeWarehouseId && isToday;
+  const [personal, setPersonal] = useState<AppoloPersonal | { disponible: false } | null>(null);
+  const [personalError, setPersonalError] = useState<string | null>(null);
+  const [personalLoading, setPersonalLoading] = useState(false);
+  useEffect(() => {
+    setPersonal(null);
+    setPersonalError(null);
+    if (!personalOn || !activeWarehouseId) return;
+    let alive = true;
+    const pull = () => {
+      if (document.hidden) return;
+      setPersonalLoading(true);
+      appoloOpsService
+        .personal({ sroWarehouseId: activeWarehouseId })
+        .then((r) => {
+          if (!alive) return;
+          setPersonal(r);
+          setPersonalError(null);
+        })
+        .catch((e: unknown) => alive && setPersonalError(e instanceof Error ? e.message : String(e)))
+        .finally(() => alive && setPersonalLoading(false));
+    };
+    pull();
+    const id = setInterval(pull, 60_000);
+    return () => {
+      alive = false;
+      clearInterval(id);
+    };
+  }, [personalOn, activeWarehouseId]);
+  const accessInfo =
+    personal && personal.disponible
+      ? `En sitio ${personal.resumen.en_sitio} · pausa ${personal.resumen.en_pausa} · salieron ${personal.resumen.salieron}`
+      : null;
   // Fotos que AppOLO registró en la recepción de esta cita (si las envía)
   const selectedAppoloPhotos = useMemo(() => {
     if (!selectedId || appoloMode === 'off') return undefined;
@@ -984,6 +1020,7 @@ export default function Proceso3DPage() {
                   ghosts={ghosts}
                   workshop={workshop}
                   showMezzanine={showMezzanine}
+                  accessInfo={accessInfo}
                   cutaway={cutaway}
                   selectedId={selectedId}
                   highlightDockId={selected?.dock_id ?? selectedDispatch?.dockId ?? null}
@@ -1335,6 +1372,7 @@ export default function Proceso3DPage() {
                 onMove={panel.move}
                 onReorder={panel.reorder}
                 onReset={panel.reset}
+                available={canPersonal ? undefined : panel.prefs.order.filter((k) => k !== 'reloj')}
                 onClose={() => panel.setOpen(isFullscreen, false)}
               />
             </div>
@@ -1566,6 +1604,20 @@ export default function Proceso3DPage() {
               </div>
             )}
 
+            {canPersonal && show('reloj') && (
+              <div style={{ order: orderOf('reloj') }}>
+                {personalOn ? (
+                  <PersonnelPanel data={personal} error={personalError} loading={personalLoading} now={now} />
+                ) : (
+                  <div className="rounded-lg border border-gray-200 bg-white p-3 text-xs text-gray-500">
+                    <p className="mb-1 text-sm font-semibold text-gray-900">
+                      <i className="ri-fingerprint-line mr-1"></i>Personal en sitio
+                    </p>
+                    {isToday ? 'Disponible con AppOLO «En vivo».' : 'Solo para el día de hoy.'}
+                  </div>
+                )}
+              </div>
+            )}
             {show('personal') && staff && (
               <div style={{ order: orderOf('personal') }}>
               <StaffChart
@@ -1573,6 +1625,7 @@ export default function Proceso3DPage() {
                 available={staffAvailable}
                 currentHour={Math.max(0, Math.min(23, Math.floor((currentTime - dayStart) / (60 * MIN))))}
                 byGroup={staffGroups}
+                present={personal && personal.disponible ? personal.presentes_por_hora : null}
               />
               </div>
             )}
