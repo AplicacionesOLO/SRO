@@ -88,17 +88,21 @@ export function StaffChart({
   available,
   currentHour,
   byGroup,
+  present,
 }: {
   hours: StaffHour[];
   available: number | null;
   currentHour: number;
   byGroup: [string, number][];
+  /** Personas marcadas en el reloj BIT2 en cada hora (24 valores); null = sin dato */
+  present?: number[] | null;
 }) {
   const active = hours.filter((h) => h.needed > 0).map((h) => h.hour);
   const from = Math.min(6, ...(active.length ? [Math.max(0, Math.min(...active) - 1)] : [6]));
   const to = Math.max(20, ...(active.length ? [Math.min(23, Math.max(...active) + 1)] : [20]));
   const shown = hours.filter((h) => h.hour >= from && h.hour <= to);
-  const max = Math.max(1, available ?? 0, ...shown.map((h) => h.needed));
+  const hasPresent = !!present && present.length === 24;
+  const max = Math.max(1, available ?? 0, ...shown.map((h) => h.needed), ...(hasPresent ? shown.map((h) => present![h.hour]) : []));
   const H = 96;
   const now = hours[currentHour];
   const short = available !== null && now ? now.needed - available : 0;
@@ -159,6 +163,13 @@ export function StaffChart({
                     outlineOffset: 1,
                   }}
                 ></div>
+                {hasPresent && h.hour <= currentHour && present![h.hour] > 0 && (
+                  <span
+                    className="absolute z-20 h-2.5 w-2.5 -translate-y-1/2 rounded-full border-2 border-white bg-[#0b0b0b]"
+                    style={{ bottom: (present![h.hour] / max) * H - 5 }}
+                    title={`${String(h.hour).padStart(2, '0')}:00 · ${present![h.hour]} marcados en el reloj`}
+                  ></span>
+                )}
               </div>
             );
           })}
@@ -175,6 +186,9 @@ export function StaffChart({
       <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-gray-600">
         <span className="flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-sm bg-[#3987e5]"></span>Necesarias</span>
         <span className="flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-sm bg-[#3987e5] opacity-45"></span>Proyección</span>
+        {hasPresent && (
+          <span className="flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-full bg-[#0b0b0b]"></span>Marcados en reloj (BIT2)</span>
+        )}
         {available !== null && (
           <>
             <span className="flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-sm bg-[#d03b3b]"></span>Faltan personas</span>

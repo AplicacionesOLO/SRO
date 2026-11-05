@@ -8,13 +8,15 @@ interface Props {
   onReorder: (from: PanelKey, to: PanelKey) => void;
   onReset: () => void;
   onClose: () => void;
+  /** Secciones que este usuario puede ver (las demás no se listan) */
+  available?: PanelKey[];
 }
 
 /**
  * Encabezado del panel lateral: elegir qué secciones se ven y en qué orden
  * (arrastrar o con las flechas). Las preferencias quedan en este navegador.
  */
-export default function PanelSettings({ prefs, onToggle, onMove, onReorder, onReset, onClose }: Props) {
+export default function PanelSettings({ prefs, onToggle, onMove, onReorder, onReset, onClose, available }: Props) {
   const [open, setOpen] = useState(false);
   const [dragKey, setDragKey] = useState<PanelKey | null>(null);
   const boxRef = useRef<HTMLDivElement>(null);
@@ -28,7 +30,8 @@ export default function PanelSettings({ prefs, onToggle, onMove, onReorder, onRe
     return () => document.removeEventListener('pointerdown', onDown);
   }, [open]);
 
-  const hiddenCount = prefs.hidden.length;
+  const keys = available ? prefs.order.filter((k) => available.includes(k)) : prefs.order;
+  const hiddenCount = prefs.hidden.filter((k) => keys.includes(k)).length;
 
   return (
     <div ref={boxRef} className="relative">
@@ -55,7 +58,8 @@ export default function PanelSettings({ prefs, onToggle, onMove, onReorder, onRe
         <div className="absolute left-0 right-0 top-full z-30 mt-1 rounded-lg border border-gray-200 bg-white p-2 shadow-lg">
           <p className="mb-1.5 px-1 text-[11px] text-gray-500">Marcá lo que querés ver. Arrastrá o usá las flechas para elegir el orden.</p>
           <ul className="flex flex-col gap-1">
-            {prefs.order.map((k, i) => {
+            {keys.map((k) => {
+              const i = prefs.order.indexOf(k);
               const visible = !prefs.hidden.includes(k);
               return (
                 <li

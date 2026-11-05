@@ -1,16 +1,17 @@
 import { useCallback, useState } from 'react';
 
 /** Secciones del panel lateral que el usuario puede mostrar, ocultar y reordenar. */
-export type PanelKey = 'seleccion' | 'appolo' | 'personal' | 'leyenda';
+export type PanelKey = 'seleccion' | 'appolo' | 'reloj' | 'personal' | 'leyenda';
 
 export const PANEL_META: Record<PanelKey, { label: string; icon: string }> = {
   seleccion: { label: 'Camión / despacho seleccionado', icon: 'ri-truck-line' },
   appolo: { label: 'AppOLO · despachos y acomodo', icon: 'ri-stack-line' },
+  reloj: { label: 'Personal en sitio (reloj BIT2)', icon: 'ri-fingerprint-line' },
   personal: { label: 'Personal por hora', icon: 'ri-team-line' },
   leyenda: { label: 'Leyenda', icon: 'ri-palette-line' },
 };
 
-const DEFAULT_ORDER: PanelKey[] = ['seleccion', 'appolo', 'personal', 'leyenda'];
+const DEFAULT_ORDER: PanelKey[] = ['seleccion', 'appolo', 'reloj', 'personal', 'leyenda'];
 const STORAGE_KEY = 'p3d.panel.v1';
 
 export interface PanelPrefs {

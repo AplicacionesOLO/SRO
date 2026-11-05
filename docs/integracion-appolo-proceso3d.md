@@ -199,13 +199,87 @@ Devuelve los datos ya registrados del chofer del despacho (incluida la foto de s
 
 **Checklist:** las respuestas de la app ("si"/"no") se convierten a `ok: true/false`, con el texto que muestra la app. Las boletas cerradas por regularización (sin checklist ni firma) traen un solo ítem `{ "item": "Regularización: <nota>", "ok": null }` y `validada_por: "Aplicaciones OLO (regularización)"`. Tres boletas manuales viejas (agosto 2026) traen las claves de una versión anterior de la app (Carga, Documentos, Identidad, Marchamo, Placas, Vehículo).
 
+## 1d. Personal en sitio (BIT2)
+
+`GET <URL de ops-3d-snapshot>?sro_warehouse_id=<uuid>&personal=1&v=1`
+
+Personal marcado **hoy** (America/Costa_Rica) en el reloj BIT2 de OLO: quién está en sitio, quién está en pausa y quién ya salió, para agruparlo por escala (gerente → coordinador → colaborador). Es solo consulta.
+
+- **Acceso:** misma validación de sesión de SRO que el snapshot, pero exige el permiso **`proceso3d.personal.view`** de la Matriz de Permisos (hoy solo Full Access). Sin él → **403** (no basta `proceso3d.view`).
+- **Solo OLO:** el reloj marcador existe únicamente en OLO (bodega `CR-OLO-CLIRO`). Cualquier otro almacén, o uno sin bodega asociada → **200** con `{ "disponible": false }`.
+- **De dónde sale:** `bit2-api` (en la red interna de OLO) lee cada 60 s las marcas del día de `dbo.GLogs` y las guarda en Supabase (`ops3d_personal_dia`, `ops3d_personal_sync`). La función solo lee esas tablas.
+- **Nunca se envía** la cédula (`codeEmployee` de BIT2) ni datos de horas extra. `id` es el id interno de BIT2.
+- **Caché:** `Cache-Control: no-store`.
+
+**Cuerpo `200` (OLO):**
+
+```jsonc
+{
+  "disponible": true,
+  "fecha": "2026-11-05",
+  "actualizado_at": "2026-11-05T16:01:15-06:00",   // = ultima_sync (se mantiene por compatibilidad)
+  "ultima_sync": "2026-11-05T16:01:15-06:00",      // última vuelta exitosa de bit2-api; null si nunca
+  "marcas_hasta": "2026-11-05T15:56:50-06:00",     // cuándo entró a BIT2 la última marca (última descarga del reloj)
+  "desactualizado": false,
+  "resumen": {
+    "en_sitio": 74, "en_pausa": 11, "salieron": 12,
+    "por_escala": { "gerente": 0, "coordinador": 7, "colaborador": 90 }   // todas las personas que marcaron hoy
+  },
+  "presentes_por_hora": [0,0,0,0,16,27,61,72,71,69,70,70,71,70,90,78,74,0,0,0,0,0,0,0],
+  "personas": [
+    {
+      "id": "36",
+      "nombre": "CARLOS ANTONIO MOLINA GRANADOS",
+      "puesto": "MONTACARGUISTA",                 // o null
+      "departamento": "CEDI",                     // o null
+      "escala": "colaborador",                    // gerente | coordinador | colaborador
+      "coordinador": "GILBERT NUÑEZ PICHARDO",    // siempre texto
+      "gerente": "ARGUELLO UGALDE FELIPE",        // siempre texto
+      "estado": "en_sitio",                       // en_sitio | pausa | salio
+      "entrada": "2026-11-05T06:53:00-06:00",     // primera marca
+      "salida": null,                             // última marca, solo si estado = salio
+      "marcas": ["06:53", "09:32", "10:00", "13:24", "14:24"],
+      "horario": { "entrada": "07:00", "salida": "17:30" },   // o null cada uno
+      "tarde": false
+    }
+  ]
+}
+```
+
+**Reglas (acordadas el 05/11/2026):**
+
+- **Horas:** BIT2 guarda hora local de Costa Rica sin zona; se envían en ISO con `-06:00` (Costa Rica no tiene horario de verano). `marcas` en `HH:MM` local.
+- **Marcas dobles:** se ignora la marca que llega **2 minutos o menos** después de la anterior.
+- **Estado:** el reloj no indica si una marca es entrada o salida (el campo `mode` no sirve), así que se cuentan las marcas del día:
+  - número **impar** → `en_sitio`;
+  - **par** y todavía no llega su `horario.salida` + 30 min → `pausa` (merienda, almuerzo);
+  - **par** y ya pasó su `horario.salida` + 30 min, o no tiene horario → `salio`.
+- **`tarde`:** primera marca > `horario.entrada` + 5 min. Sin horario → `false`.
+- **`presentes_por_hora`:** 24 valores (hora de Costa Rica, 0–23). Cuenta a quien estuvo dentro en algún momento de esa hora: tramos entrada→salida por pares de marcas; el último sin pareja sigue abierto hasta ahora. Las pausas no cuentan y las horas futuras valen 0.
+- **Escala** (con la configuración de Horas Extra que ya existe en AppOLO):
+  1. **gerente:** el nombre coincide con una entrada *Gerente* de la configuración de coordinadores;
+  2. **coordinador:** coincide con una entrada *Coordinador*, o su puesto dice `COORDINADOR` (o `COORINADOR`, error de dedo en BIT2);
+  3. **colaborador:** el resto.
+  Los nombres se comparan por palabras, sin orden ni tildes ("GREGORIO POVEDA LOPEZ" = "GREGORIO GERARDO LOPEZ POVEDA").
+- **`coordinador` / `gerente`** (siempre texto, para agrupar):
+  - colaborador: `coordinador` = su grupo de BIT2; `gerente` = el de la relación coordinador → gerente de AppOLO o, si falta, el grupo de BIT2 en el que está ese coordinador;
+  - coordinador: `coordinador` = él mismo; `gerente` = su relación o su grupo de BIT2 (los coordinadores están en el grupo de su gerente);
+  - gerente: `coordinador` = `"Sin coordinador"`, `gerente` = él mismo. Hoy **ningún gerente marca** en BIT2, así que `por_escala.gerente` es 0;
+  - sin dato: `"Sin coordinador"` / `"Sin gerente"`.
+- **`desactualizado: true`** si la última sincronización de bit2-api tiene más de **5 min**, o si entre **06:00 y 22:30** `marcas_hasta` tiene más de **30 min** de atraso.
+
+**Ojo con la frescura:** el reloj **no envía las marcas solo**; alguien las descarga a BIT2 a mano y de forma irregular (a veces pasan horas o días). bit2-api sincroniza cada 60 s, pero solo ve lo que ya está en BIT2: por eso existe `marcas_hasta`. SRO debería mostrar el aviso "datos del reloj atrasados" cuando `desactualizado` sea `true`. Mientras la descarga no sea automática (configuración de BIT2), lo de "en sitio" puede ir horas atrás.
+
+**Avisos:** cuando cambia alguna persona, bit2-api publica en el canal `ops3d:CR-OLO-CLIRO` el evento `change` con `{ "entity": "personal", "id": "<fecha>", "at": "ISO" }` (ver sección 2). Al recibirlo, SRO vuelve a pedir `?personal=1`.
+
 ## 2. Avisos en tiempo real
 
 - **Tipo:** Supabase Realtime **Broadcast privado** (`config.private = true`). Los avisos no se guardan en tablas: **no ocupan almacenamiento**.
 - **Canal:** `ops3d:<bodega_id>`. **Evento:** `change`.
-- **Payload:** `{ "entity": "dispatch" | "reception" | "equipment", "id": "...", "at": "ISO" }`.
+- **Payload:** `{ "entity": "dispatch" | "reception" | "equipment" | "personal", "id": "...", "at": "ISO" }`.
 - **Quién publica:**
   - Despachos: trigger `AFTER INSERT OR UPDATE` en `despacho_dev_despachos` y `despacho_dev_layout` → `realtime.send(...)`.
+  - Personal (§1d): bit2-api, una vez por vuelta y solo si cambió alguna persona, vía la función `ops3d_notify_personal` (`id` = fecha del día).
   - Recepciones y equipos: trigger en sus tablas de Supabase una vez migradas (etapa B). No se hace puente desde Firestore.
 - **Autorización:** política RLS sobre `realtime.messages` que solo permite `SELECT` cuando el claim del token coincide con el canal, por ejemplo `(auth.jwt() ->> 'ops3d_channel') = realtime.topic()`. El token lo firma la función con el JWT secret del proyecto de despachos.
 - **Si el proyecto ya usa las llaves JWT nuevas (asimétricas)** y no se puede firmar: se omite `realtime` en la respuesta y SRO consulta cada 2 minutos (ya implementado). Alternativa: canal con nombre aleatorio que rota en cada consulta; los avisos solo llevan ids, sin datos.

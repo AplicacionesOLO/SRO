@@ -57,6 +57,8 @@ interface WarehouseSceneProps {
   workshop?: WorkshopInfo;
   /** Dibujar el mezzanine (con el techo quitado) */
   showMezzanine?: boolean;
+  /** Texto del letrero del control de acceso (personal del reloj marcador) */
+  accessInfo?: string | null;
 }
 
 const { ACTION } = CameraControlsImpl;
@@ -249,6 +251,7 @@ export default function WarehouseScene({
   ghosts = NO_GHOSTS,
   workshop,
   showMezzanine = true,
+  accessInfo,
 }: WarehouseSceneProps) {
   const flyRef = useRef<((p: THREE.Vector3) => void) | null>(null);
   const span = layout.eastRoadX - layout.streetX;
@@ -333,7 +336,7 @@ export default function WarehouseScene({
           {ghosts.length > 0 && <GhostTrucks ghosts={ghosts} showLabels={showLabels} />}
           {cutaway && workshop && <Workshop layout={layout} info={workshop} showLabel={showLabels} />}
           {cutaway && showMezzanine && <Mezzanine layout={layout} showLabel={showLabels} />}
-          {cutaway && <AccessControl layout={layout} showLabel={showLabels} />}
+          {cutaway && <AccessControl layout={layout} showLabel={showLabels} info={accessInfo} />}
           <DispatchArea layout={layout} cutaway={cutaway} showLabel={showLabels} />
           {dispatchLot !== undefined && <DispatchLotArea layout={layout} stats={dispatchLot} showLabel={showLabels} />}
         </group>

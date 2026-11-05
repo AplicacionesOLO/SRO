@@ -152,6 +152,82 @@ async function opsGet(sroWarehouseId: string, extra: Record<string, string>): Pr
   return { status: res.status, body: await res.json().catch(() => null) };
 }
 
+/** Persona marcada hoy en el reloj BIT2 (sección 1d del contrato). */
+export interface AppoloPersona {
+  id: string;
+  nombre: string;
+  puesto: string | null;
+  departamento: string | null;
+  escala: 'gerente' | 'coordinador' | 'colaborador';
+  coordinador: string;
+  gerente: string;
+  estado: 'en_sitio' | 'pausa' | 'salio';
+  entrada: string | null;
+  salida: string | null;
+  marcas: string[];
+  horario: { entrada: string | null; salida: string | null };
+  tarde: boolean;
+}
+
+export interface AppoloPersonal {
+  disponible: true;
+  fecha: string;
+  ultima_sync: string | null;
+  marcas_hasta: string | null;
+  desactualizado: boolean;
+  resumen: {
+    en_sitio: number;
+    en_pausa: number;
+    salieron: number;
+    por_escala: { gerente: number; coordinador: number; colaborador: number };
+  };
+  presentes_por_hora: number[];
+  personas: AppoloPersona[];
+}
+
+function parsePersonal(b: any): AppoloPersonal | { disponible: false } {
+  if (!b || typeof b !== 'object' || b.disponible !== true) return { disponible: false };
+  const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
+  const str = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim() : null);
+  const ESCALAS = ['gerente', 'coordinador', 'colaborador'] as const;
+  const ESTADOS = ['en_sitio', 'pausa', 'salio'] as const;
+  const r = b.resumen ?? {};
+  const pe = r.por_escala ?? {};
+  return {
+    disponible: true,
+    fecha: String(b.fecha ?? ''),
+    ultima_sync: str(b.ultima_sync ?? b.actualizado_at),
+    marcas_hasta: str(b.marcas_hasta),
+    desactualizado: b.desactualizado === true,
+    resumen: {
+      en_sitio: num(r.en_sitio),
+      en_pausa: num(r.en_pausa),
+      salieron: num(r.salieron),
+      por_escala: { gerente: num(pe.gerente), coordinador: num(pe.coordinador), colaborador: num(pe.colaborador) },
+    },
+    presentes_por_hora: Array.isArray(b.presentes_por_hora) && b.presentes_por_hora.length === 24 ? b.presentes_por_hora.map(num) : [],
+    personas: (Array.isArray(b.personas) ? b.personas : [])
+      .filter((p: any) => p && p.id != null && typeof p.nombre === 'string')
+      .map(
+        (p: any): AppoloPersona => ({
+          id: String(p.id),
+          nombre: p.nombre.trim(),
+          puesto: str(p.puesto),
+          departamento: str(p.departamento),
+          escala: ESCALAS.includes(p.escala) ? p.escala : 'colaborador',
+          coordinador: str(p.coordinador) ?? 'Sin coordinador',
+          gerente: str(p.gerente) ?? 'Sin gerente',
+          estado: ESTADOS.includes(p.estado) ? p.estado : 'en_sitio',
+          entrada: str(p.entrada),
+          salida: str(p.salida),
+          marcas: Array.isArray(p.marcas) ? p.marcas.filter((m: unknown): m is string => typeof m === 'string') : [],
+          horario: { entrada: str(p.horario?.entrada), salida: str(p.horario?.salida) },
+          tarde: p.tarde === true,
+        })
+      ),
+  };
+}
+
 /** Chofer registrado en AppOLO y boleta de salida del despacho (datos ya existentes, solo lectura). */
 export interface AppoloDriverInfo {
   chofer: {
@@ -283,6 +359,28 @@ export const appoloOpsService = {
     // Acepta ["https://…"] o [{ url: "https://…" }]
     const raw = Array.isArray(b?.fotos) ? b!.fotos.map((f: any) => (typeof f === 'string' ? f : f?.url)) : [];
     return appoloPhotoUrls(raw);
+  },
+
+  /**
+   * Personal marcado hoy en el reloj BIT2 (solo OLO). Exige proceso3d.personal.view en SRO:
+   * sin él AppOLO responde 403 ('auth'). Otro almacén → { disponible: false }.
+   */
+  async personal(params: { sroWarehouseId: string }): Promise<AppoloPersonal | { disponible: false }> {
+    let res: { status: number; body: unknown };
+    try {
+      res = await opsGet(params.sroWarehouseId, { personal: '1' });
+    } catch (e) {
+      if (e instanceof AppoloError && e.message === 'AppOLO respondió 400') {
+        throw new AppoloError('AppOLO todavía no envía el personal del reloj marcador', 'contract');
+      }
+      throw e;
+    }
+    const b = res.body as any;
+    // Una versión anterior de la función ignora el parámetro y devuelve la foto del día
+    if (b && typeof b === 'object' && Array.isArray(b.dispatches)) {
+      throw new AppoloError('AppOLO todavía no envía el personal del reloj marcador', 'contract');
+    }
+    return parsePersonal(b);
   },
 
   /**
