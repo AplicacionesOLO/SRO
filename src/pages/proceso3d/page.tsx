@@ -17,7 +17,11 @@ import { crewFor, dockActivity, isLooseCargo, resolveCargo, STAGE_META, unitLabe
 import { ALERT_RED_MIN, ALERT_YELLOW_MIN, truckAlert, type TruckAlert } from './lib/alerts';
 import { buildSegments, currentSegment, reservationEvents, type StateSegment } from '../../utils/stateTimes';
 import StateTimeline from '../../components/feature/state-times/StateTimeline';
-import { appoloConfigured } from '../../services/appoloOpsService';
+import PanelSettings from './components/PanelSettings';
+import GateEvidence from './components/GateEvidence';
+import FloatingBox from './components/FloatingBox';
+import { usePanelPrefs, type PanelKey } from './lib/panelPrefs';
+import { appoloConfigured, appoloOpsService, appoloPhotoUrls } from '../../services/appoloOpsService';
 import {
   allocateEquipment,
   buildDispatchPlan,
@@ -118,6 +122,8 @@ export default function Proceso3DPage() {
   const [showUpcoming, setShowUpcoming] = useState(true);
   const [tvMode, setTvMode] = useState(false);
   const [staffAvailable, setStaffAvailable] = useState<number | null>(null);
+  // Panel lateral: secciones visibles y orden elegidos por el usuario
+  const panel = usePanelPrefs();
 
   useEffect(() => {
     const onChange = () => {
@@ -693,6 +699,11 @@ export default function Proceso3DPage() {
     return () => clearInterval(id);
   }, [tvMode, appoloMode]);
 
+  // En pantalla completa el panel flota sobre la escena y tiene su propio interruptor
+  const panelOpen = isFullscreen ? panel.prefs.openFullscreen : panel.prefs.open;
+  const show = (k: PanelKey) => !panel.prefs.hidden.includes(k);
+  const orderOf = (k: PanelKey) => panel.prefs.order.indexOf(k);
+
   const toggleTv = () => {
     if (tvMode) {
       setTvMode(false);
@@ -803,6 +814,20 @@ export default function Proceso3DPage() {
   };
   const selectedPlan = selectedId ? plan.find((p) => p.id === selectedId) : undefined;
   const selectedGate = selectedId ? data?.gateTimes.get(selectedId) : undefined;
+  // Fotos de carga del despacho seleccionado: se piden a AppOLO al abrir la tarjeta
+  const selectedDispatchId = selectedDispatch?.dispatch.id;
+  const loadDispatchPhotos = useMemo(() => {
+    if (appoloMode !== 'live' || !activeWarehouseId || !selectedDispatchId) return undefined;
+    return () => appoloOpsService.dispatchPhotos({ sroWarehouseId: activeWarehouseId, despachoId: selectedDispatchId });
+  }, [appoloMode, activeWarehouseId, selectedDispatchId]);
+  // Fotos que AppOLO registró en la recepción de esta cita (si las envía)
+  const selectedAppoloPhotos = useMemo(() => {
+    if (!selectedId || appoloMode === 'off') return undefined;
+    const urls = (appolo.snapshot?.receptions ?? [])
+      .filter((r) => r.reserva_id === selectedId)
+      .flatMap((r) => appoloPhotoUrls(r.fotos));
+    return urls.length > 0 ? urls : undefined;
+  }, [selectedId, appoloMode, appolo.snapshot]);
   const selectedActivity = selectedId ? dockActivities.get(selectedId) : undefined;
   const selectedCargo = selected && data ? resolveCargo(selected, data.cargoTypes) : undefined;
   const selectedSegments = selected ? segmentsOf(selected, currentTime) : [];
@@ -917,11 +942,17 @@ export default function Proceso3DPage() {
 
         {kpis && <KpiStrip kpis={kpis} lateDispatches={appoloMode !== 'off' ? lotInfo.total : undefined} />}
 
-        <div className="grid grid-cols-1 xl:grid-cols-[1fr_360px] gap-4">
+        <div
+          ref={sceneBoxRef}
+          className={
+            isFullscreen
+              ? 'relative h-screen w-screen overflow-hidden bg-white'
+              : `grid grid-cols-1 gap-4 ${panelOpen ? 'xl:grid-cols-[1fr_360px]' : ''}`
+          }
+        >
           {/* Escena 3D */}
           <div
-            ref={sceneBoxRef}
-            className={`relative overflow-hidden bg-white ${isFullscreen ? 'flex h-screen w-screen flex-col' : 'rounded-lg border border-gray-200'}`}
+            className={`overflow-hidden bg-white ${isFullscreen ? 'absolute inset-0 flex flex-col' : 'relative rounded-lg border border-gray-200'}`}
           >
             <div className={isFullscreen ? 'min-h-0 flex-1' : 'h-[62vh] min-h-[420px]'}>
               {needsWarehouse ? (
@@ -1031,6 +1062,13 @@ export default function Proceso3DPage() {
                 {tvMode ? 'Detener TV' : 'Modo TV'}
               </button>
               <button
+                onClick={() => panel.setOpen(isFullscreen, !panelOpen)}
+                className={`rounded-md px-2 py-1 text-xs font-medium shadow cursor-pointer ${panelOpen ? 'bg-teal-600 text-white' : 'bg-white/90 text-gray-700'}`}
+                title={panelOpen ? 'Ocultar el panel de información' : 'Mostrar el panel de información'}
+              >
+                <i className="ri-layout-right-line mr-1"></i>Panel
+              </button>
+              <button
                 onClick={toggleFullscreen}
                 className="rounded-md bg-white/90 px-2 py-1 text-xs font-medium text-gray-700 shadow hover:bg-white cursor-pointer"
                 title={isFullscreen ? 'Salir de pantalla completa (Esc)' : 'Pantalla completa'}
@@ -1053,7 +1091,12 @@ export default function Proceso3DPage() {
               </span>
             </div>
 
-            <div className="absolute right-3 top-3 rounded-md bg-white/90 px-3 py-1.5 text-right shadow">
+            <FloatingBox
+              storageKey="p3d.statusBox.v1"
+              defaultPosition={isFullscreen && panelOpen ? 'right-[384px] top-3' : 'right-3 top-3'}
+              className="min-w-[120px] shadow"
+            >
+            <div className="rounded-b-md bg-white/90 px-3 py-1.5 text-right">
               <div className="flex items-center justify-end gap-1.5 text-[10px] uppercase tracking-wide text-gray-500">
                 {mode === 'live' && (
                   <span
@@ -1102,6 +1145,7 @@ export default function Proceso3DPage() {
                 </div>
               )}
             </div>
+            </FloatingBox>
 
             {/* Pantalla completa: resumen por fase y camión seleccionado, flotando sobre la escena */}
             {isFullscreen && (
@@ -1114,7 +1158,7 @@ export default function Proceso3DPage() {
                     </span>
                   ))}
                 </div>
-                {selectedDispatch && (
+                {!panelOpen && selectedDispatch && (
                   <DispatchCard
                     compact
                     item={selectedDispatch}
@@ -1124,7 +1168,7 @@ export default function Proceso3DPage() {
                     onView={() => viewDispatch(selectedDispatch)}
                   />
                 )}
-                {selected && (
+                {!panelOpen && selected && (
                   <div className="rounded-lg bg-white/95 p-3 text-sm shadow-lg">
                     <div className="flex items-start justify-between gap-2">
                       <div>
@@ -1270,9 +1314,27 @@ export default function Proceso3DPage() {
             )}
           </div>
 
-          {/* Panel lateral */}
-          <div className="flex flex-col gap-4 min-h-0">
-            {selectedDispatch && (
+          {/* Panel lateral: secciones visibles y orden según el usuario */}
+          {panelOpen && (
+          <div
+            className={
+              isFullscreen
+                ? 'absolute bottom-3 right-3 top-3 z-20 flex w-[360px] flex-col gap-3 overflow-y-auto rounded-lg bg-gray-50/90 p-2 shadow-xl backdrop-blur-sm'
+                : 'flex flex-col gap-4 min-h-0'
+            }
+          >
+            <div style={{ order: -1 }}>
+              <PanelSettings
+                prefs={panel.prefs}
+                onToggle={panel.toggle}
+                onMove={panel.move}
+                onReorder={panel.reorder}
+                onReset={panel.reset}
+                onClose={() => panel.setOpen(isFullscreen, false)}
+              />
+            </div>
+            {show('seleccion') && selectedDispatch && (
+              <div style={{ order: orderOf('seleccion') }}>
               <DispatchCard
                 item={selectedDispatch}
                 dockName={dispatchDockName(selectedDispatch)}
@@ -1282,8 +1344,12 @@ export default function Proceso3DPage() {
                 clock={currentTime}
                 live={mode === 'live'}
                 fmtTime={fmtMs}
+                loadPhotos={loadDispatchPhotos}
               />
+              </div>
             )}
+            {show('appolo') && (
+            <div style={{ order: orderOf('appolo') }}>
             <AppoloSummary
               mode={appoloMode}
               onModeChange={(m) => {
@@ -1301,8 +1367,10 @@ export default function Proceso3DPage() {
               onViewLot={() => goToCamera('esperaDespacho')}
               selectedId={selectedId}
             />
-            {selected && (
-              <div className="rounded-lg border border-gray-200 bg-white p-4">
+            </div>
+            )}
+            {show('seleccion') && selected && (
+              <div className="rounded-lg border border-gray-200 bg-white p-4" style={{ order: orderOf('seleccion') }}>
                 <div className="flex items-start justify-between gap-2">
                   <div>
                     <p className="text-xs text-gray-500">Camión seleccionado</p>
@@ -1383,6 +1451,15 @@ export default function Proceso3DPage() {
                     </>
                   )}
                 </dl>
+                {orgId && (
+                  <GateEvidence
+                    orgId={orgId}
+                    reservationId={selected.id}
+                    fmt={fmt}
+                    appoloPhotos={selectedAppoloPhotos}
+                    refreshKey={`${selectedGate?.ingresoAt ?? ''}|${selectedGate?.salidaAt ?? ''}`}
+                  />
+                )}
                 <div className="mt-3">
                   <StateTimeline
                     segments={selectedSegments}
@@ -1483,17 +1560,20 @@ export default function Proceso3DPage() {
               </div>
             )}
 
-            {staff && (
+            {show('personal') && staff && (
+              <div style={{ order: orderOf('personal') }}>
               <StaffChart
                 hours={staff.hours}
                 available={staffAvailable}
                 currentHour={Math.max(0, Math.min(23, Math.floor((currentTime - dayStart) / (60 * MIN))))}
                 byGroup={staffGroups}
               />
+              </div>
             )}
 
             {/* Leyenda */}
-            <div className="rounded-lg border border-gray-200 bg-white p-3 text-xs">
+            {show('leyenda') && (
+            <div className="rounded-lg border border-gray-200 bg-white p-3 text-xs" style={{ order: orderOf('leyenda') }}>
               <p className="mb-2 font-semibold text-gray-900">Leyenda</p>
               <div className="flex flex-wrap gap-x-3 gap-y-1.5 text-gray-600">
                 {(data?.statuses ?? []).map((s) => (
@@ -1519,7 +1599,9 @@ export default function Proceso3DPage() {
                 <span className="flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-full bg-red-500"></span>Bloqueado</span>
               </div>
             </div>
+            )}
           </div>
+          )}
         </div>
       </div>
     </div>

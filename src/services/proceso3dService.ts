@@ -199,6 +199,57 @@ export async function getGateTimes(orgId: string, reservationIds: string[]): Pro
   return result;
 }
 
+/** Registro del Punto de Control (casetilla) de una cita: chofer y fotos de IN y OUT. */
+export interface GateDetail {
+  ingreso: {
+    at: string;
+    chofer: string | null;
+    cedula: string | null;
+    matricula: string | null;
+    observaciones: string | null;
+    fotos: string[];
+  } | null;
+  salida: { at: string; chofer: string | null; matricula: string | null; fotos: string[] } | null;
+}
+
+/** Lee el ingreso (el primero) y la salida (la última) de casetilla de una cita. Solo lectura. */
+export async function getGateDetail(orgId: string, reservationId: string): Promise<GateDetail> {
+  const [ing, sal] = await Promise.all([
+    supabase
+      .from('casetilla_ingresos')
+      .select('created_at, chofer, cedula, matricula, observaciones, fotos')
+      .eq('org_id', orgId)
+      .eq('reservation_id', reservationId)
+      .order('created_at', { ascending: true })
+      .limit(1),
+    supabase
+      .from('casetilla_salidas')
+      .select('exit_at, created_at, chofer, matricula, fotos')
+      .eq('org_id', orgId)
+      .eq('reservation_id', reservationId)
+      .order('created_at', { ascending: false })
+      .limit(1),
+  ]);
+  if (ing.error) throw ing.error;
+  if (sal.error) throw sal.error;
+  const i = (ing.data ?? [])[0] as any;
+  const s = (sal.data ?? [])[0] as any;
+  const urls = (v: unknown) => (Array.isArray(v) ? v.filter((u): u is string => typeof u === 'string' && u.length > 0) : []);
+  return {
+    ingreso: i
+      ? {
+          at: i.created_at,
+          chofer: i.chofer ?? null,
+          cedula: i.cedula ?? null,
+          matricula: i.matricula ?? null,
+          observaciones: i.observaciones ?? null,
+          fotos: urls(i.fotos),
+        }
+      : null,
+    salida: s ? { at: s.exit_at || s.created_at, chofer: s.chofer ?? null, matricula: s.matricula ?? null, fotos: urls(s.fotos) } : null,
+  };
+}
+
 export const proceso3dService = {
   /**
    * Personal disponible en el almacén según Recursos de Manpower: suma de las cantidades
