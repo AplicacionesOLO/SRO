@@ -9,7 +9,12 @@ import {
   RACK_PITCH,
   RACK_Z0,
   RACK_Z_END,
+  SHORT_RACK_END_Z,
+  SHORT_RACKS,
   STAGING_DEPTH,
+  CANTILEVER_ROWS,
+  rackGrid,
+  rackK,
   workshopRect,
   type SiteLayout,
 } from '../lib/layout';
@@ -36,8 +41,6 @@ function seeded(seed: number) {
   };
 }
 
-/** Filas dobles junto al taller (lado oeste) que son racks cantilever de material pesado y largo. */
-const CANTILEVER_ROWS = 2;
 /** Separación entre columnas del cantilever y niveles de brazos (como en el sitio: ~7 niveles) */
 const CANT_COL = BAY / 2;
 const CANT_LEVELS = [0.35, 1.55, 2.75, 3.95, 5.15, 6.35, 7.55];
@@ -165,9 +168,9 @@ function buildRacks(layout: SiteLayout): RackData {
     }
   }
   // Filas dobles sobre la grilla fija en x (centro en k · RACK_PITCH), dentro del edificio
-  const half = RACK_DEPTH + RACK_FLUE / 2;
-  const kFrom = Math.ceil((layout.xWest + 5 + half) / RACK_PITCH);
-  const kTo = Math.floor((layout.xEast - 5 - half) / RACK_PITCH);
+  const { half, kFrom, kTo } = rackGrid(layout);
+  // Racks más cortos: dejan libre el control de acceso contra la fachada
+  const shortKs = new Set(SHORT_RACKS.map((n) => rackK(layout, n)));
   for (let k = kFrom; k <= kTo; k++) {
     const cx = k * RACK_PITCH;
     // las primeras filas junto al taller son cantilever
@@ -180,7 +183,7 @@ function buildRacks(layout: SiteLayout): RackData {
       const xA = xFace;
       const xB = xFace + RACK_DEPTH;
       const xc = (xA + xB) / 2;
-      const bays = clearOfShop(xA, xB);
+      const bays = shortKs.has(k) ? clearOfShop(xA, xB).filter((bz) => bz - BAY >= SHORT_RACK_END_Z) : clearOfShop(xA, xB);
       bays.forEach((bz, i) => {
         const prevEnd = i > 0 ? bays[i - 1] - BAY : Infinity;
         // postes al inicio de cada bahía (y al final si la siguiente no es contigua)

@@ -88,7 +88,39 @@ export const RACK_PITCH = 2 * RACK_DEPTH + RACK_FLUE + RACK_AISLE;
 /** Fondo útil de los racks (z) */
 export const RACK_Z_END = -BUILDING_DEPTH + 6;
 
-/** x lógico del centro del pasillo de racks más cercano a `x`. */
+/** Filas cantilever (las primeras desde el lado del taller); los racks selectivos se numeran después. */
+export const CANTILEVER_ROWS = 2;
+
+/**
+ * Grilla de filas dobles: centro de la fila k en x = k · RACK_PITCH, de kFrom (lado oeste lógico,
+ * el del taller) a kTo. Vistos desde los andenes se numeran de derecha a izquierda.
+ */
+export function rackGrid(layout: { xWest: number; xEast: number }) {
+  const half = RACK_DEPTH + RACK_FLUE / 2;
+  const kFrom = Math.ceil((layout.xWest + 5 + half) / RACK_PITCH);
+  const kTo = Math.floor((layout.xEast - 5 - half) / RACK_PITCH);
+  return { half, kFrom, kTo };
+}
+
+/** k de la grilla del rack selectivo número `n` (1 = el primero después de los cantilever). */
+export function rackK(layout: { xWest: number; xEast: number }, n: number) {
+  return rackGrid(layout).kFrom + CANTILEVER_ROWS + n - 1;
+}
+
+/**
+ * Racks 11, 12 y 13 más cortos: junto a la fachada frontal queda el control de acceso del
+ * personal (caseta del oficial de seguridad, arco detector, detector manual y reloj marcador).
+ */
+export const SHORT_RACKS = [11, 12, 13];
+export const SHORT_RACK_END_Z = FRONT_Z + 12;
+export function accessControlRect(layout: { xWest: number; xEast: number }) {
+  const { half, kTo } = rackGrid(layout);
+  const kA = rackK(layout, SHORT_RACKS[0]);
+  const kB = rackK(layout, SHORT_RACKS[SHORT_RACKS.length - 1]);
+  if (kB > kTo) return null;
+  return { x0: kA * RACK_PITCH - half, x1: kB * RACK_PITCH + half, z0: FRONT_Z + 0.6, z1: SHORT_RACK_END_Z - 1.2 };
+}
+
 /**
  * Taller de equipos (mantenimiento / reparación): contra la fachada frontal, en el extremo de
  * Recepción (lado oeste lógico), separado unos metros de la pared lateral. Visto desde el lado
