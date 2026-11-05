@@ -124,6 +124,91 @@ export function appoloPhotoUrls(v: unknown): string[] {
   return v.filter((u): u is string => typeof u === 'string' && /^https:\/\//i.test(u));
 }
 
+/** Llamada GET a la función de AppOLO con la sesión de SRO. Devuelve el estado y el cuerpo. */
+async function opsGet(sroWarehouseId: string, extra: Record<string, string>): Promise<{ status: number; body: unknown }> {
+  if (!OPS_URL) throw new AppoloError('Integración con AppOLO no configurada', 'config');
+  const { data } = await supabase.auth.getSession();
+  const token = data.session?.access_token;
+  if (!token) throw new AppoloError('Sesión de SRO no disponible', 'auth');
+
+  const url = new URL(OPS_URL);
+  url.searchParams.set('sro_warehouse_id', sroWarehouseId);
+  for (const [k, v] of Object.entries(extra)) url.searchParams.set(k, v);
+  url.searchParams.set('v', String(APPOLO_CONTRACT_VERSION));
+
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
+  let res: Response;
+  try {
+    res = await fetch(url.toString(), { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' }, signal: ctrl.signal });
+  } catch {
+    throw new AppoloError('No se pudo conectar con AppOLO', 'network');
+  } finally {
+    clearTimeout(timer);
+  }
+  if (res.status === 401 || res.status === 403) throw new AppoloError('AppOLO rechazó el acceso de este usuario', 'auth');
+  if (res.status === 404) return { status: 404, body: null };
+  if (!res.ok) throw new AppoloError(`AppOLO respondió ${res.status}`, 'server');
+  return { status: res.status, body: await res.json().catch(() => null) };
+}
+
+/** Chofer registrado en AppOLO y boleta de salida del despacho (datos ya existentes, solo lectura). */
+export interface AppoloDriverInfo {
+  chofer: {
+    nombre: string;
+    cedula: string | null;
+    compania: string | null;
+    placa_camion: string | null;
+    tipo_vehiculo: string | null;
+    celular: string | null;
+    cedula_foto: string | null;
+  } | null;
+  boleta: {
+    id: string;
+    estado: string | null;
+    validada_at: string | null;
+    validada_por: string | null;
+    checklist: { item: string; ok: boolean | null }[];
+    firma: string | null;
+    placa_contenedor: string | null;
+  } | null;
+}
+
+function parseDriverInfo(b: any): AppoloDriverInfo {
+  const str = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim() : null);
+  const img = (v: unknown) => appoloPhotoUrls([v])[0] ?? null;
+  const c = b.chofer && typeof b.chofer === 'object' ? b.chofer : null;
+  const bo = b.boleta && typeof b.boleta === 'object' ? b.boleta : null;
+  return {
+    chofer: c
+      ? {
+          nombre: str(c.nombre) ?? 'Sin nombre',
+          cedula: str(c.cedula),
+          compania: str(c.compania),
+          placa_camion: str(c.placa_camion),
+          tipo_vehiculo: str(c.tipo_vehiculo),
+          celular: str(c.celular),
+          cedula_foto: img(c.cedula_foto),
+        }
+      : null,
+    boleta: bo
+      ? {
+          id: String(bo.id ?? ''),
+          estado: str(bo.estado),
+          validada_at: str(bo.validada_at),
+          validada_por: str(bo.validada_por),
+          checklist: Array.isArray(bo.checklist)
+            ? bo.checklist
+                .filter((x: any) => x && typeof x.item === 'string')
+                .map((x: any) => ({ item: x.item, ok: typeof x.ok === 'boolean' ? x.ok : null }))
+            : [],
+          firma: img(bo.firma),
+          placa_contenedor: str(bo.placa_contenedor),
+        }
+      : null,
+  };
+}
+
 /** Validación mínima del contrato: si AppOLO cambia la forma, se informa en lugar de romper el 3D. */
 function parseSnapshot(raw: any): AppoloSnapshot {
   if (!raw || typeof raw !== 'object') throw new AppoloError('Respuesta vacía de AppOLO', 'contract');
@@ -192,33 +277,37 @@ export const appoloOpsService = {
    * que el despacho sea de la bodega de ese almacén y devuelve URLs firmadas de corta duración.
    */
   async dispatchPhotos(params: { sroWarehouseId: string; despachoId: string }): Promise<string[]> {
-    if (!OPS_URL) throw new AppoloError('Integración con AppOLO no configurada', 'config');
-    const { data } = await supabase.auth.getSession();
-    const token = data.session?.access_token;
-    if (!token) throw new AppoloError('Sesión de SRO no disponible', 'auth');
-
-    const url = new URL(OPS_URL);
-    url.searchParams.set('sro_warehouse_id', params.sroWarehouseId);
-    url.searchParams.set('fotos_despacho', params.despachoId);
-    url.searchParams.set('v', String(APPOLO_CONTRACT_VERSION));
-
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
-    let res: Response;
-    try {
-      res = await fetch(url.toString(), { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' }, signal: ctrl.signal });
-    } catch {
-      throw new AppoloError('No se pudo conectar con AppOLO', 'network');
-    } finally {
-      clearTimeout(timer);
-    }
-    if (res.status === 401 || res.status === 403) throw new AppoloError('AppOLO rechazó el acceso de este usuario', 'auth');
-    if (res.status === 404) return [];
-    if (!res.ok) throw new AppoloError(`AppOLO respondió ${res.status}`, 'server');
-    const body = (await res.json().catch(() => null)) as { fotos?: unknown } | null;
+    const { status, body } = await opsGet(params.sroWarehouseId, { fotos_despacho: params.despachoId });
+    if (status === 404) return [];
+    const b = body as { fotos?: unknown } | null;
     // Acepta ["https://…"] o [{ url: "https://…" }]
-    const raw = Array.isArray(body?.fotos) ? body!.fotos.map((f: any) => (typeof f === 'string' ? f : f?.url)) : [];
+    const raw = Array.isArray(b?.fotos) ? b!.fotos.map((f: any) => (typeof f === 'string' ? f : f?.url)) : [];
     return appoloPhotoUrls(raw);
+  },
+
+  /**
+   * Chofer y boleta de salida de un despacho, a pedido (al abrir su tarjeta).
+   * null = el despacho no es de esta bodega. Lanza 'contract' si AppOLO aún no ofrece este dato.
+   */
+  async dispatchDriver(params: { sroWarehouseId: string; despachoId: string }): Promise<AppoloDriverInfo | null> {
+    let res: { status: number; body: unknown };
+    try {
+      res = await opsGet(params.sroWarehouseId, { chofer_despacho: params.despachoId });
+    } catch (e) {
+      // Una versión anterior de la función rechaza la consulta por faltar la fecha
+      if (e instanceof AppoloError && e.message === 'AppOLO respondió 400') {
+        throw new AppoloError('AppOLO todavía no envía los datos del chofer y la boleta', 'contract');
+      }
+      throw e;
+    }
+    const { status, body } = res;
+    if (status === 404) return null;
+    const b = body as any;
+    // Una versión anterior de la función ignora el parámetro y devuelve la foto del día
+    if (!b || typeof b !== 'object' || Array.isArray(b.dispatches) || !('chofer' in b || 'boleta' in b)) {
+      throw new AppoloError('AppOLO todavía no envía los datos del chofer y la boleta', 'contract');
+    }
+    return parseDriverInfo(b);
   },
 
   /**

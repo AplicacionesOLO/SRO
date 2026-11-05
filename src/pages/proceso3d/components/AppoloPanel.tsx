@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { CONTAINER_SLOTS, DISPATCH_STAGE_META, SLOT_COLORS, SLOT_LABELS, dispatchEvents, dispatchPallets, occupiedCells, type DispatchItem, type DispatchStage, type PutawayItem } from '../lib/appolo';
 import PhotoStrip from './PhotoStrip';
-import { appoloPhotoUrls } from '../../../services/appoloOpsService';
+import { appoloPhotoUrls, type AppoloDriverInfo } from '../../../services/appoloOpsService';
 import type { AppoloMode, AppoloStatus } from '../useAppolo';
 import type { AppoloSlotType } from '../../../services/appoloOpsService';
 import StateTimeline from '../../../components/feature/state-times/StateTimeline';
@@ -216,10 +216,130 @@ function when(iso: string, fmt: (iso?: string | null) => string) {
   return t.toLocaleString('es-CR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
 
+const BOLETA_ESTADO: Record<string, { label: string; cls: string }> = {
+  pendiente_validacion: { label: 'Pendiente de validación', cls: 'bg-amber-100 text-amber-800' },
+  despachado: { label: 'Validada · despachado', cls: 'bg-green-100 text-green-800' },
+  rechazado: { label: 'Rechazada', cls: 'bg-red-100 text-red-700' },
+  anulada: { label: 'Anulada', cls: 'bg-gray-200 text-gray-700' },
+};
+
+function Row({ label, value }: { label: string; value: string | null | undefined }) {
+  if (!value) return null;
+  return (
+    <>
+      <dt className="text-gray-500">{label}</dt>
+      <dd className="font-medium text-gray-900 break-words">{value}</dd>
+    </>
+  );
+}
+
+/** Chofer registrado en AppOLO y boleta de salida (checklist y firma), pedidos al abrir la tarjeta. */
+function DispatchDriver({ load, fmt }: { load: (() => Promise<AppoloDriverInfo | null>) | null; fmt: (iso?: string | null) => string }) {
+  const [info, setInfo] = useState<AppoloDriverInfo | null | undefined>(undefined);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    if (!load) return;
+    let alive = true;
+    load()
+      .then((r) => alive && setInfo(r))
+      .catch((e: unknown) => {
+        if (!alive) return;
+        console.warn('[proceso3d] chofer de AppOLO', e);
+        setError(e instanceof Error ? e.message : String(e));
+      });
+    return () => {
+      alive = false;
+    };
+  }, [load]);
+
+  const c = info?.chofer;
+  const b = info?.boleta;
+  const estado = b?.estado ? (BOLETA_ESTADO[b.estado] ?? { label: b.estado, cls: 'bg-gray-100 text-gray-700' }) : null;
+
+  return (
+    <div className="mt-3 rounded-lg border border-gray-200 p-3">
+      <p className="mb-2 text-xs font-semibold text-gray-900">
+        <i className="ri-user-3-line mr-1"></i>Chofer y boleta de salida
+      </p>
+      {!load ? (
+        <p className="text-xs text-gray-500">Disponible con AppOLO «En vivo».</p>
+      ) : error ? (
+        <p className="text-xs text-gray-500">{error}.</p>
+      ) : info === undefined ? (
+        <p className="text-xs text-gray-400">
+          <i className="ri-loader-4-line mr-1 inline-block animate-spin"></i>Consultando AppOLO…
+        </p>
+      ) : !c && !b ? (
+        <p className="text-xs text-gray-500">Este despacho todavía no tiene chofer ni boleta registrados.</p>
+      ) : (
+        <div className="flex flex-col gap-3">
+          {c ? (
+            <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs">
+              <Row label="Nombre" value={c.nombre} />
+              <Row label="Cédula" value={c.cedula} />
+              <Row label="Compañía" value={c.compania} />
+              <Row label="Vehículo" value={[c.placa_camion, c.tipo_vehiculo].filter(Boolean).join(' · ')} />
+              <Row label="Celular" value={c.celular} />
+            </dl>
+          ) : (
+            <p className="text-xs text-gray-500">Sin chofer registrado en AppOLO.</p>
+          )}
+          {c?.cedula_foto && <PhotoStrip label="Cédula / licencia" icon="ri-bank-card-line text-gray-600" photos={[c.cedula_foto]} />}
+
+          {b ? (
+            <div className="border-t border-gray-100 pt-2">
+              <div className="mb-1.5 flex flex-wrap items-center gap-1.5">
+                <span className="text-[11px] font-medium text-gray-600">
+                  <i className="ri-file-list-3-line mr-1"></i>Boleta de salida
+                </span>
+                {estado && <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${estado.cls}`}>{estado.label}</span>}
+              </div>
+              {b.checklist.length > 0 && (
+                <ul className="mb-2 flex flex-col gap-0.5 text-xs">
+                  {b.checklist.map((it, i) => (
+                    <li key={i} className="flex items-start gap-1.5">
+                      <i
+                        className={`mt-0.5 ${
+                          it.ok === true
+                            ? 'ri-checkbox-circle-fill text-green-600'
+                            : it.ok === false
+                              ? 'ri-close-circle-fill text-red-600'
+                              : 'ri-information-line text-gray-400'
+                        }`}
+                      ></i>
+                      <span className="text-gray-700 break-words">{it.item}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs">
+                <Row label="Contenedor" value={b.placa_contenedor} />
+                <Row
+                  label="Validada"
+                  value={b.validada_at ? `${when(b.validada_at, fmt)}${b.validada_por ? ` · ${b.validada_por}` : ''}` : null}
+                />
+              </dl>
+              {b.firma && (
+                <div className="mt-2">
+                  <PhotoStrip label="Firma del chofer" icon="ri-quill-pen-line text-gray-600" photos={[b.firma]} />
+                </div>
+              )}
+            </div>
+          ) : (
+            <p className="text-xs text-gray-500">Todavía no tiene boleta de salida.</p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /** Fotos de carga del despacho: las que vengan en la foto del día o, si no, se piden a AppOLO. */
 function DispatchPhotos({ inline, count, load }: { inline: string[]; count: number; load?: () => Promise<string[]> }) {
   const [fetched, setFetched] = useState<string[] | null>(null);
   const [state, setState] = useState<'idle' | 'loading' | 'error'>('idle');
+  const [errMsg, setErrMsg] = useState('');
   const need = inline.length === 0 && count > 0 && !!load;
 
   useEffect(() => {
@@ -232,7 +352,12 @@ function DispatchPhotos({ inline, count, load }: { inline: string[]; count: numb
         setFetched(urls);
         setState('idle');
       })
-      .catch(() => alive && setState('error'));
+      .catch((e: unknown) => {
+        if (!alive) return;
+        console.warn('[proceso3d] fotos de AppOLO', e);
+        setErrMsg(e instanceof Error ? e.message : String(e));
+        setState('error');
+      });
     return () => {
       alive = false;
     };
@@ -246,11 +371,17 @@ function DispatchPhotos({ inline, count, load }: { inline: string[]; count: numb
       ) : (
         <p className="text-xs text-gray-500">
           <i className={`${state === 'loading' ? 'ri-loader-4-line inline-block animate-spin' : 'ri-camera-line'} mr-1`}></i>
-          {state === 'loading'
-            ? `Cargando ${count} foto${count === 1 ? '' : 's'} de AppOLO…`
-            : state === 'error'
-              ? 'No se pudieron traer las fotos de AppOLO.'
-              : `${count} foto${count === 1 ? '' : 's'} registrada${count === 1 ? '' : 's'} en AppOLO${load ? '' : ' (AppOLO todavía no envía las imágenes)'}.`}
+          {count === 0
+            ? 'Este despacho todavía no tiene fotos de carga en AppOLO.'
+            : !load
+              ? `${count} foto${count === 1 ? '' : 's'} en AppOLO. Para verlas, pon AppOLO en «En vivo» (no en demostración).`
+              : state === 'loading'
+                ? `Cargando ${count} foto${count === 1 ? '' : 's'} de AppOLO…`
+                : state === 'error'
+                  ? `No se pudieron traer las fotos de AppOLO: ${errMsg}`
+                  : fetched && fetched.length === 0
+                    ? `AppOLO registra ${count} foto${count === 1 ? '' : 's'}, pero no devolvió ninguna.`
+                    : ''}
         </p>
       )}
     </div>
@@ -268,6 +399,7 @@ export function DispatchCard({
   live = false,
   fmtTime,
   loadPhotos,
+  loadDriver,
 }: {
   item: DispatchItem;
   dockName: string;
@@ -281,6 +413,8 @@ export function DispatchCard({
   fmtTime?: (ms: number) => string;
   /** Pide a AppOLO las fotos del despacho (URLs firmadas) al abrir la tarjeta */
   loadPhotos?: () => Promise<string[]>;
+  /** Pide a AppOLO el chofer y la boleta de salida; null = AppOLO no está en vivo */
+  loadDriver?: (() => Promise<AppoloDriverInfo | null>) | null;
 }) {
   const d = item.dispatch;
   const meta = DISPATCH_STAGE_META[item.stage];
@@ -340,7 +474,8 @@ export function DispatchCard({
             ))}
         </dl>
       )}
-      {!compact && (appoloPhotoUrls(d.fotos).length > 0 || (d.fotos_count ?? 0) > 0) && (
+      {!compact && loadDriver !== undefined && <DispatchDriver key={`drv-${d.id}`} load={loadDriver} fmt={fmt} />}
+      {!compact && (
         <DispatchPhotos key={d.id} inline={appoloPhotoUrls(d.fotos)} count={d.fotos_count ?? 0} load={loadPhotos} />
       )}
       {!compact && clock !== undefined && fmtTime && (
