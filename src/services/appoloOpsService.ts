@@ -45,6 +45,10 @@ export interface AppoloDispatch {
   finalized_at?: string | null;
   /** Cambios de estado con su hora (despacho_dev_actividad), ordenados */
   history?: AppoloDispatchChange[] | null;
+  /** Cantidad de fotos registradas en AppOLO para el despacho */
+  fotos_count?: number | null;
+  /** URLs firmadas (temporales, https) de las fotos del despacho. Opcional. */
+  fotos?: string[] | null;
 }
 
 export interface AppoloReception {
@@ -59,6 +63,8 @@ export interface AppoloReception {
   /** Inicio y fin del acomodo / recepción (ISO) */
   started_at?: string | null;
   completed_at?: string | null;
+  /** URLs firmadas (temporales, https) de las fotos de la recepción. Opcional. */
+  fotos?: string[] | null;
 }
 
 export interface AppoloEquipmentFamily {
@@ -111,6 +117,12 @@ export function appoloConfigured() {
 }
 
 const TIMEOUT_MS = 15_000;
+
+/** Solo URLs https: las fotos vienen firmadas por AppOLO y se muestran tal cual. */
+export function appoloPhotoUrls(v: unknown): string[] {
+  if (!Array.isArray(v)) return [];
+  return v.filter((u): u is string => typeof u === 'string' && /^https:\/\//i.test(u));
+}
 
 /** Validación mínima del contrato: si AppOLO cambia la forma, se informa en lugar de romper el 3D. */
 function parseSnapshot(raw: any): AppoloSnapshot {
@@ -173,6 +185,40 @@ export const appoloOpsService = {
       throw new AppoloError('Respuesta inválida de AppOLO', 'contract');
     }
     return parseSnapshot(body);
+  },
+
+  /**
+   * Fotos de carga de un despacho, a pedido (al abrir su tarjeta). AppOLO valida la sesión,
+   * que el despacho sea de la bodega de ese almacén y devuelve URLs firmadas de corta duración.
+   */
+  async dispatchPhotos(params: { sroWarehouseId: string; despachoId: string }): Promise<string[]> {
+    if (!OPS_URL) throw new AppoloError('Integración con AppOLO no configurada', 'config');
+    const { data } = await supabase.auth.getSession();
+    const token = data.session?.access_token;
+    if (!token) throw new AppoloError('Sesión de SRO no disponible', 'auth');
+
+    const url = new URL(OPS_URL);
+    url.searchParams.set('sro_warehouse_id', params.sroWarehouseId);
+    url.searchParams.set('fotos_despacho', params.despachoId);
+    url.searchParams.set('v', String(APPOLO_CONTRACT_VERSION));
+
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
+    let res: Response;
+    try {
+      res = await fetch(url.toString(), { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' }, signal: ctrl.signal });
+    } catch {
+      throw new AppoloError('No se pudo conectar con AppOLO', 'network');
+    } finally {
+      clearTimeout(timer);
+    }
+    if (res.status === 401 || res.status === 403) throw new AppoloError('AppOLO rechazó el acceso de este usuario', 'auth');
+    if (res.status === 404) return [];
+    if (!res.ok) throw new AppoloError(`AppOLO respondió ${res.status}`, 'server');
+    const body = (await res.json().catch(() => null)) as { fotos?: unknown } | null;
+    // Acepta ["https://…"] o [{ url: "https://…" }]
+    const raw = Array.isArray(body?.fotos) ? body!.fotos.map((f: any) => (typeof f === 'string' ? f : f?.url)) : [];
+    return appoloPhotoUrls(raw);
   },
 
   /**

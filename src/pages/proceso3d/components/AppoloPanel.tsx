@@ -1,4 +1,7 @@
+import { useEffect, useState } from 'react';
 import { CONTAINER_SLOTS, DISPATCH_STAGE_META, SLOT_COLORS, SLOT_LABELS, dispatchEvents, dispatchPallets, occupiedCells, type DispatchItem, type DispatchStage, type PutawayItem } from '../lib/appolo';
+import PhotoStrip from './PhotoStrip';
+import { appoloPhotoUrls } from '../../../services/appoloOpsService';
 import type { AppoloMode, AppoloStatus } from '../useAppolo';
 import type { AppoloSlotType } from '../../../services/appoloOpsService';
 import StateTimeline from '../../../components/feature/state-times/StateTimeline';
@@ -213,6 +216,47 @@ function when(iso: string, fmt: (iso?: string | null) => string) {
   return t.toLocaleString('es-CR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
 
+/** Fotos de carga del despacho: las que vengan en la foto del día o, si no, se piden a AppOLO. */
+function DispatchPhotos({ inline, count, load }: { inline: string[]; count: number; load?: () => Promise<string[]> }) {
+  const [fetched, setFetched] = useState<string[] | null>(null);
+  const [state, setState] = useState<'idle' | 'loading' | 'error'>('idle');
+  const need = inline.length === 0 && count > 0 && !!load;
+
+  useEffect(() => {
+    if (!need || !load) return;
+    let alive = true;
+    setState('loading');
+    load()
+      .then((urls) => {
+        if (!alive) return;
+        setFetched(urls);
+        setState('idle');
+      })
+      .catch(() => alive && setState('error'));
+    return () => {
+      alive = false;
+    };
+  }, [need, load]);
+
+  const photos = inline.length > 0 ? inline : fetched ?? [];
+  return (
+    <div className="mt-3 rounded-lg border border-gray-200 p-3">
+      {photos.length > 0 ? (
+        <PhotoStrip label="Fotos de carga (AppOLO)" icon="ri-camera-line text-blue-600" photos={photos} />
+      ) : (
+        <p className="text-xs text-gray-500">
+          <i className={`${state === 'loading' ? 'ri-loader-4-line inline-block animate-spin' : 'ri-camera-line'} mr-1`}></i>
+          {state === 'loading'
+            ? `Cargando ${count} foto${count === 1 ? '' : 's'} de AppOLO…`
+            : state === 'error'
+              ? 'No se pudieron traer las fotos de AppOLO.'
+              : `${count} foto${count === 1 ? '' : 's'} registrada${count === 1 ? '' : 's'} en AppOLO${load ? '' : ' (AppOLO todavía no envía las imágenes)'}.`}
+        </p>
+      )}
+    </div>
+  );
+}
+
 export function DispatchCard({
   item,
   dockName,
@@ -223,6 +267,7 @@ export function DispatchCard({
   clock,
   live = false,
   fmtTime,
+  loadPhotos,
 }: {
   item: DispatchItem;
   dockName: string;
@@ -234,6 +279,8 @@ export function DispatchCard({
   clock?: number;
   live?: boolean;
   fmtTime?: (ms: number) => string;
+  /** Pide a AppOLO las fotos del despacho (URLs firmadas) al abrir la tarjeta */
+  loadPhotos?: () => Promise<string[]>;
 }) {
   const d = item.dispatch;
   const meta = DISPATCH_STAGE_META[item.stage];
@@ -292,6 +339,9 @@ export function DispatchCard({
               </div>
             ))}
         </dl>
+      )}
+      {!compact && (appoloPhotoUrls(d.fotos).length > 0 || (d.fotos_count ?? 0) > 0) && (
+        <DispatchPhotos key={d.id} inline={appoloPhotoUrls(d.fotos)} count={d.fotos_count ?? 0} load={loadPhotos} />
       )}
       {!compact && clock !== undefined && fmtTime && (
         <div className="mt-3">

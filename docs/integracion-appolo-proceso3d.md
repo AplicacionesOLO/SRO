@@ -85,7 +85,8 @@ Se implementa como **Edge Function de Supabase**, en línea con la migración de
       "history": [                        // despacho_dev_actividad (estadoAnterior → estadoNuevo)
         { "estado": "creado",     "at": "2026-11-03T12:40:00Z" },
         { "estado": "en proceso", "at": "2026-11-03T13:20:00Z" }
-      ]
+      ],
+      "fotos_count": 4                    // cantidad de fotos de carga; las fotos se piden aparte (sección 1b)
     }
   ],
 
@@ -98,7 +99,8 @@ Se implementa como **Edge Function de Supabase**, en línea con la migración de
       "tipo_descarga": "Entarimado",      // de accion_descarga
       "bultos": 300,                      // de accion_descarga.cantidadBultos
       "started_at": "2026-11-03T13:10:00Z",
-      "completed_at": null
+      "completed_at": null,
+      "fotos": ["https://…/sign/…"]       // opcional: URLs firmadas de las fotos de la recepción
     }
   ],
 
@@ -118,7 +120,33 @@ Se implementa como **Edge Function de Supabase**, en línea con la migración de
 }
 ```
 
-**Qué incluir:** despachos creados ese día y los que siguen abiertos de días anteriores. Recepciones con `started_at` ese día o abiertas. No se requieren datos personales más allá de lo listado (no enviar cédulas, fotos ni firmas).
+**Qué incluir:** despachos creados ese día y los que siguen abiertos de días anteriores. Recepciones con `started_at` ese día o abiertas. No se requieren datos personales más allá de lo listado (no enviar cédulas ni firmas). El snapshot **no trae fotos**, solo `fotos_count`: SRO lo vuelve a pedir en cada aviso y firmar cientos de URLs por llamada sería pesado y cambiaría las URLs cada vez.
+
+## 1b. Fotos a pedido
+
+`GET <URL de ops-3d-snapshot>?sro_warehouse_id=<uuid>&fotos_despacho=<despacho_id>&v=1`
+
+SRO la llama al seleccionar un camión.
+
+- **Validación:** la misma del snapshot (sesión de SRO y permiso `proceso3d.view` de la Matriz de Permisos).
+- **Pertenencia:** AppOLO resuelve la bodega del almacén y verifica que el despacho sea de esa bodega y no esté borrado. Si no → **404** (no se pueden pedir fotos de otra bodega cambiando el id).
+- **Qué fotos:** solo las rutas registradas en `despacho_dev_fotos` para ese despacho (nunca se lista el bucket), las **60 más recientes** por `taken_at`. Se descarta cualquier ruta que no empiece por `{tenant}/{company}/{bodega}/{despacho_id}/` o que contenga `/choferes/` o `/boletas/`: **nunca** fotos de cédula ni firmas.
+- **URLs:** firmadas https, vigencia **3600 s**, redimensionadas a ~1280 px de ancho (las originales pesan ~2,3 MB).
+- **Errores:** si la firma falla → **200** con `"fotos": []` (no 500).
+- **Caché:** `Cache-Control: private, max-age=300`.
+
+**Cuerpo `200`:**
+
+```jsonc
+{
+  "despacho_id": "uuid",
+  "fotos": [
+    { "url": "https://…/render/image/sign/…", "taken_at": "2026-11-05T02:23:44Z", "tarima": "S" }  // tarima: "S" | "D" | null
+  ]
+}
+```
+
+**Recepciones:** cuando `accion_descarga` / `accion_recepcion` estén en Supabase (etapa B), las fotos de recepción usarán el mismo mecanismo de firma (módulo común de AppOLO). Hasta entonces `receptions` va vacío.
 
 ## 2. Avisos en tiempo real
 
