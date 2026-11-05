@@ -109,8 +109,10 @@ export function workshopRect(layout: { xWest: number }) {
 }
 
 /**
- * Despacho y escritorios: pegado a la pared de andenes, entre la pared lateral y el andén 0101,
- * con un portón grande a nivel de piso por donde entra y sale la mercadería pesada.
+ * Despacho y escritorios: pegado a la pared de andenes, entre la pared lateral y el andén 0101.
+ * El portón grande de carga pesada está en la pared lateral norte (lado de Recepción), hacia la
+ * esquina de atrás: justo donde el pasillo transversal (línea verde) llega a la pared. Es la
+ * salida de ese pasillo, frente al inicio de los racks cantilever.
  */
 export const DISPATCH_AREA_W = 16;
 export const DISPATCH_AREA_D = 14;
@@ -118,7 +120,11 @@ export const HEAVY_GATE_W = 6;
 export const HEAVY_GATE_H = 4.2;
 export function dispatchAreaRect(layout: { xWest: number }) {
   const x0 = layout.xWest + 1;
-  return { x0, x1: x0 + DISPATCH_AREA_W, z0: -DISPATCH_AREA_D, z1: -0.4, gateX: x0 + DISPATCH_AREA_W / 2 };
+  return { x0, x1: x0 + DISPATCH_AREA_W, z0: -DISPATCH_AREA_D, z1: -0.4 };
+}
+export const HEAVY_GATE_Z = CROSS_AISLE_Z;
+export function heavyGatePlacement(layout: { xWest: number }) {
+  return { x: layout.xWest, z: HEAVY_GATE_Z };
 }
 
 /**
