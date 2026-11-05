@@ -13,6 +13,7 @@ import { BLVD_Z, FRONT_Z, MIRROR_X, type Pose, type SiteLayout } from '../lib/la
 import Workshop, { type WorkshopInfo } from './Workshop';
 import Mezzanine from './Mezzanine';
 import DispatchArea from './DispatchArea';
+import AccessControl from './AccessControl';
 import type { TruckAlert } from '../lib/alerts';
 
 export type CameraPreset = 'general' | 'andenes' | 'despacho' | 'entrada' | 'frente' | 'interior' | 'descarga' | 'esperaDespacho';
@@ -332,6 +333,7 @@ export default function WarehouseScene({
           {ghosts.length > 0 && <GhostTrucks ghosts={ghosts} showLabels={showLabels} />}
           {cutaway && workshop && <Workshop layout={layout} info={workshop} showLabel={showLabels} />}
           {cutaway && showMezzanine && <Mezzanine layout={layout} showLabel={showLabels} />}
+          {cutaway && <AccessControl layout={layout} showLabel={showLabels} />}
           <DispatchArea layout={layout} cutaway={cutaway} showLabel={showLabels} />
           {dispatchLot !== undefined && <DispatchLotArea layout={layout} stats={dispatchLot} showLabel={showLabels} />}
         </group>

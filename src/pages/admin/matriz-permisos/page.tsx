@@ -115,6 +115,7 @@ const getPermissionLabel = (technicalName: string): string => {
 
     // ─── Proceso 3D ───────────────────────────────────────────────────
     'proceso3d.view':                        'Ver simulación 3D del almacén (Proceso 3D)',
+    'proceso3d.personal.view':               'Ver personal en sitio del reloj marcador (BIT2) en Proceso 3D',
 
     // ─── Menú › Navegación principal ─────────────────────────────────
     'menu.dashboard.view':                   'Acceder al menú Dashboard',
