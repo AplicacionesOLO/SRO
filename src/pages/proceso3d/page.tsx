@@ -820,6 +820,11 @@ export default function Proceso3DPage() {
     if (appoloMode !== 'live' || !activeWarehouseId || !selectedDispatchId) return undefined;
     return () => appoloOpsService.dispatchPhotos({ sroWarehouseId: activeWarehouseId, despachoId: selectedDispatchId });
   }, [appoloMode, activeWarehouseId, selectedDispatchId]);
+  // Chofer y boleta de salida del despacho seleccionado (null = AppOLO no está en vivo)
+  const loadDispatchDriver = useMemo(() => {
+    if (appoloMode !== 'live' || !activeWarehouseId || !selectedDispatchId) return null;
+    return () => appoloOpsService.dispatchDriver({ sroWarehouseId: activeWarehouseId, despachoId: selectedDispatchId });
+  }, [appoloMode, activeWarehouseId, selectedDispatchId]);
   // Fotos que AppOLO registró en la recepción de esta cita (si las envía)
   const selectedAppoloPhotos = useMemo(() => {
     if (!selectedId || appoloMode === 'off') return undefined;
@@ -1345,6 +1350,7 @@ export default function Proceso3DPage() {
                 live={mode === 'live'}
                 fmtTime={fmtMs}
                 loadPhotos={loadDispatchPhotos}
+                loadDriver={loadDispatchDriver}
               />
               </div>
             )}

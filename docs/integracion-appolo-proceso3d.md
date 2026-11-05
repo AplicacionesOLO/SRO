@@ -148,6 +148,57 @@ SRO la llama al seleccionar un camión.
 
 **Recepciones:** cuando `accion_descarga` / `accion_recepcion` estén en Supabase (etapa B), las fotos de recepción usarán el mismo mecanismo de firma (módulo común de AppOLO). Hasta entonces `receptions` va vacío.
 
+## 1c. Chofer y boleta a pedido
+
+`GET <URL de ops-3d-snapshot>?sro_warehouse_id=<uuid>&chofer_despacho=<despacho_id>&v=1`
+
+Devuelve los datos ya registrados del chofer del despacho (incluida la foto de su cédula) y su boleta de salida (checklist y firma). Es solo consulta: no cambia nada en AppOLO.
+
+- **Acceso (decisión tomada, 05/11/2026):** la misma validación que el snapshot y las fotos. **Quien tiene `proceso3d.view` puede consultar el chofer, su cédula, su celular y la boleta** del despacho que selecciona. No hay un permiso aparte.
+- **Pertenencia:** el despacho debe ser de la bodega del almacén y no estar borrado; si no → **404**.
+- **Qué imágenes se firman:** solo dos rutas, nunca se lista el bucket:
+  - la `cedula_foto_path` del chofer ligado al despacho, que debe estar en `{tenant}/{company}/{bodega}/choferes/{chofer_id}/`;
+  - la `firma_path` de su boleta, que debe ser `{tenant}/{company}/{bodega}/boletas/{boleta_id}/firma_…` (patrón actual) o `{tenant}/{company}/{bodega}/firmas/{boleta_id}-…` (patrón viejo).
+  Si una ruta no cumple, ese campo va en `null`.
+- **URLs:** firmadas https, **3600 s**. La cédula redimensionada a ~1280 px; la firma (PNG) sin transformar.
+- **Boleta elegida:** la última validada; si ninguna está validada, la última creada. Hoy cada despacho tiene una sola.
+- **Datos de la boleta:** salen de la copia guardada en la boleta (lo que se firmó), no de los datos actuales del chofer.
+- **Nunca se envía** el PIN del chofer.
+- **Errores:** si la firma de URL falla → **200** con esa imagen en `null`. Si el chofer o la boleta no existen todavía → `null` en ese bloque (no es error).
+- **Caché:** `Cache-Control: private, max-age=300`.
+
+**Cuerpo `200`:**
+
+```jsonc
+{
+  "despacho_id": "uuid",
+  "chofer": {                                 // null si el despacho no tiene chofer
+    "nombre": "…",
+    "cedula": "…",
+    "compania": "MURBE",                      // o null
+    "placa_camion": "C175055",                // o null
+    "tipo_vehiculo": null,
+    "celular": "88887777",                    // o null
+    "cedula_foto": "https://…/render/image/sign/…"   // o null
+  },
+  "boleta": {                                 // null si todavía no hay boleta
+    "id": "uuid",
+    "estado": "despachado",                   // pendiente_validacion | despachado | rechazado | anulada
+    "validada_at": "2026-11-04T15:07:07Z",    // o null
+    "validada_por": "Yustin Jesus Campos Rodriguez",   // o "Aplicaciones OLO (regularización)" o null
+    "checklist": [
+      { "item": "¿La identidad del chofer es correcta?", "ok": true },
+      { "item": "¿La placa del camión es correcta?", "ok": true },
+      { "item": "¿La placa del contenedor es correcta?", "ok": true }
+    ],
+    "firma": "https://…/object/sign/…",       // o null
+    "placa_contenedor": "23162"               // o null
+  }
+}
+```
+
+**Checklist:** las respuestas de la app ("si"/"no") se convierten a `ok: true/false`, con el texto que muestra la app. Las boletas cerradas por regularización (sin checklist ni firma) traen un solo ítem `{ "item": "Regularización: <nota>", "ok": null }` y `validada_por: "Aplicaciones OLO (regularización)"`. Tres boletas manuales viejas (agosto 2026) traen las claves de una versión anterior de la app (Carga, Documentos, Identidad, Marchamo, Placas, Vehículo).
+
 ## 2. Avisos en tiempo real
 
 - **Tipo:** Supabase Realtime **Broadcast privado** (`config.private = true`). Los avisos no se guardan en tablas: **no ocupan almacenamiento**.
