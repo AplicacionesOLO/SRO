@@ -1,11 +1,11 @@
 import { memo } from 'react';
 import { Html } from '@react-three/drei';
-import { dispatchAreaRect, FLOOR_Y, HEAVY_GATE_H, HEAVY_GATE_W, type SiteLayout } from '../lib/layout';
+import { dispatchAreaRect, FLOOR_Y, HEAVY_GATE_H, HEAVY_GATE_W, heavyGatePlacement, type SiteLayout } from '../lib/layout';
 
 /**
- * Extremo de Recepción junto a la pared de andenes: área de despacho con escritorios y un
- * portón grande a nivel de piso (con rampa afuera) por donde entra y sale la mercadería pesada.
- * El portón se ve siempre; el interior solo en modo Interior.
+ * Extremo de Recepción: área de despacho con escritorios junto a la pared de andenes y, en la
+ * pared lateral frente a los cantilever, el portón grande a nivel de piso (con rampa afuera)
+ * por donde entra y sale la mercadería pesada. El portón se ve siempre; el interior, sin techo.
  */
 
 function Desk({ x, z }: { x: number; z: number }) {
@@ -92,23 +92,48 @@ function DispatchArea({ layout, cutaway, showLabel }: { layout: SiteLayout; cuta
   const cx = (r.x0 + r.x1) / 2;
   const cz = (r.z0 + r.z1) / 2;
   const rampLen = 8;
+  const gate = heavyGatePlacement(layout);
 
   return (
     <group>
-      {/* portón: cara exterior + rampa desde el patio hasta el nivel del piso */}
-      <HeavyGate x={r.gateX} z={0.06} outside />
-      <mesh
-        position={[r.gateX, FLOOR_Y / 2, rampLen / 2]}
-        rotation={[Math.atan2(FLOOR_Y, rampLen), 0, 0]}
-        receiveShadow
-      >
-        <boxGeometry args={[HEAVY_GATE_W + 1, 0.2, Math.hypot(rampLen, FLOOR_Y)]} />
-        <meshStandardMaterial color="#9ca3af" roughness={0.9} />
-      </mesh>
+      {/* Portón en la pared lateral. Coordenadas locales: z+ = afuera (x− del mundo) */}
+      <group position={[gate.x, 0, gate.z]} rotation={[0, -Math.PI / 2, 0]}>
+        <HeavyGate x={0} z={0.06} outside />
+        {/* rampa desde el patio hasta el nivel del piso */}
+        <mesh position={[0, FLOOR_Y / 2, rampLen / 2]} rotation={[Math.atan2(FLOOR_Y, rampLen), 0, 0]} receiveShadow>
+          <boxGeometry args={[HEAVY_GATE_W + 1, 0.2, Math.hypot(rampLen, FLOOR_Y)]} />
+          <meshStandardMaterial color="#9ca3af" roughness={0.9} />
+        </mesh>
+        {cutaway && (
+          <>
+            <HeavyGate x={0} z={-0.36} outside={false} />
+            {/* paso libre hacia el pasillo de los cantilever */}
+            <mesh position={[0, FLOOR_Y + 0.018, -2.6]} rotation={[-Math.PI / 2, 0, 0]}>
+              <planeGeometry args={[HEAVY_GATE_W, 4.4]} />
+              <meshStandardMaterial color="#e5e7eb" roughness={0.9} />
+            </mesh>
+          </>
+        )}
+        {showLabel && (
+          <Html position={[0, FLOOR_Y + HEAVY_GATE_H + 1.2, 1]} center distanceFactor={90} zIndexRange={[30, 10]} style={{ pointerEvents: 'none' }}>
+            <div
+              style={{
+                background: 'rgba(15,23,42,0.9)',
+                color: '#fff',
+                padding: '3px 8px',
+                borderRadius: 6,
+                font: '600 12px system-ui, sans-serif',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              Portón de carga pesada
+            </div>
+          </Html>
+        )}
+      </group>
 
       {cutaway && (
         <group>
-          <HeavyGate x={r.gateX} z={-0.36} outside={false} />
           <group position={[0, FLOOR_Y, 0]}>
             {/* piso demarcado */}
             <mesh position={[cx, 0.013, cz]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
@@ -124,11 +149,6 @@ function DispatchArea({ layout, cutaway, showLabel }: { layout: SiteLayout; cuta
                 <meshBasicMaterial color="#facc15" />
               </mesh>
             ))}
-            {/* paso libre frente al portón */}
-            <mesh position={[r.gateX, 0.018, -3]} rotation={[-Math.PI / 2, 0, 0]}>
-              <planeGeometry args={[HEAVY_GATE_W, 5.5]} />
-              <meshStandardMaterial color="#e5e7eb" roughness={0.9} />
-            </mesh>
             {/* escritorios contra la pared lateral */}
             {[0, 1, 2, 3].map((i) => (
               <group key={i} rotation={[0, 0, 0]}>
@@ -162,7 +182,6 @@ function DispatchArea({ layout, cutaway, showLabel }: { layout: SiteLayout; cuta
                 }}
               >
                 Despacho y escritorios
-                <div style={{ fontWeight: 500, fontSize: 11, opacity: 0.85 }}>Portón de carga pesada</div>
               </div>
             </Html>
           )}
