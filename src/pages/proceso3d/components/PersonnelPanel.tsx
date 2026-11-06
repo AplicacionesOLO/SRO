@@ -20,6 +20,18 @@ function hhmm(iso: string | null) {
   return m ? m[1] : '—';
 }
 
+/** "15:56" si es de hoy; "ayer 15:56" o "05/11 15:56" si el reloj quedó atrás de días. */
+function marcasLabel(iso: string | null, now: number) {
+  if (!iso) return '—';
+  const m = iso.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}:\d{2})/);
+  if (!m) return hhmm(iso);
+  const day = (t: number) => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Costa_Rica' }).format(new Date(t));
+  const date = `${m[1]}-${m[2]}-${m[3]}`;
+  if (date === day(now)) return m[4];
+  if (date === day(now - 86_400_000)) return `ayer ${m[4]}`;
+  return `${m[3]}/${m[2]} ${m[4]}`;
+}
+
 function since(iso: string | null, now: number) {
   if (!iso) return '';
   const ms = now - new Date(iso).getTime();
@@ -167,7 +179,7 @@ export default function PersonnelPanel({
             }`}
           >
             <i className={data.desactualizado ? 'ri-error-warning-line' : 'ri-time-line'}></i>
-            Marcas hasta {hhmm(data.marcas_hasta)}
+            Marcas hasta {marcasLabel(data.marcas_hasta, now)}
             {data.desactualizado && ' · el reloj se descarga a mano: puede ir atrasado'}
           </p>
 
