@@ -82,8 +82,9 @@ export default function Truck3D({
     if (s.version === truck.routeVersion) return;
     s.version = truck.routeVersion;
 
-    if (truck.route.length < 2) {
-      // Aparecer directamente en la pose (carga inicial o salto en el tiempo)
+    // Con la pestaña oculta no se dibuja: al volver no se repite el recorrido, se coloca directo
+    if (truck.route.length < 2 || document.hidden) {
+      // Aparecer directamente en la pose (carga inicial, salto en el tiempo o pestaña oculta)
       s.route = [];
       s.moving = false;
       if (truck.pose) {

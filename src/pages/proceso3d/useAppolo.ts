@@ -138,11 +138,21 @@ export function useDispatchTrucks(params: {
   positions: Map<string, Pose>;
   /** true = colocar sin animar (primera carga, cambio de modo o salto en el recorrido) */
   snap: boolean;
+  /** Ya llegó la foto de AppOLO (antes de eso no se consume la primera colocación) */
+  ready: boolean;
+  /** Al cambiar (almacén, día o modo) la siguiente foto vuelve a colocarse sin animar */
+  seedKey: string;
+  /** Animar la primera foto (solo la primera vez del día en vivo) */
+  animateFirst: boolean;
 }) {
-  const { items, layout, positions, snap } = params;
+  const { items, layout, positions, ready, seedKey, animateFirst } = params;
   const [visuals, setVisuals] = useState<Map<string, TruckVisual>>(new Map());
+  const seededRef = useRef<string | null>(null);
 
   useEffect(() => {
+    const first = seededRef.current !== seedKey;
+    if (ready) seededRef.current = seedKey;
+    const snap = params.snap || (first && !animateFirst);
     setVisuals((prev) => {
       const next = new Map(prev);
       let changed = false;
@@ -195,7 +205,7 @@ export function useDispatchTrucks(params: {
       }
       return changed ? next : prev;
     });
-  }, [items, layout, positions, snap]);
+  }, [items, layout, positions, params.snap, ready, seedKey, animateFirst]);
 
   const onGone = useCallback((id: string) => {
     setVisuals((prev) => {
