@@ -11,6 +11,7 @@ import type { UnloadVisual } from './components/Workforce';
 import type { TruckVisual } from './components/Truck3D';
 import type { DockVisual } from './components/WarehouseSite';
 import { buildLayout, buildRoute, type Pose } from './lib/layout';
+import { introAllowed } from './lib/intro';
 import { isStaleWithoutExit, livePhase, PHASE_META, PHASE_ORDER, replayPhase } from './lib/phases';
 import { buildPlan, samePose, type PlanItem } from './lib/plan';
 import { crewFor, dockActivity, isLooseCargo, resolveCargo, STAGE_META, unitLabel, type Crew, type DockActivity } from './lib/unloading';
@@ -393,8 +394,12 @@ export default function Proceso3DPage() {
 
   // Diferenciar el plan contra lo que ya está dibujado → rutas animadas
   useEffect(() => {
-    const snap = snapRef.current;
-    snapRef.current = false;
+    // El "colocar sin animar" se guarda hasta que lleguen los datos (si no, se gasta con el plan vacío
+    // y al llegar los datos todos los camiones se animan hacia el andén). La animación de llegada
+    // solo se ve la primera vez del día en vivo.
+    const pending = snapRef.current;
+    if (data) snapRef.current = false;
+    const snap = pending && !(data && mode === 'live' && date === today && introAllowed(activeWarehouseId ?? 'all', today));
     setVisuals((prev) => {
       const next = new Map(prev);
       let changed = false;
@@ -446,7 +451,7 @@ export default function Proceso3DPage() {
       }
       return changed ? next : prev;
     });
-  }, [plan, layout, reservationById]);
+  }, [plan, layout, reservationById, data, mode, date, today, activeWarehouseId]);
 
   const handleGone = useCallback((id: string) => {
     setVisuals((prev) => {
@@ -522,6 +527,9 @@ export default function Proceso3DPage() {
     layout,
     positions: positionsRef.current,
     snap: mode === 'replay' && !playing,
+    ready: appolo.snapshot != null,
+    seedKey: `${activeWarehouseId ?? 'all'}|${date}|${mode}`,
+    animateFirst: mode === 'live' && date === today && introAllowed(activeWarehouseId ?? 'all', today),
   });
 
   // Equipos activos de AppOLO repartidos entre cargas y acomodos visibles
