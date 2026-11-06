@@ -4,7 +4,7 @@ import * as THREE from 'three';
  * Texturas procedurales (se dibujan en un canvas al cargar; no hay archivos externos).
  * Son casi neutras para que el color del material las tiña.
  */
-export type TextureKind = 'asphalt' | 'grass' | 'concrete' | 'pavers' | 'dirt' | 'floor' | 'roof' | 'trailer';
+export type TextureKind = 'asphalt' | 'grass' | 'concrete' | 'pavers' | 'dirt' | 'floor' | 'roof' | 'trailer' | 'carton' | 'pallet';
 
 const cache = new Map<TextureKind, THREE.CanvasTexture>();
 
@@ -89,12 +89,55 @@ function draw(kind: TextureKind): HTMLCanvasElement {
       return c;
     }
     case 'floor': {
+      // concreto pulido: moteado gris, vetas claras del pulido y junta de corte en el borde
+      const [c, g] = canvas(512);
+      grain(g, 512, 226, 34, 14000, 21);
+      blotches(g, 512, (r) => (r() < 0.55 ? 'rgba(90,96,104,0.10)' : 'rgba(255,255,255,0.16)'), 34, 22);
+      blotches(g, 512, () => 'rgba(70,74,80,0.06)', 12, 23);
+      g.fillStyle = 'rgba(80,84,90,0.55)';
+      g.fillRect(0, 0, 512, 2);
+      g.fillRect(0, 0, 2, 512);
+      return c;
+    }
+    case 'carton': {
+      // cajas de cartón apiladas (2 × 2 por cara) con cinta y etiqueta; se tiñe por instancia
       const [c, g] = canvas(256);
-      grain(g, 256, 240, 30, 3000, 21);
-      blotches(g, 256, () => 'rgba(255,255,255,0.12)', 8, 22);
-      g.fillStyle = 'rgba(120,120,120,0.35)';
-      g.fillRect(0, 0, 256, 1);
-      g.fillRect(0, 0, 1, 256);
+      grain(g, 256, 236, 26, 5000, 51);
+      const r = rng(52);
+      for (let i = 0; i < 2; i++) {
+        for (let j = 0; j < 2; j++) {
+          const x = i * 128;
+          const y = j * 128;
+          g.fillStyle = `rgba(0,0,0,${0.03 + r() * 0.05})`;
+          g.fillRect(x + 2, y + 2, 124, 124);
+          // cinta vertical
+          g.fillStyle = 'rgba(255,240,210,0.35)';
+          g.fillRect(x + 56, y + 2, 16, 124);
+          // etiqueta
+          if (r() < 0.7) {
+            g.fillStyle = 'rgba(255,255,255,0.85)';
+            g.fillRect(x + 14 + r() * 20, y + 70 + r() * 20, 30, 22);
+            g.fillStyle = 'rgba(30,30,30,0.6)';
+            for (let k = 0; k < 4; k++) g.fillRect(x + 18 + r() * 20, y + 76 + k * 4, 18, 1);
+          }
+          // costuras entre cajas
+          g.fillStyle = 'rgba(60,40,20,0.45)';
+          g.fillRect(x, y, 128, 2);
+          g.fillRect(x, y, 2, 128);
+        }
+      }
+      return c;
+    }
+    case 'pallet': {
+      // tarima: tablas con separación oscura
+      const [c, g] = canvas(128);
+      grain(g, 128, 222, 40, 2500, 61);
+      for (let x = 0; x < 128; x += 26) {
+        g.fillStyle = 'rgba(40,25,10,0.75)';
+        g.fillRect(x + 20, 0, 6, 128);
+        g.fillStyle = 'rgba(120,80,40,0.12)';
+        g.fillRect(x, 0, 20, 128);
+      }
       return c;
     }
     case 'pavers': {
@@ -159,6 +202,11 @@ function base(kind: TextureKind) {
     cache.set(kind, t);
   }
   return t;
+}
+
+/** Textura sin repetir (cajas, tarimas: una por cara). */
+export function surfaceTexture(kind: TextureKind) {
+  return base(kind);
 }
 
 /** Textura repetida para una superficie de w × d metros (un mosaico cada `tile` metros). */

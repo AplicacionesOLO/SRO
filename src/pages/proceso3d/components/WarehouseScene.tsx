@@ -1,6 +1,8 @@
-import { Suspense, useEffect, useMemo, useRef, type MutableRefObject } from 'react';
+import { Suspense, useEffect, useMemo, useRef, useState, type MutableRefObject } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
-import { CameraControls, Environment, Lightformer, Sky } from '@react-three/drei';
+import { CameraControls, Environment, Lightformer, PerformanceMonitor, Sky } from '@react-three/drei';
+import { Bloom, EffectComposer, N8AO, ToneMapping } from '@react-three/postprocessing';
+import { ToneMappingMode } from 'postprocessing';
 import CameraControlsImpl from 'camera-controls';
 import * as THREE from 'three';
 import WarehouseSite, { type DockVisual } from './WarehouseSite';
@@ -14,6 +16,8 @@ import Workshop, { type WorkshopInfo } from './Workshop';
 import Mezzanine from './Mezzanine';
 import DispatchArea from './DispatchArea';
 import AccessControl from './AccessControl';
+import ReflectiveFloor from './ReflectiveFloor';
+import { AtmosphereGround, AtmosphereSky, computeLook, NightProvider, type AtmosphereState } from './Atmosphere';
 import type { TruckAlert } from '../lib/alerts';
 
 export type CameraPreset = 'general' | 'andenes' | 'despacho' | 'entrada' | 'frente' | 'interior' | 'descarga' | 'esperaDespacho';
@@ -59,6 +63,8 @@ interface WarehouseSceneProps {
   showMezzanine?: boolean;
   /** Texto del letrero del control de acceso (personal del reloj marcador) */
   accessInfo?: string | null;
+  /** Vista realista (sol, noche y clima); null = apagada */
+  atmosphere?: AtmosphereState | null;
 }
 
 const { ACTION } = CameraControlsImpl;
@@ -252,45 +258,56 @@ export default function WarehouseScene({
   workshop,
   showMezzanine = true,
   accessInfo,
+  atmosphere = null,
 }: WarehouseSceneProps) {
   const flyRef = useRef<((p: THREE.Vector3) => void) | null>(null);
   const span = layout.eastRoadX - layout.streetX;
   const unloadByTruck = useMemo(() => new Map(unloads.map((u) => [u.truckId, u])), [unloads]);
   const loadingByTruck = useMemo(() => new Map(loadings.map((l) => [l.truckId, l])), [loadings]);
+  const look = useMemo(() => (atmosphere ? computeLook(atmosphere) : null), [atmosphere]);
+  // Si la computadora no da abasto, se apagan la oclusión ambiental y la resolución alta
+  const [lowQuality, setLowQuality] = useState(false);
 
   return (
     <Canvas
       shadows="soft"
-      dpr={[1, 2]}
+      dpr={look && lowQuality ? 1 : [1, 2]}
       gl={{ antialias: true, toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: 1.05 }}
       camera={{ fov: 42, near: 0.5, far: 3000, position: [0, 150, 200] }}
       onPointerMissed={() => onSelect(null)}
     >
-      <color attach="background" args={['#cfe3f1']} />
-      <fog attach="fog" args={['#d8e7f2', span * 1.5, span * 4.5]} />
-      <Sky distance={4500} sunPosition={[-120, 80, 60]} turbidity={5} rayleigh={1.1} mieCoefficient={0.004} />
-      {/* reflejos suaves generados localmente (sin descargar mapas HDR) */}
-      <Environment resolution={128} frames={1}>
-        <Lightformer form="rect" intensity={2} position={[0, 60, 0]} rotation-x={Math.PI / 2} scale={[200, 200, 1]} />
-        <Lightformer form="rect" intensity={0.8} color="#bfdbfe" position={[-100, 30, 0]} rotation-y={Math.PI / 2} scale={[200, 60, 1]} />
-        <Lightformer form="rect" intensity={0.6} color="#fde68a" position={[100, 30, 0]} rotation-y={-Math.PI / 2} scale={[200, 60, 1]} />
-      </Environment>
-      <hemisphereLight args={['#f8fafc', '#6b8f55', 0.55]} />
-      <directionalLight
-        position={[-120, 170, 90]}
-        intensity={2.1}
-        color="#fff7ed"
-        castShadow
-        shadow-mapSize={[4096, 4096]}
-        shadow-bias={-0.0004}
-        shadow-normalBias={0.04}
-        shadow-camera-left={-span * 0.7}
-        shadow-camera-right={span * 0.7}
-        shadow-camera-top={span * 0.7}
-        shadow-camera-bottom={-span * 0.7}
-        shadow-camera-near={10}
-        shadow-camera-far={650}
-      />
+      {look ? (
+        <AtmosphereSky look={look} span={span} />
+      ) : (
+        <>
+        <color attach="background" args={['#cfe3f1']} />
+        <fog attach="fog" args={['#d8e7f2', span * 1.5, span * 4.5]} />
+        <Sky distance={4500} sunPosition={[-120, 80, 60]} turbidity={5} rayleigh={1.1} mieCoefficient={0.004} />
+        {/* reflejos suaves generados localmente (sin descargar mapas HDR) */}
+        <Environment resolution={128} frames={1}>
+          <Lightformer form="rect" intensity={2} position={[0, 60, 0]} rotation-x={Math.PI / 2} scale={[200, 200, 1]} />
+          <Lightformer form="rect" intensity={0.8} color="#bfdbfe" position={[-100, 30, 0]} rotation-y={Math.PI / 2} scale={[200, 60, 1]} />
+          <Lightformer form="rect" intensity={0.6} color="#fde68a" position={[100, 30, 0]} rotation-y={-Math.PI / 2} scale={[200, 60, 1]} />
+        </Environment>
+        <hemisphereLight args={['#f8fafc', '#6b8f55', 0.55]} />
+        <directionalLight
+          position={[-120, 170, 90]}
+          intensity={2.1}
+          color="#fff7ed"
+          castShadow
+          shadow-mapSize={[4096, 4096]}
+          shadow-bias={-0.0004}
+          shadow-normalBias={0.04}
+          shadow-camera-left={-span * 0.7}
+          shadow-camera-right={span * 0.7}
+          shadow-camera-top={span * 0.7}
+          shadow-camera-bottom={-span * 0.7}
+          shadow-camera-near={10}
+          shadow-camera-far={650}
+        />
+        </>
+      )}
+      <NightProvider value={look?.night ?? 0}>
       <Suspense fallback={null}>
         {/* Reflejo en x: visto desde el frente, la entrada queda a la izquierda */}
         <group
@@ -339,8 +356,21 @@ export default function WarehouseScene({
           {cutaway && <AccessControl layout={layout} showLabel={showLabels} info={accessInfo} />}
           <DispatchArea layout={layout} cutaway={cutaway} showLabel={showLabels} />
           {dispatchLot !== undefined && <DispatchLotArea layout={layout} stats={dispatchLot} showLabel={showLabels} />}
+          {look && <AtmosphereGround layout={layout} look={look} cutaway={cutaway} />}
+          {look && cutaway && !lowQuality && <ReflectiveFloor layout={layout} />}
         </group>
       </Suspense>
+      </NightProvider>
+      {look && (
+        <>
+          <PerformanceMonitor onDecline={() => setLowQuality(true)} />
+          <EffectComposer multisampling={lowQuality ? 0 : 4}>
+            {!lowQuality ? <N8AO halfRes aoRadius={2.5} intensity={2.2} distanceFalloff={1} /> : <></>}
+            <Bloom mipmapBlur luminanceThreshold={1} luminanceSmoothing={0.2} intensity={0.35 + 0.9 * look.night} />
+            <ToneMapping mode={ToneMappingMode.ACES_FILMIC} />
+          </EffectComposer>
+        </>
+      )}
       <CameraRig layout={layout} preset={cameraPreset} flyRef={flyRef} />
     </Canvas>
   );

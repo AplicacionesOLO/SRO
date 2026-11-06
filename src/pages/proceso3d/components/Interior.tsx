@@ -4,6 +4,7 @@ import {
   CROSS_AISLE_Z,
   DOOR_WIDTH,
   FLOOR_Y,
+  MIRROR_X,
   RACK_DEPTH,
   RACK_FLUE,
   RACK_PITCH,
@@ -18,6 +19,7 @@ import {
   workshopRect,
   type SiteLayout,
 } from '../lib/layout';
+import { surfaceTexture } from '../lib/textures';
 
 /**
  * Interior del almacén (visible en modo "Interior", sin techo):
@@ -31,7 +33,9 @@ const UPRIGHT_H = 9.2;
 /** Bahías por tramo antes del pasillo de cruce a media profundidad */
 const BAYS_PER_BLOCK = 8;
 const BLOCK_GAP = 4;
-const LOAD_COLORS = ['#c89b62', '#d6b07a', '#b98a55', '#e2e8f0', '#cbd5e1', '#93c5fd', '#a7f3d0'];
+/** Cartón kraft en varios tonos y algo de carga envuelta en plástico (blanco / gris) */
+const LOAD_COLORS = ['#c89b62', '#d6ae78', '#b98a55', '#cfa271', '#c4955f', '#ece8e0', '#d9d4ca'];
+const PALLET_H = 0.14;
 
 function seeded(seed: number) {
   let s = seed;
@@ -61,6 +65,12 @@ interface RackData {
   uprights: THREE.Matrix4[];
   beams: THREE.Matrix4[];
   loads: Tinted[];
+  /** tarimas de madera bajo cada carga */
+  pallets: THREE.Matrix4[];
+  /** protectores amarillos al pie de los postes de cabecera */
+  guards: THREE.Matrix4[];
+  /** líneas amarillas en el piso a lo largo de cada fila */
+  aisleLines: THREE.Matrix4[];
   cant: {
     columns: THREE.Matrix4[];
     feet: THREE.Matrix4[];
@@ -78,6 +88,9 @@ function buildRacks(layout: SiteLayout): RackData {
   const uprights: THREE.Matrix4[] = [];
   const beams: THREE.Matrix4[] = [];
   const loads: Tinted[] = [];
+  const pallets: THREE.Matrix4[] = [];
+  const guards: THREE.Matrix4[] = [];
+  const aisleLines: THREE.Matrix4[] = [];
   const cant: RackData['cant'] = { columns: [], feet: [], arms: [], bundles: [], pipes: [], coils: [] };
   const rnd = seeded(23);
   const pick = (list: string[]) => new THREE.Color(list[Math.floor(rnd() * list.length)]);
@@ -184,12 +197,23 @@ function buildRacks(layout: SiteLayout): RackData {
       const xB = xFace + RACK_DEPTH;
       const xc = (xA + xB) / 2;
       const bays = shortKs.has(k) ? clearOfShop(xA, xB).filter((bz) => bz - BAY >= SHORT_RACK_END_Z) : clearOfShop(xA, xB);
+      // línea amarilla del pasillo, por fuera de la cara de la fila
+      if (bays.length) {
+        const zS = bays[0] + 0.3;
+        const zE = bays[bays.length - 1] - BAY - 0.3;
+        const xLine = xFace < cx ? xA - 0.25 : xB + 0.25;
+        aisleLines.push(mat(xLine, 0.013, (zS + zE) / 2, 0.1, 1, zS - zE));
+      }
       bays.forEach((bz, i) => {
         const prevEnd = i > 0 ? bays[i - 1] - BAY : Infinity;
+        const nextStart = i < bays.length - 1 ? bays[i + 1] : -Infinity;
         // postes al inicio de cada bahía (y al final si la siguiente no es contigua)
         if (Math.abs(prevEnd - bz) > 0.01) {
           uprights.push(mat(xA, UPRIGHT_H / 2, bz), mat(xB, UPRIGHT_H / 2, bz));
+          // cabecera del tramo: protectores amarillos
+          guards.push(mat(xA, 0.3, bz), mat(xB, 0.3, bz));
         }
+        if (Math.abs(nextStart - (bz - BAY)) > 0.01) guards.push(mat(xA, 0.3, bz - BAY), mat(xB, 0.3, bz - BAY));
         const end = bz - BAY;
         uprights.push(mat(xA, UPRIGHT_H / 2, end), mat(xB, UPRIGHT_H / 2, end));
         for (const ly of LEVELS) {
@@ -199,15 +223,17 @@ function buildRacks(layout: SiteLayout): RackData {
           // dos tarimas por bahía y nivel
           for (const pz of [bz - BAY * 0.27, bz - BAY * 0.73]) {
             if (rnd() < 0.22) continue;
-            const h = 1.0 + rnd() * 0.6;
-            const m = mat(xc, ly + h / 2 + 0.02, pz, 1, h, 1);
+            const h = 0.85 + rnd() * 0.6;
+            const base = ly + 0.02;
+            pallets.push(mat(xc, base + PALLET_H / 2, pz));
+            const m = mat(xc, base + PALLET_H + h / 2, pz, 0.96 + rnd() * 0.04, h, 0.95 + rnd() * 0.05);
             loads.push({ m, c: new THREE.Color(LOAD_COLORS[Math.floor(rnd() * LOAD_COLORS.length)]) });
           }
         }
       });
     }
   }
-  return { uprights, beams, loads, cant };
+  return { uprights, beams, loads, pallets, guards, aisleLines, cant };
 }
 
 function Instanced({
@@ -216,6 +242,9 @@ function Instanced({
   geometry,
   color,
   cylinder = false,
+  map,
+  roughness = 0.7,
+  shadows = true,
 }: {
   matrices: THREE.Matrix4[];
   colors?: THREE.Color[];
@@ -223,6 +252,9 @@ function Instanced({
   color: string;
   /** Cilindro unitario (radio 1, alto 1) en lugar de caja */
   cylinder?: boolean;
+  map?: THREE.Texture;
+  roughness?: number;
+  shadows?: boolean;
 }) {
   const ref = useRef<THREE.InstancedMesh>(null);
   useLayoutEffect(() => {
@@ -237,9 +269,9 @@ function Instanced({
     mesh.computeBoundingSphere();
   }, [matrices, colors]);
   return (
-    <instancedMesh ref={ref} args={[undefined, undefined, matrices.length]} castShadow receiveShadow key={matrices.length}>
+    <instancedMesh ref={ref} args={[undefined, undefined, matrices.length]} castShadow={shadows} receiveShadow key={matrices.length}>
       {cylinder ? <cylinderGeometry args={[1, 1, 1, 12]} /> : <boxGeometry args={geometry} />}
-      <meshStandardMaterial color={colors ? '#ffffff' : color} roughness={0.7} metalness={colors ? 0 : 0.3} />
+      <meshStandardMaterial color={colors ? '#ffffff' : color} map={map} roughness={roughness} metalness={colors || map ? 0 : 0.3} />
     </instancedMesh>
   );
 }
@@ -249,6 +281,62 @@ function Line({ x, z, w, d }: { x: number; z: number; w: number; d: number }) {
     <mesh position={[x, 0.012, z]} rotation={[-Math.PI / 2, 0, 0]}>
       <planeGeometry args={[w, d]} />
       <meshBasicMaterial color="#facc15" />
+    </mesh>
+  );
+}
+
+const decalCache = new Map<string, THREE.Texture>();
+
+/** Pintura en el piso (texto o flecha), dibujada en un canvas. */
+function paintTexture(key: string, w: number, h: number, draw: (g: CanvasRenderingContext2D) => void) {
+  let t = decalCache.get(key);
+  if (!t) {
+    const c = document.createElement('canvas');
+    c.width = w;
+    c.height = h;
+    draw(c.getContext('2d')!);
+    t = new THREE.CanvasTexture(c);
+    t.colorSpace = THREE.SRGBColorSpace;
+    t.anisotropy = 8;
+    decalCache.set(key, t);
+  }
+  return t;
+}
+
+function FloorText({ text, x, z, h, color = '#ffffff', rot = 0 }: { text: string; x: number; z: number; h: number; color?: string; rot?: number }) {
+  const cw = 64 * text.length;
+  const tex = paintTexture('t:' + text + ':' + color, cw, 96, (g) => {
+    g.fillStyle = color;
+    g.font = 'bold 78px Arial, sans-serif';
+    g.textAlign = 'center';
+    g.textBaseline = 'middle';
+    g.fillText(text, cw / 2, 52);
+  });
+  const w = (h * cw) / 96;
+  // la escena está reflejada en x: el texto se vuelve a reflejar para que se lea bien
+  return (
+    <mesh position={[x, 0.014, z]} rotation={[-Math.PI / 2, 0, rot]} scale={[MIRROR_X, 1, 1]}>
+      <planeGeometry args={[w, h]} />
+      <meshStandardMaterial map={tex} transparent opacity={0.85} roughness={0.5} depthWrite={false} polygonOffset polygonOffsetFactor={-1} />
+    </mesh>
+  );
+}
+
+function Chevron({ x, z, dir }: { x: number; z: number; dir: 1 | -1 }) {
+  const tex = paintTexture('chevron', 128, 128, (g) => {
+    g.strokeStyle = '#ffffff';
+    g.lineWidth = 16;
+    g.lineCap = 'square';
+    g.beginPath();
+    g.moveTo(28, 92);
+    g.lineTo(64, 44);
+    g.lineTo(100, 92);
+    g.stroke();
+  });
+  return (
+    <mesh position={[x, 0.014, z]} rotation={[-Math.PI / 2, 0, (-dir * Math.PI) / 2]}>
+      <planeGeometry args={[1.0, 1.0]} />
+      <meshStandardMaterial map={tex} transparent opacity={0.8} roughness={0.5} depthWrite={false} polygonOffset polygonOffsetFactor={-1} />
     </mesh>
   );
 }
@@ -264,6 +352,16 @@ function Interior({ layout }: { layout: SiteLayout }) {
   const midX = (layout.xWest + layout.xEast) / 2;
   const innerLen = layout.xEast - layout.xWest - 0.6;
   const stagingEnd = -STAGING_DEPTH + 6;
+  const marks = useMemo(() => {
+    const x0 = layout.xWest + 6;
+    const x1 = layout.xEast - 6;
+    const every = (step: number, offset = 0) => {
+      const out: number[] = [];
+      for (let x = x0 + offset; x < x1; x += step) out.push(x);
+      return out;
+    };
+    return { walk: every(42, 14), zone: every(48, 30), arrows: every(14, 4) };
+  }, [layout.xWest, layout.xEast]);
 
   return (
     <group position={[0, FLOOR_Y, 0]}>
@@ -271,7 +369,10 @@ function Interior({ layout }: { layout: SiteLayout }) {
       <group>
         <Instanced matrices={racks.uprights} geometry={[0.09, UPRIGHT_H, 0.09]} color="#1d4ed8" />
         <Instanced matrices={racks.beams} geometry={[0.06, 0.12, BAY]} color="#f97316" />
-        <Instanced matrices={loadMatrices} colors={loadColors} geometry={[1.05, 1, 1.0]} color="#ffffff" />
+        <Instanced matrices={loadMatrices} colors={loadColors} geometry={[1.05, 1, 1.0]} color="#ffffff" map={surfaceTexture('carton')} roughness={0.85} />
+        <Instanced matrices={racks.pallets} geometry={[1.0, PALLET_H, 1.15]} color="#b08454" map={surfaceTexture('pallet')} roughness={0.9} />
+        <Instanced matrices={racks.guards} geometry={[0.26, 0.6, 0.26]} color="#facc15" roughness={0.45} />
+        <Instanced matrices={racks.aisleLines} geometry={[1, 0.01, 1]} color="#eab308" roughness={0.5} shadows={false} />
       </group>
 
       {/* cantilever de material pesado: columnas azul marino, brazos naranja */}
@@ -303,8 +404,21 @@ function Interior({ layout }: { layout: SiteLayout }) {
       <Line x={midX} z={RACK_Z0 + 0.6} w={innerLen} d={0.15} />
       <mesh position={[midX, 0.011, CROSS_AISLE_Z]} rotation={[-Math.PI / 2, 0, 0]}>
         <planeGeometry args={[innerLen, 1.4]} />
-        <meshBasicMaterial color="#16a34a" transparent opacity={0.55} />
+        <meshStandardMaterial color="#16a34a" roughness={0.45} />
       </mesh>
+      {/* pintura: textos y flechas de circulación */}
+      {marks.walk.map((x) => (
+        <FloorText key={'w' + x} text="PASILLO PEATONAL" x={x} z={CROSS_AISLE_Z} h={0.8} />
+      ))}
+      {marks.zone.map((x) => (
+        <FloorText key={'r' + x} text="RECEPCIÓN" x={x} z={(stagingEnd - 0.6 - STAGING_DEPTH + 0.5) / 2} h={1.4} color="#facc15" />
+      ))}
+      {marks.arrows.map((x) => (
+        <group key={'a' + x}>
+          <Chevron x={x} z={(-STAGING_DEPTH + 0.5 + CROSS_AISLE_Z + 0.7) / 2} dir={1} />
+          <Chevron x={x + 3} z={(CROSS_AISLE_Z - 0.7 + RACK_Z0 + 0.6) / 2} dir={-1} />
+        </group>
+      ))}
     </group>
   );
 }

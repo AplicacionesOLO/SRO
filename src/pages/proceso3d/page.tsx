@@ -12,6 +12,10 @@ import type { TruckVisual } from './components/Truck3D';
 import type { DockVisual } from './components/WarehouseSite';
 import { buildLayout, buildRoute, type Pose } from './lib/layout';
 import { introAllowed } from './lib/intro';
+import { warehouseCoords, type GeoPoint } from './lib/geo';
+import { useWeather, weatherLabel } from './lib/weather';
+import { sunPosition } from './lib/sky';
+import type { AtmosphereState } from './components/Atmosphere';
 import { isStaleWithoutExit, livePhase, PHASE_META, PHASE_ORDER, replayPhase } from './lib/phases';
 import { buildPlan, samePose, type PlanItem } from './lib/plan';
 import { crewFor, dockActivity, isLooseCargo, resolveCargo, STAGE_META, unitLabel, type Crew, type DockActivity } from './lib/unloading';
@@ -122,6 +126,23 @@ export default function Proceso3DPage() {
   // Indicadores con datos de SRO (solo lectura)
   const [heatMetric, setHeatMetric] = useState<HeatMetric | 'off'>('off');
   const [showUpcoming, setShowUpcoming] = useState(true);
+  // Vista realista: sol según la hora, noche y clima del almacén (se recuerda en este navegador)
+  const [realistic, setRealistic] = useState(() => {
+    try {
+      return localStorage.getItem('p3d.realista.v1') === '1';
+    } catch {
+      return false;
+    }
+  });
+  const toggleRealistic = () =>
+    setRealistic((v) => {
+      try {
+        localStorage.setItem('p3d.realista.v1', v ? '0' : '1');
+      } catch {
+        /* sin almacenamiento */
+      }
+      return !v;
+    });
   const [tvMode, setTvMode] = useState(false);
   const [staffAvailable, setStaffAvailable] = useState<number | null>(null);
   // Panel lateral: secciones visibles y orden elegidos por el usuario
@@ -373,6 +394,45 @@ export default function Proceso3DPage() {
   }, [extraDocksKey]);
 
   const currentTime = mode === 'live' ? now : simTime;
+
+  // Ubicación del almacén (de su dirección en la configuración) y clima de la hora que se ve
+  const [geo, setGeo] = useState<{ key: string; point: GeoPoint | null } | null>(null);
+  const geoKey = `${tz}|${activeWarehouse?.location ?? ''}`;
+  useEffect(() => {
+    if (!realistic || !activeWarehouse) return;
+    let alive = true;
+    warehouseCoords(activeWarehouse.location, tz).then((point) => alive && setGeo({ key: geoKey, point }));
+    return () => {
+      alive = false;
+    };
+  }, [realistic, activeWarehouse, tz, geoKey]);
+  const geoPoint = geo?.key === geoKey ? geo.point : null;
+  const weather = useWeather({
+    enabled: realistic,
+    lat: geoPoint?.lat,
+    lng: geoPoint?.lng,
+    day: date,
+    tz,
+    isToday,
+    clock: currentTime,
+  });
+  const atmosphere: AtmosphereState | null = useMemo(
+    () => (realistic && geoPoint ? { lat: geoPoint.lat, lng: geoPoint.lng, time: currentTime, weather } : null),
+    [realistic, geoPoint, currentTime, weather]
+  );
+  const weatherBadge = useMemo(() => {
+    if (!atmosphere || !geoPoint) return null;
+    const isNight = sunPosition(atmosphere.time, geoPoint.lat, geoPoint.lng).elevation < 0;
+    const w = weather ? weatherLabel(weather.code, isNight) : { text: isNight ? 'Noche' : 'Día', icon: isNight ? '🌙' : '☀️' };
+    const where =
+      geoPoint.source === 'coords' || geoPoint.source === 'pluscode'
+        ? 'Ubicación exacta del almacén'
+        : `Ubicación aproximada (${geoPoint.label ?? 'país'}): para más precisión, poné el plus code de Google Maps en la dirección del almacén`;
+    return {
+      text: `${w.icon} ${weather?.temp != null ? `${Math.round(weather.temp)} °C · ` : ''}${w.text} · ${formatInTimeZone(new Date(atmosphere.time), tz, 'HH:mm')}`,
+      title: `${where}.${weather ? ' Clima: Open-Meteo.' : ' Sin datos de clima: solo sol y noche.'}`,
+    };
+  }, [atmosphere, geoPoint, weather, tz]);
 
   const plan: PlanItem[] = useMemo(() => {
     if (!data) return [];
@@ -1041,6 +1101,7 @@ export default function Proceso3DPage() {
                   positions={positionsRef.current}
                   alerts={alerts}
                   alertClock={mode === 'live' ? null : simTime}
+                  atmosphere={atmosphere}
                 />
               )}
             </div>
@@ -1102,6 +1163,13 @@ export default function Proceso3DPage() {
                 title={`Citas de las próximas ${UPCOMING_MIN / 60} h en andenes libres`}
               >
                 <i className="ri-ghost-line mr-1"></i>Próximos
+              </button>
+              <button
+                onClick={toggleRealistic}
+                className={`rounded-md px-2 py-1 text-xs font-medium shadow cursor-pointer ${realistic ? 'bg-teal-600 text-white' : 'bg-white/90 text-gray-700'}`}
+                title="Sol según la hora, noche con luces y el clima de ese momento en el almacén"
+              >
+                <i className="ri-sun-cloudy-line mr-1"></i>Vista realista
               </button>
               <button
                 onClick={toggleTv}
@@ -1285,8 +1353,16 @@ export default function Proceso3DPage() {
               </div>
             )}
 
-            {(heat || (isFullscreen && kpis)) && (
+            {(heat || (isFullscreen && kpis) || weatherBadge) && (
               <div className="pointer-events-none absolute bottom-3 left-3 flex max-w-[calc(100%-1.5rem)] flex-col items-start gap-2">
+                {weatherBadge && (
+                  <span
+                    className="pointer-events-auto rounded-md bg-white/90 px-2 py-1 text-xs font-medium text-gray-700 shadow cursor-help"
+                    title={weatherBadge.title}
+                  >
+                    {weatherBadge.text}
+                  </span>
+                )}
                 {heat && heatMetric !== 'off' && <HeatLegend metric={heatMetric} maxLabel={heat.maxLabel} jornada={heat.jornada} />}
                 {isFullscreen && kpis && (
                   <KpiStrip compact kpis={kpis} lateDispatches={appoloMode !== 'off' ? lotInfo.total : undefined} />
