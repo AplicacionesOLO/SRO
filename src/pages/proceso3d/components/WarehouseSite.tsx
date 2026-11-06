@@ -1,4 +1,5 @@
 import { memo, useMemo } from 'react';
+import { LightPool, useNight } from './Atmosphere';
 import { Html } from '@react-three/drei';
 import * as THREE from 'three';
 import Interior from './Interior';
@@ -17,6 +18,10 @@ import {
   FENCE_Z,
   FLOOR_Y,
   FRONT_Z,
+  OFFICE_DEPTH,
+  OFFICE_W,
+  OFFICE_Z,
+  officeSpan,
   NEIGHBOR_DEPTH,
   NEIGHBOR_Z1,
   PALLET_Z0,
@@ -414,15 +419,17 @@ function Building({ layout, cutaway }: { layout: SiteLayout; cutaway: boolean })
 
 /** Poste de alumbrado. */
 function LightPole({ x, z, rot = 0 }: { x: number; z: number; rot?: number }) {
+  const night = useNight();
   return (
     <group position={[x, 0, z]} rotation={[0, rot, 0]}>
+      <LightPool position={[0, 0.06, 4]} radius={11} intensity={0.6 * night} />
       <mesh position={[0, 4.5, 0]} castShadow>
         <cylinderGeometry args={[0.09, 0.13, 9, 8]} />
         <meshStandardMaterial color="#6b7280" metalness={0.6} roughness={0.4} />
       </mesh>
       <mesh position={[0, 9, 0.6]}>
         <boxGeometry args={[0.35, 0.15, 1.4]} />
-        <meshStandardMaterial color="#374151" emissive="#fef9c3" emissiveIntensity={0.15} />
+        <meshStandardMaterial color="#374151" emissive={night > 0.05 ? '#ffd9a0' : '#fef9c3'} emissiveIntensity={0.15 + night * 7} />
       </mesh>
     </group>
   );
@@ -434,8 +441,7 @@ function WarehouseSite({ layout, docks, showDockLabels, warehouseName, highlight
   const midX = (xWest + xEast) / 2;
   const dockById = useMemo(() => new Map(docks.map((d) => [d.id, d])), [docks]);
   // Bloque de oficinas: son dos módulos iguales unidos; el segundo queda a la izquierda visto desde el frente
-  const OFFICE_W = 76;
-  const officeCenter = officeX - OFFICE_W / 4;
+  const officeCenter = officeSpan(layout).center;
 
   const pallets = useMemo(() => {
     const rnd = seeded(7);
@@ -522,8 +528,8 @@ function WarehouseSite({ layout, docks, showDockLabels, warehouseName, highlight
       {/* alero frontal */}
       <Box p={[midX, 6.4, FRONT_Z - 3]} s={[length, 0.25, 6]} color="#f8fafc" />
       {/* edificio de oficinas de 3 pisos */}
-      <group position={[officeCenter, 0, FRONT_Z - 2]}>
-        <Box p={[0, 7, 0]} s={[OFFICE_W, 14, 12]} color="#f1f5f9" />
+      <group position={[officeCenter, 0, OFFICE_Z]}>
+        <Box p={[0, 7, 0]} s={[OFFICE_W, 14, OFFICE_DEPTH]} color="#f1f5f9" />
         {[3.5, 7.5, 11.5].map((y) => (
           <group key={y}>
             {[-OFFICE_W / 4, OFFICE_W / 4].map((dx) => (

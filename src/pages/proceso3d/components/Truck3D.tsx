@@ -5,6 +5,7 @@ import * as THREE from 'three';
 import type { Pose, RoutePoint } from '../lib/layout';
 import { tiledTexture } from '../lib/textures';
 import AlertCloud from './AlertCloud';
+import { useNight } from './Atmosphere';
 import type { TruckAlert } from '../lib/alerts';
 
 export interface TruckVisual {
@@ -71,6 +72,7 @@ export default function Truck3D({
   alertClock = null,
 }: Truck3DProps) {
   const group = useRef<THREE.Group>(null);
+  const night = useNight();
   const [hovered, setHovered] = useState(false);
   const state = useRef({ seg: 1, t: 0, route: [] as RoutePoint[], version: -1, moving: false });
 
@@ -301,7 +303,7 @@ export default function Truck3D({
       {[-0.95, 0.95].map((x) => (
         <mesh key={`hl${x}`} position={[x, 1.4, 8.52]}>
           <boxGeometry args={[0.35, 0.2, 0.03]} />
-          <meshStandardMaterial color="#fefce8" emissive="#fef9c3" emissiveIntensity={0.9} />
+          <meshStandardMaterial color="#fefce8" emissive="#fef9c3" emissiveIntensity={0.9 + night * 6} />
         </mesh>
       ))}
       {/* espejos */}

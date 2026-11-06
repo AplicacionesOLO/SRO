@@ -113,6 +113,23 @@ export function rackK(layout: { xWest: number; xEast: number }, n: number) {
  */
 export const SHORT_RACKS = [11, 12, 13];
 export const SHORT_RACK_END_Z = FRONT_Z + 12;
+/** Edificio de oficinas de 3 pisos: dos módulos iguales, centrado a un cuarto de su ancho de `officeX`. */
+export const OFFICE_W = 76;
+export const OFFICE_DEPTH = 12;
+export const OFFICE_Z = FRONT_Z - 2;
+export function officeSpan(layout: { officeX: number }) {
+  const center = layout.officeX - OFFICE_W / 4;
+  return { center, x0: center - OFFICE_W / 2, x1: center + OFFICE_W / 2 };
+}
+/**
+ * Pared interior de la bodega en el frente para una x dada: la cara de las oficinas (que entran
+ * 4 m en la bodega) o la cara interior de la fachada.
+ */
+export function frontInnerWallZ(layout: { officeX: number }, x: number) {
+  const o = officeSpan(layout);
+  return x > o.x0 && x < o.x1 ? OFFICE_Z + OFFICE_DEPTH / 2 : FRONT_Z + 0.3;
+}
+
 export function accessControlRect(layout: { xWest: number; xEast: number }) {
   const { half, kTo } = rackGrid(layout);
   const kA = rackK(layout, SHORT_RACKS[0]);
